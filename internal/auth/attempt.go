@@ -52,6 +52,12 @@ func (a Attempt) String() string {
 	return "Attempt{return_to: " + a.ReturnTo + ", secrets: " + redacted + "}"
 }
 
+// Format prints the form String returns for every fmt verb, including %#v,
+// which would otherwise print every field.
+func (a Attempt) Format(f fmt.State, _ rune) {
+	_, _ = f.Write([]byte(a.String())) // a failed write to a fmt buffer has no one to report to
+}
+
 func randomToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

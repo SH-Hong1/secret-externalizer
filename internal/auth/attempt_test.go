@@ -2,6 +2,7 @@ package auth_test
 
 import (
 	"bytes"
+	"fmt"
 	"log/slog"
 	"strings"
 	"testing"
@@ -53,6 +54,38 @@ func TestAttempt_LogValue(t *testing.T) {
 	for name, v := range map[string]string{"State": a.State, "Nonce": a.Nonce, "Verifier": a.Verifier} {
 		if strings.Contains(out, v) {
 			t.Errorf("slog output = %q, contains %s", out, name)
+		}
+	}
+}
+
+func TestAttempt_Format(t *testing.T) {
+	a := auth.Attempt{
+		State:    "fake-state-value",
+		Nonce:    "fake-nonce-value",
+		Verifier: "fake-verifier-value",
+		ReturnTo: "/projects",
+	}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		out := fmt.Sprintf(verb, a)
+		for name, v := range map[string]string{"State": a.State, "Nonce": a.Nonce, "Verifier": a.Verifier} {
+			if strings.Contains(out, v) {
+				t.Errorf("Sprintf(%q, attempt) = %q, contains %s", verb, out, name)
+			}
+		}
+		if !strings.Contains(out, a.ReturnTo) {
+			t.Errorf("Sprintf(%q, attempt) = %q, want it to contain ReturnTo %q", verb, out, a.ReturnTo)
+		}
+	}
+}
+
+func TestAttempt_LogValueShowsReturnTo(t *testing.T) {
+	a := auth.Attempt{State: "fake-state-value", ReturnTo: "/projects"}
+	var buf bytes.Buffer
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("login", "attempt", a)
+	out := buf.String()
+	for _, want := range []string{"return_to=/projects", "[redacted]"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("slog output = %q, want it to contain %q", out, want)
 		}
 	}
 }

@@ -33,3 +33,4 @@
 - 이름이 `testdata`로 시작하는 패키지(예: `internal/testdatabase`)가 린트에서 빠지던 문제
 - 저장소가 `testdata`라는 이름의 폴더 아래에 있으면 수정 hook이 모든 파일을 건너뛰던 문제
 - 수정 hook이 상대 경로 입력을 현재 폴더 기준으로 해석하던 문제. 저장소 루트 기준으로 해석한다.
+- 로그인 시도(`Attempt`)를 `%#v`로 출력하면 state, nonce, PKCE verifier가 드러나던 문제

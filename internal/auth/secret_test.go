@@ -37,3 +37,9 @@ func TestClientSecret_Redacted(t *testing.T) {
 		t.Errorf("Reveal() = %q, want %q", got, raw)
 	}
 }
+
+func TestClientSecret_String(t *testing.T) {
+	if got := auth.ClientSecret("x").String(); got != "[redacted]" {
+		t.Errorf("ClientSecret(%q).String() = %q, want %q", "x", got, "[redacted]")
+	}
+}
