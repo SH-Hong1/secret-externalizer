@@ -59,8 +59,9 @@ type Authenticator struct {
 
 // NewAuthenticator reads the provider's discovery document and returns an
 // Authenticator for cfg. It fails when the document names an issuer other
-// than cfg.IssuerURL, including when it was read from cfg.DiscoveryURL. Every request to the provider goes through client,
-// which must have a positive Timeout; any other client is rejected.
+// than cfg.IssuerURL, including when it was read from cfg.DiscoveryURL. Every
+// request to the provider goes through client, which must have a positive
+// Timeout; any other client is rejected.
 func NewAuthenticator(ctx context.Context, cfg Config, client *http.Client) (*Authenticator, error) {
 	if client == nil {
 		return nil, errors.New("creating authenticator: http client is nil")
@@ -150,7 +151,8 @@ func (a *Authenticator) AuthCodeURL(state, nonce, verifier string) string {
 // Exchange trades an authorization code for tokens, verifies the ID token's
 // signature, issuer, audience, expiry, and nonce, and returns the user it
 // names. When the user has neither role it returns an error wrapping a
-// *NoRoleError, which matches ErrNoRole. Its errors never contain the client secret, the code, or the verifier.
+// *NoRoleError, which matches ErrNoRole. Its errors never contain the client
+// secret, the code, or the verifier.
 func (a *Authenticator) Exchange(ctx context.Context, code, verifier, nonce string) (User, error) {
 	if nonce == "" {
 		return User{}, errors.New("exchanging authorization code: nonce is empty")
