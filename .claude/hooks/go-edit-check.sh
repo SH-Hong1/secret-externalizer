@@ -7,6 +7,11 @@
 # not gofumpt-formatted or its package has lint findings.
 set -u
 
+if ! command -v jq >/dev/null 2>&1; then
+  echo "go-edit-check: jq is required to read the hook input; install jq" >&2
+  exit 2
+fi
+
 file="$(jq -r '.tool_input.file_path // empty')"
 [ -n "$file" ] || exit 0
 

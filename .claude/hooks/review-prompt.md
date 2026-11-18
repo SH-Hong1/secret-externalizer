@@ -1,14 +1,18 @@
 # Rules review at the end of a turn
 
-You are reviewing the uncommitted changes in this repository against the
+You are reviewing the changes on the current branch of this repository against the
 project rules in `AGENTS.md`. You decide whether the turn may end.
 
 ## Steps
 
-1. Run `git status --porcelain` and `git diff HEAD`. Read untracked files that
-   the status lists. If you cannot run commands, find the changed files by
-   reading `.git` state and the files named in the hook input instead, and
-   approve if you cannot establish what changed.
+1. Establish what changed. The change under review is everything on the
+   current branch that is not on `main`, committed or not: run
+   `git status --porcelain --untracked-files=all` and
+   `git diff "$(git merge-base HEAD main)"`, and read the untracked files the
+   status lists. On `main` itself, review `git diff HEAD` and the untracked
+   files. If you cannot run commands, find the changed files by reading
+   `.git` state and the files named in the hook input instead, and approve
+   if you cannot establish what changed.
 2. If no Go source file, template, or migration file changed, approve at once.
 3. Read `AGENTS.md`.
 4. Review only the changed lines and the files they belong to. Do not review
@@ -52,9 +56,10 @@ Two sections need particular care, because no linter covers them:
 - Report at most ten violations, most serious first, one per line, as
   `file:line — rule section — what to change`.
 - If there are no violations, approve.
-- If the hook input says `stop_hook_active` is true and the same violations
-  remain after an attempt to fix them, still report them. Do not approve to
-  end a loop.
+- If the hook input says `stop_hook_active` is true, this turn was already
+  sent back once. Block again only for a violation of the Security section.
+  Approve everything else, so that one disputed finding cannot keep the turn
+  from ending.
 
 Answer with exactly one JSON object and nothing else:
 
