@@ -22,6 +22,9 @@
 - `internal/auth`: 사용자, 역할, 로그에 원문이 남지 않는 클라이언트 시크릿, 로그인 시도(state, nonce, PKCE verifier) 타입
 - `internal/auth.Authenticator`: OIDC Authorization Code + PKCE 로그인. ID 토큰의 서명, 발급자, 대상, 만료, nonce를 확인하고 `roles` 클레임에서 역할을 읽는다. 발급자에 닿는 주소(`DiscoveryURL`)를 토큰의 발급자 주소와 따로 지정할 수 있다.
 - 결정 기록 0010 (go-oidc, oauth2)
+- `internal/session`: valkey에 로그인 세션과 로그인 시도를 저장한다. 키는 ID의 SHA-256이고, 세션은 유휴 30분과 절대 8시간, 로그인 시도는 10분 안에 만료된다. 토큰은 저장하지 않는다. `ID`는 로그에 원문이 남지 않는다.
+- `make test-integration`: `TEST_VALKEY_ADDR`가 가리키는 valkey를 대상으로 전체 테스트를 실행한다. 주소가 없으면 안내와 함께 실패한다. valkey가 필요한 테스트는 주소가 없으면 건너뛰므로 `make check`는 valkey 없이 통과한다.
+- 결정 기록 0011 (valkey-go), 0013 (세션 설계)
 
 ### 변경
 
