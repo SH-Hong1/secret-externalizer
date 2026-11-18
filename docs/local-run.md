@@ -22,7 +22,7 @@ docker compose down -v         # 볼륨까지 지운다. 다음 기동 때 realm
 |---|---|---|---|
 | `dev-user` | `dev-only-user-password` | `user` | 홈 |
 | `dev-admin` | `dev-only-admin-password` | `admin` | 홈, 감사 로그(`/audit`) |
-| `dev-norole` | `dev-only-norole-password` | 없음 | 로그인 뒤 403 |
+| `dev-norole` | `dev-only-norole-password` | 없음 | 로그인 뒤 403. 이 화면의 로그아웃 버튼으로 Keycloak 세션을 끝내고 다른 계정으로 로그인한다 |
 
 Keycloak 관리 콘솔(`http://localhost:8081/admin/`)의 계정은 `dev-only-admin` / `dev-only-admin-password`다. 이 계정은 `master` realm이 처음 만들어질 때만 생긴다.
 
@@ -50,10 +50,10 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 | 이름 | 필수 | 내용 |
 |---|---|---|
 | `WEB_ADDR` | | 듣는 주소. 기본값 `:8080` |
-| `WEB_BASE_URL` | 예 | 브라우저에서 보는 주소. 콜백 주소(`/auth/callback`)와 로그아웃 뒤 주소(`/`)를 여기서 만든다 |
+| `WEB_BASE_URL` | 예 | 브라우저에서 보는 주소. 콜백 주소(`/auth/callback`)와 로그아웃 뒤 주소(`/`)를 여기서 만든다. `/` 말고 다른 경로, 쿼리, 프래그먼트는 둘 수 없다 |
 | `VALKEY_ADDR` | 예 | 예 `valkey:6379` |
 | `OIDC_ISSUER_URL` | 예 | 토큰의 발급자. 예 `http://localhost:8081/realms/secret-externalizer` |
-| `OIDC_DISCOVERY_URL` | | web이 발급자에 닿는 주소. 비우면 `OIDC_ISSUER_URL`을 쓴다 |
+| `OIDC_DISCOVERY_URL` | | web이 발급자에 닿는 주소. 비우면 `OIDC_ISSUER_URL`을 쓴다. 여기서 읽은 discovery 문서의 `issuer`가 `OIDC_ISSUER_URL`과 다르면 web이 기동하지 않는다 |
 | `OIDC_CLIENT_ID` | 예 | `secret-externalizer-web` |
 | `OIDC_CLIENT_SECRET` | 예 | 로그와 오류 메시지에 남지 않는다 |
 
@@ -72,4 +72,4 @@ docker compose up -d valkey
 TEST_VALKEY_ADDR=127.0.0.1:16379 make test-integration
 ```
 
-valkey는 디스크에 아무것도 남기지 않는다. valkey를 다시 띄우면 모든 세션이 사라지고 다시 로그인해야 한다.
+valkey는 디스크에 아무것도 남기지 않는다. valkey를 다시 띄우면 모든 세션이 사라지고 다시 로그인해야 한다. 메모리는 64MB로 제한하며, 다 차면 기존 키를 지우지 않고 새 쓰기만 거부한다(`noeviction`). 이때 새 로그인은 503 화면을 보고, 이미 로그인한 세션은 그대로 쓸 수 있다.
