@@ -1,0 +1,98 @@
+{
+  "realm": "secret-externalizer",
+  "displayName": "secret-externalizer (local development only)",
+  "enabled": true,
+  "sslRequired": "external",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": false,
+  "rememberMe": false,
+  "loginWithEmailAllowed": false,
+  "roles": {
+    "realm": [
+      { "name": "user", "description": "May use secret-externalizer." },
+      { "name": "admin", "description": "May use secret-externalizer and read the audit log." }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "secret-externalizer-web",
+      "name": "secret-externalizer web",
+      "description": "Local development only. The client secret and the user passwords in this file are fake values for a local stack.",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "clientAuthenticatorType": "client-secret",
+      "secret": "dev-only-web-client-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "frontchannelLogout": false,
+      "fullScopeAllowed": true,
+      "redirectUris": ["http://localhost:8080/auth/callback"],
+      "webOrigins": [],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "post.logout.redirect.uris": "http://localhost:8080/",
+        "oauth2.device.authorization.grant.enabled": "false",
+        "oidc.ciba.grant.enabled": "false",
+        "standard.token.exchange.enabled": "false"
+      },
+      "protocolMappers": [
+        {
+          "name": "realm roles in id token",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-realm-role-mapper",
+          "consentRequired": false,
+          "config": {
+            "multivalued": "true",
+            "claim.name": "roles",
+            "jsonType.label": "String",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "false"
+          }
+        }
+      ]
+    }
+  ],
+  "users": [
+    {
+      "username": "dev-user",
+      "enabled": true,
+      "email": "dev-user@example.invalid",
+      "emailVerified": true,
+      "firstName": "Dev",
+      "lastName": "User",
+      "credentials": [
+        { "type": "password", "value": "dev-only-user-password", "temporary": false }
+      ],
+      "realmRoles": ["user"]
+    },
+    {
+      "username": "dev-admin",
+      "enabled": true,
+      "email": "dev-admin@example.invalid",
+      "emailVerified": true,
+      "firstName": "Dev",
+      "lastName": "Admin",
+      "credentials": [
+        { "type": "password", "value": "dev-only-admin-password", "temporary": false }
+      ],
+      "realmRoles": ["admin"]
+    },
+    {
+      "username": "dev-norole",
+      "enabled": true,
+      "email": "dev-norole@example.invalid",
+      "emailVerified": true,
+      "firstName": "Dev",
+      "lastName": "Norole",
+      "credentials": [
+        { "type": "password", "value": "dev-only-norole-password", "temporary": false }
+      ],
+      "realmRoles": []
+    }
+  ]
+}

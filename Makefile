@@ -24,7 +24,7 @@ test:
 	go test -race ./...
 
 test-integration:
-	@test -n "$(TEST_VALKEY_ADDR)" || { echo "set TEST_VALKEY_ADDR to a running valkey, for example TEST_VALKEY_ADDR=127.0.0.1:6379 make test-integration" >&2; exit 1; }
+	@test -n "$(TEST_VALKEY_ADDR)" || { echo "set TEST_VALKEY_ADDR to a running valkey, for example TEST_VALKEY_ADDR=127.0.0.1:16379 make test-integration (the compose valkey)" >&2; exit 1; }
 	TEST_VALKEY_ADDR="$(TEST_VALKEY_ADDR)" go test -race -count=1 ./...
 
 hooks: $(BIN)/gofumpt $(BIN)/golangci-lint

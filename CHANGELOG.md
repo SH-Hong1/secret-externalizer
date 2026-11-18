@@ -33,11 +33,18 @@
 - 표준 라이브러리의 교차 출처 보호(`http.CrossOriginProtection`)로 다른 출처에서 보낸 상태 변경 요청을 403으로 막는다.
 - 401, 405 오류 화면. 400과 401 화면에는 "다시 로그인" 링크가 있다.
 - 결정 기록 0012 (교차 출처 보호로 CSRF 방어)
+- `cmd/web`이 환경 변수(`WEB_BASE_URL`, `VALKEY_ADDR`, `OIDC_ISSUER_URL`, `OIDC_DISCOVERY_URL`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET`)를 읽어 valkey 세션 저장소와 OIDC 로그인을 실제로 연결한다. 필수 변수가 없으면 그 이름을 오류에 적고 멈춘다. 콜백 주소와 로그아웃 뒤 주소는 `WEB_BASE_URL`에서 만든다.
+- web은 기동할 때 발급자의 discovery 문서를 2초 간격으로 최대 60초 동안 다시 읽고, 그래도 닿지 않으면 발급자 주소를 적은 오류로 끝난다. 밖으로 나가는 HTTP 요청의 제한 시간은 10초다.
+- valkey가 멈추면 세션 읽기가 몇 번만 다시 시도한 뒤 실패해, 화면이 멈추지 않고 503 화면이 나온다.
+- `compose.yaml`: postgres, valkey, Keycloak, web을 띄우는 로컬 개발 환경. Keycloak은 기동할 때 `deploy/keycloak/realm.json`(역할 `user`, `admin`, 개발용 사용자 3명, ID 토큰의 `roles` 클레임)을 가져온다. 포트는 `127.0.0.1`에만 열고, valkey는 `16379`로 연다.
+- `deploy/web/Dockerfile`: 정적 링크한 web을 셸이 없는 최소 이미지에서 root가 아닌 사용자로 실행한다. compose에서는 읽기 전용 루트 파일 시스템, 모든 capability 제거, `no-new-privileges`를 적용한다.
+- 로컬 실행 안내 `docs/local-run.md`
 
 ### 변경
 
 - `web -h`는 사용법을 표준 출력에 쓰고 종료 코드 0으로 끝난다. 플래그 오류는 한 번만 출력한다.
 - `make lint`, `make fmt`는 `bin/`에 도구가 없으면 먼저 설치한다.
+- `cmd/web`이 로그인 자리 표시자 대신 실제 valkey와 Keycloak에 연결한다. 필수 환경 변수가 없으면 기동하지 않는다.
 - 종료 시 검토가 `go.mod` 변경을 확인하고, 결정 기록 없는 의존성 추가를 지적한다.
 
 ### 수정
