@@ -13,16 +13,28 @@ linters:
     - misspell
     - nilerr
     - noctx
+    - nolintlint
     - revive
     - rowserrcheck
     - sloglint
     - sqlclosecheck
+    - testpackage
     - unconvert
     - unparam
     - usestdlibvars
+  settings:
+    gosec:
+      excludes:
+        - G204
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+    sloglint:
+      static-msg: true
+      key-naming-case: snake
   exclusions:
     paths:
-      - testdata
+      - (^|/)testdata/
 formatters:
   enable:
     - gofumpt
@@ -37,4 +49,4 @@ formatters:
         - github.com/SH-Hong1/secret-externalizer
   exclusions:
     paths:
-      - testdata
+      - (^|/)testdata/

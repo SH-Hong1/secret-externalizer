@@ -13,7 +13,8 @@ project rules in `AGENTS.md`. You decide whether the turn may end.
    files. If you cannot run commands, find the changed files by reading
    `.git` state and the files named in the hook input instead, and approve
    if you cannot establish what changed.
-2. If no Go source file, template, or migration file changed, approve at once.
+2. If no Go source file, `go.mod`, template, or migration file changed,
+   approve at once.
 3. Read `AGENTS.md`.
 4. Review only the changed lines and the files they belong to. Do not review
    code that this change did not touch.
@@ -33,8 +34,9 @@ Check the change against these sections of `AGENTS.md`, by name:
 - Security
 - Testing
 - Comments and records
+- Formatting and tooling
 
-Two sections need particular care, because no linter covers them:
+Three sections need particular care, because no linter covers them:
 
 - **Comments and records.** Flag any comment that records a decision, a
   previous implementation, a date, an author, a review remark, or a ticket.
@@ -43,6 +45,8 @@ Two sections need particular care, because no linter covers them:
 - **Security.** Flag any path by which a secret value can reach a log line, an
   error message, a template, a database column, a report, the manifest, or a
   session. Flag any copy of customer data.
+- **Formatting and tooling.** Flag a dependency added to `go.mod` that has no
+  record in `docs/decisions/`. `make check` enforces the rest of this section.
 
 ## What not to report
 

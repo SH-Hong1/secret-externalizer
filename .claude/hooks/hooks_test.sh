@@ -188,6 +188,74 @@ case_stop_without_jq_reports_and_does_not_loop() {
   assert_contains "$output" "jq is required"
 }
 
+case_nolint_without_reason_fails() {
+  cp "$TESTDATA/nolint_no_reason.go.txt" "$PKG/sample.go"
+  run_edit_hook "$PKG/sample.go"
+  assert_eq 2 "$status" "nolint without a reason"
+  assert_contains "$output" "nolintlint"
+}
+
+case_slog_dynamic_message_fails() {
+  cp "$TESTDATA/slog_dynamic_msg.go.txt" "$PKG/sample.go"
+  run_edit_hook "$PKG/sample.go"
+  assert_eq 2 "$status" "slog message built at run time"
+  assert_contains "$output" "message should be a string literal or a constant"
+}
+
+case_slog_camel_case_key_fails() {
+  cp "$TESTDATA/slog_camel_key.go.txt" "$PKG/sample.go"
+  run_edit_hook "$PKG/sample.go"
+  assert_eq 2 "$status" "slog key in camel case"
+  assert_contains "$output" "keys should be written in snake_case"
+}
+
+case_test_in_same_package_fails() {
+  cp "$TESTDATA/clean.go.txt" "$PKG/sample.go"
+  cp "$TESTDATA/samepkg_test.go.txt" "$PKG/sample_test.go"
+  run_edit_hook "$PKG/sample_test.go"
+  assert_eq 2 "$status" "test in the package under test"
+  assert_contains "$output" "testpackage"
+}
+
+case_exec_command_context_passes() {
+  cp "$TESTDATA/exec.go.txt" "$PKG/sample.go"
+  run_edit_hook "$PKG/sample.go"
+  assert_eq 0 "$status" "exec.CommandContext with an argument slice"
+  assert_eq "" "$output" "exec.CommandContext output"
+}
+
+case_package_named_like_testdata_is_linted() {
+  mkdir -p "$SANDBOX/internal/testdatabase"
+  cp "$TESTDATA/errcheck.go.txt" "$SANDBOX/internal/testdatabase/sample.go"
+  run_edit_hook "$SANDBOX/internal/testdatabase/sample.go"
+  assert_eq 2 "$status" "package whose name starts with testdata"
+  assert_contains "$output" "errcheck"
+}
+
+case_repo_below_a_testdata_directory_is_checked() {
+  local outer="$TMP_OUTSIDE/testdata"
+  mkdir -p "$outer"
+  mv "$SANDBOX" "$outer/repo"
+  SANDBOX="$outer/repo"
+  cp "$TESTDATA/unformatted.go.txt" "$SANDBOX/internal/hooktest/sample.go"
+  run_edit_hook "$SANDBOX/internal/hooktest/sample.go"
+  SANDBOX="$TMP/repo"
+  assert_eq 2 "$status" "repository below a directory named testdata"
+  assert_contains "$output" "gofumpt"
+}
+
+case_relative_path_is_resolved_from_the_root() {
+  cp "$TESTDATA/unformatted.go.txt" "$PKG/sample.go"
+  run_edit_hook "internal/hooktest/sample.go"
+  assert_eq 2 "$status" "path relative to the repository root"
+  assert_contains "$output" "gofumpt: internal/hooktest/sample.go"
+}
+
+case_make_lint_installs_missing_tools() {
+  output="$(make -n -C "$ROOT" lint BIN="$TMP_OUTSIDE/emptybin" 2>&1)"
+  assert_contains "$output" "go install"
+}
+
 for current in $(declare -F | awk '{print $3}' | grep '^case_'); do
   reset_sandbox
   "$current"
