@@ -104,6 +104,41 @@ case_deleted_file_passes() {
   assert_eq 0 "$status" "file that no longer exists"
 }
 
+# run_stop_hook ACTIVE runs stop-verify.sh as Claude Code would when a turn
+# ends. ACTIVE is the value of stop_hook_active. It sets $status and $output
+# like run_edit_hook. The changed-file list defaults to one Go file so the
+# check command runs unless a case overrides HOOK_CHANGED_FILES.
+run_stop_hook() {
+  local input
+  input="$(jq -n --argjson a "$1" '{hook_event_name: "Stop", stop_hook_active: $a}')"
+  output="$(printf '%s' "$input" | CLAUDE_PROJECT_DIR="$ROOT" \
+    HOOK_CHANGED_FILES="${HOOK_CHANGED_FILES:-cmd/web/main.go}" \
+    bash "$HOOKS/stop-verify.sh" 2>&1 >/dev/null)"
+  status=$?
+}
+
+case_stop_passes_when_check_passes() {
+  HOOK_CHECK_CMD="true" run_stop_hook false
+  assert_eq 0 "$status" "check passes"
+}
+
+case_stop_blocks_when_check_fails() {
+  HOOK_CHECK_CMD="sh -c 'echo lint-broke; exit 1'" run_stop_hook false
+  assert_eq 2 "$status" "check fails"
+  assert_contains "$output" "lint-broke"
+}
+
+case_stop_does_not_loop() {
+  HOOK_CHECK_CMD="sh -c 'exit 1'" run_stop_hook true
+  assert_eq 0 "$status" "second stop after a block"
+  assert_contains "$output" "still failing"
+}
+
+case_stop_skips_when_no_go_module_changes() {
+  HOOK_CHECK_CMD="sh -c 'exit 1'" HOOK_CHANGED_FILES="docs/a.md" run_stop_hook false
+  assert_eq 0 "$status" "only documents changed"
+}
+
 for current in $(declare -F | awk '{print $3}' | grep '^case_'); do
   rm -rf "$PKG"
   mkdir -p "$PKG"

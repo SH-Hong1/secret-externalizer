@@ -11,3 +11,5 @@
 - golangci-lint 설정
 - Go 규칙 문서 `AGENTS.md`와 이를 불러오는 `CLAUDE.md`
 - 결정 기록 `docs/decisions/` 0001~0006
+- Go 파일을 쓰거나 고칠 때마다 포맷과 린트를 검사하는 hook
+- 작업을 마칠 때 전체 검사를 실행하고 `AGENTS.md` 준수 여부를 검토하는 hook
