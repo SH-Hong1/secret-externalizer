@@ -1,5 +1,6 @@
-// Package auth holds the identity types shared by the login flow: the signed-in
-// user, its roles, the client secret, and the state of one login attempt.
+// Package auth runs the OpenID Connect login and holds the identity types it
+// produces: the signed-in user, its roles, the client secret, and the state of
+// one login attempt.
 package auth
 
 import (
