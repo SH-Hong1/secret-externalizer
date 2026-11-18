@@ -131,6 +131,12 @@ func outboundClient() *http.Client {
 // document every retry.interval until it answers or retry.limit has passed.
 // It stops as soon as ctx is cancelled.
 func discover(ctx context.Context, logger *slog.Logger, cfg auth.Config, client *http.Client, retry discoveryRetry) (*auth.Authenticator, error) {
+	// Errors name the address actually contacted as well as the issuer, since
+	// the two differ when DiscoveryURL is set.
+	contacted := cfg.DiscoveryURL
+	if contacted == "" {
+		contacted = cfg.IssuerURL
+	}
 	start := time.Now()
 	timer := time.NewTimer(retry.interval)
 	defer timer.Stop()
@@ -140,18 +146,18 @@ func discover(ctx context.Context, logger *slog.Logger, cfg auth.Config, client 
 			return authn, nil
 		}
 		if ctx.Err() != nil {
-			return nil, fmt.Errorf("reaching oidc issuer %s: %w", cfg.IssuerURL, ctx.Err())
+			return nil, fmt.Errorf("reaching oidc issuer %s at %s: %w", cfg.IssuerURL, contacted, ctx.Err())
 		}
 		if time.Since(start)+retry.interval > retry.limit {
-			return nil, fmt.Errorf("reaching oidc issuer %s for %s: %w", cfg.IssuerURL, retry.limit, err)
+			return nil, fmt.Errorf("reaching oidc issuer %s at %s for %s: %w", cfg.IssuerURL, contacted, retry.limit, err)
 		}
 		logger.WarnContext(ctx, "oidc issuer not ready, retrying",
-			"issuer", cfg.IssuerURL, "retry_in", retry.interval.String(), "error", err.Error())
+			"issuer", cfg.IssuerURL, "discovery_url", contacted, "retry_in", retry.interval.String(), "error", err.Error())
 
 		timer.Reset(retry.interval)
 		select {
 		case <-ctx.Done():
-			return nil, fmt.Errorf("reaching oidc issuer %s: %w", cfg.IssuerURL, ctx.Err())
+			return nil, fmt.Errorf("reaching oidc issuer %s at %s: %w", cfg.IssuerURL, contacted, ctx.Err())
 		case <-timer.C:
 		}
 	}
@@ -166,13 +172,7 @@ func serve(ctx context.Context, logger *slog.Logger, addr string, handler http.H
 		return fmt.Errorf("listening on %s: %w", addr, err)
 	}
 
-	srv := &http.Server{
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       120 * time.Second,
-	}
+	srv := newHTTPServer(logger, handler)
 
 	errc := make(chan error, 1)
 	go func() { errc <- srv.Serve(listener) }()
@@ -195,4 +195,18 @@ func serve(ctx context.Context, logger *slog.Logger, addr string, handler http.H
 		return fmt.Errorf("serving: %w", err)
 	}
 	return nil
+}
+
+// newHTTPServer returns the server for handler with every timeout set. The
+// messages net/http logs itself, such as accept errors, go through logger at
+// level ERROR, so they are JSON on the same stream.
+func newHTTPServer(logger *slog.Logger, handler http.Handler) *http.Server {
+	return &http.Server{
+		Handler:           handler,
+		ErrorLog:          slog.NewLogLogger(logger.Handler(), slog.LevelError),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       120 * time.Second,
+	}
 }

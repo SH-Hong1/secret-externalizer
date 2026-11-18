@@ -21,6 +21,9 @@ type fakeIDP struct {
 	key    *rsa.PrivateKey
 
 	mu sync.Mutex
+	// issuer, when not empty, is the issuer the discovery document reports
+	// instead of the provider's own URL.
+	issuer string
 	// claims are the claims of the next ID token the token endpoint returns.
 	claims map[string]any
 	// tokenStatus, when not zero, makes the token endpoint fail with it.
@@ -48,7 +51,8 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 	return idp
 }
 
-// URL returns the issuer URL the provider reports in its discovery document.
+// URL returns the provider's address, which its discovery document reports as
+// the issuer unless ReportIssuer has set another.
 func (p *fakeIDP) URL() string { return p.server.URL }
 
 // Client returns an HTTP client that reaches the provider.
@@ -63,6 +67,14 @@ func (p *fakeIDP) SetClaims(claims map[string]any) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.claims = claims
+}
+
+// ReportIssuer makes the discovery document report issuer, as a provider does
+// when it is reached at an address other than its issuer.
+func (p *fakeIDP) ReportIssuer(issuer string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.issuer = issuer
 }
 
 // FailToken makes the token endpoint answer with status.
@@ -82,8 +94,14 @@ func (p *fakeIDP) Received() (verifier, clientID, clientSecret string) {
 
 func (p *fakeIDP) discovery(w http.ResponseWriter, _ *http.Request) {
 	u := p.server.URL
+	p.mu.Lock()
+	issuer := p.issuer
+	p.mu.Unlock()
+	if issuer == "" {
+		issuer = u
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"issuer":                                u,
+		"issuer":                                issuer,
 		"authorization_endpoint":                u + "/auth",
 		"token_endpoint":                        u + "/token",
 		"jwks_uri":                              u + "/keys",

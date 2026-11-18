@@ -221,6 +221,22 @@ func TestRun_GivesUpOnDiscovery(t *testing.T) {
 	}
 }
 
+func TestDiscover_GiveUpNamesDiscoveryURL(t *testing.T) {
+	issuer := newFakeIssuer(t, -1)
+	cfg := validConfigFor(t, "http://localhost:8081/realms/secret-externalizer")
+	cfg.oidc.DiscoveryURL = issuer.URL()
+
+	_, err := discover(t.Context(), discardLogger(), cfg.oidc, outboundClient(), fastRetry())
+	if err == nil {
+		t.Fatalf("discover() against %s that always answers 503 error = nil, want an error", issuer.URL())
+	}
+	for _, want := range []string{cfg.oidc.IssuerURL, issuer.URL()} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("discover() error = %q, want it to name %s", err, want)
+		}
+	}
+}
+
 func TestRun_RetriesDiscovery(t *testing.T) {
 	valkeyAddr := testValkeyAddr(t)
 	issuer := newFakeIssuer(t, 2)
@@ -331,6 +347,29 @@ func validConfigFor(t *testing.T, issuerURL string) config {
 }
 
 func discardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
+
+func TestNewHTTPServer_ErrorLogIsJSON(t *testing.T) {
+	var buf bytes.Buffer
+	srv := newHTTPServer(slog.New(slog.NewJSONHandler(&buf, nil)), http.NotFoundHandler())
+	if srv.ErrorLog == nil {
+		t.Fatal("newHTTPServer().ErrorLog = nil, want a logger that writes through slog")
+	}
+	srv.ErrorLog.Print("http: fake server message")
+
+	var rec struct {
+		Level string `json:"level"`
+		Msg   string `json:"msg"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &rec); err != nil {
+		t.Fatalf("ErrorLog output %q is not JSON: %v", buf.String(), err)
+	}
+	if rec.Level != "ERROR" || rec.Msg != "http: fake server message" {
+		t.Errorf("ErrorLog output level, msg = %q, %q, want %q, %q", rec.Level, rec.Msg, "ERROR", "http: fake server message")
+	}
+	if srv.ReadHeaderTimeout <= 0 || srv.ReadTimeout <= 0 || srv.WriteTimeout <= 0 || srv.IdleTimeout <= 0 {
+		t.Errorf("newHTTPServer() timeouts = %v %v %v %v, want all set", srv.ReadHeaderTimeout, srv.ReadTimeout, srv.WriteTimeout, srv.IdleTimeout)
+	}
+}
 
 func TestValkeyRetryDelay_GivesUp(t *testing.T) {
 	var cmd valkey.Completed

@@ -142,6 +142,11 @@ func TestLoadConfig_BadBaseURL(t *testing.T) {
 		"ftp://localhost",
 		"http://",
 		"http://localhost:8080/app?x=1",
+		"http://localhost:8080/app",
+		"http://localhost:8080/app/",
+		"http://localhost:8080//",
+		"http://localhost:8080/?",
+		"http://localhost:8080?",
 	} {
 		t.Run(base, func(t *testing.T) {
 			env := validEnv()

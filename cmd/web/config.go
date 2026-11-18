@@ -93,7 +93,9 @@ func loadConfig(_ []string, getenv func(string) string) (config, error) {
 }
 
 // parseBaseURL checks that raw is an absolute http or https address with no
-// query or fragment, and returns it without a trailing slash.
+// path other than "/", and no user info, query, or fragment, and returns it
+// without a trailing slash. Routes are registered at the root, so a base URL
+// with a path would build a callback address that no route answers.
 func parseBaseURL(raw string) (string, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
@@ -105,8 +107,11 @@ func parseBaseURL(raw string) (string, error) {
 	if u.Host == "" {
 		return "", errors.New("host is empty")
 	}
-	if u.RawQuery != "" || u.Fragment != "" || u.User != nil {
+	if u.RawQuery != "" || u.ForceQuery || u.Fragment != "" || u.User != nil {
 		return "", errors.New("must not have user info, a query, or a fragment")
+	}
+	if u.Path != "" && u.Path != "/" {
+		return "", errors.New("must not have a path other than /")
 	}
 	return strings.TrimSuffix(u.String(), "/"), nil
 }

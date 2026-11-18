@@ -202,6 +202,7 @@ func TestExchange_ErrorHidesSecret(t *testing.T) {
 func TestNewAuthenticator_SeparateDiscoveryURL(t *testing.T) {
 	idp := newFakeIDP(t)
 	const issuer = "http://issuer.invalid/realms/dev"
+	idp.ReportIssuer(issuer)
 	cfg := testConfig(issuer)
 	cfg.DiscoveryURL = idp.URL()
 	a := newTestAuthenticator(t, idp, cfg)
@@ -214,6 +215,23 @@ func TestNewAuthenticator_SeparateDiscoveryURL(t *testing.T) {
 	idp.SetClaims(validClaims(idp.URL()))
 	if _, err := a.Exchange(t.Context(), "fake-code", testVerifier, testNonce); err == nil {
 		t.Errorf("Exchange() with iss %q error = nil, want an error", idp.URL())
+	}
+}
+
+func TestNewAuthenticator_IssuerMismatch(t *testing.T) {
+	idp := newFakeIDP(t)
+	idp.ReportIssuer("http://localhost:8081/realms/secret-externalizer")
+	cfg := testConfig("http://localhost:8081/realms/mistyped")
+	cfg.DiscoveryURL = idp.URL()
+
+	_, err := auth.NewAuthenticator(t.Context(), cfg, idp.Client())
+	if err == nil {
+		t.Fatalf("NewAuthenticator() with IssuerURL %q against a provider reporting another issuer error = nil, want an error", cfg.IssuerURL)
+	}
+	for _, want := range []string{cfg.IssuerURL, "http://localhost:8081/realms/secret-externalizer"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("NewAuthenticator() error = %q, want it to name %q", err, want)
+		}
 	}
 }
 

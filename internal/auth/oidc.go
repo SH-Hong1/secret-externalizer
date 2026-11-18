@@ -58,7 +58,8 @@ type Authenticator struct {
 }
 
 // NewAuthenticator reads the provider's discovery document and returns an
-// Authenticator for cfg. Every request to the provider goes through client,
+// Authenticator for cfg. It fails when the document names an issuer other
+// than cfg.IssuerURL, including when it was read from cfg.DiscoveryURL. Every request to the provider goes through client,
 // which must have a positive Timeout; any other client is rejected.
 func NewAuthenticator(ctx context.Context, cfg Config, client *http.Client) (*Authenticator, error) {
 	if client == nil {
@@ -85,10 +86,17 @@ func NewAuthenticator(ctx context.Context, cfg Config, client *http.Client) (*Au
 	}
 
 	var metadata struct {
+		Issuer             string `json:"issuer"`
 		EndSessionEndpoint string `json:"end_session_endpoint"`
 	}
 	if err := provider.Claims(&metadata); err != nil {
 		return nil, fmt.Errorf("reading oidc discovery document: %w", err)
+	}
+	if metadata.Issuer != cfg.IssuerURL {
+		// go-oidc skips this comparison under InsecureIssuerURLContext. A
+		// mistyped IssuerURL would otherwise start cleanly and reject every
+		// ID token.
+		return nil, fmt.Errorf("oidc discovery document at %s names issuer %q, want %q", discoveryURL, metadata.Issuer, cfg.IssuerURL)
 	}
 	logoutURL, err := buildLogoutURL(metadata.EndSessionEndpoint, cfg.ClientID, cfg.LogoutReturn)
 	if err != nil {

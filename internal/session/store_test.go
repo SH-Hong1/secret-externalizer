@@ -117,7 +117,8 @@ func TestStore_Delete(t *testing.T) {
 
 func TestStore_AbsoluteTimeout(t *testing.T) {
 	clock := newClock()
-	s := session.NewStore(valkeyClient(t), clock.Now)
+	c := valkeyClient(t)
+	s := session.NewStore(c, clock.Now)
 	id, err := s.Create(t.Context(), testUser())
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
@@ -125,6 +126,14 @@ func TestStore_AbsoluteTimeout(t *testing.T) {
 	clock.Advance(session.AbsoluteTimeout + time.Minute)
 	if _, err := s.Get(t.Context(), id); !errors.Is(err, session.ErrNotFound) {
 		t.Errorf("Get(after absolute timeout) error = %v, want ErrNotFound", err)
+	}
+	key := session.KeyForTest("session", id)
+	n, err := c.Do(t.Context(), c.B().Exists().Key(key).Build()).AsInt64()
+	if err != nil {
+		t.Fatalf("EXISTS %s error = %v", key, err)
+	}
+	if n != 0 {
+		t.Errorf("session key after the absolute timeout exists, want it deleted")
 	}
 }
 
@@ -157,6 +166,38 @@ func TestStore_IdleTTL(t *testing.T) {
 	}
 	if ttl := keyTTL(t, c, key); ttl > 10*time.Minute || ttl <= 0 {
 		t.Errorf("TTL near the absolute limit = %v, want at most 10m", ttl)
+	}
+}
+
+func TestStore_GetRenewsIdleTTL(t *testing.T) {
+	c := valkeyClient(t)
+	s := session.NewStore(c, newClock().Now)
+	id, err := s.Create(t.Context(), testUser())
+	if err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	key := session.KeyForTest("session", id)
+	if err := c.Do(t.Context(), c.B().Pexpire().Key(key).Milliseconds(time.Minute.Milliseconds()).Build()).Error(); err != nil {
+		t.Fatalf("PEXPIRE %s error = %v", key, err)
+	}
+
+	if _, err := s.Get(t.Context(), id); err != nil {
+		t.Fatalf("Get() error = %v", err)
+	}
+	if ttl := keyTTL(t, c, key); ttl > session.IdleTimeout || ttl < session.IdleTimeout-time.Minute {
+		t.Errorf("TTL after Get on a key with 1m left = %v, want it renewed to about %v", ttl, session.IdleTimeout)
+	}
+}
+
+func TestStore_AttemptTTL(t *testing.T) {
+	c := valkeyClient(t)
+	s := session.NewStore(c, newClock().Now)
+	id, err := s.PutAttempt(t.Context(), auth.Attempt{State: "st", Nonce: "no", Verifier: "ve", ReturnTo: "/"})
+	if err != nil {
+		t.Fatalf("PutAttempt() error = %v", err)
+	}
+	if ttl := keyTTL(t, c, session.KeyForTest("attempt", id)); ttl > session.AttemptTimeout || ttl < session.AttemptTimeout-time.Minute {
+		t.Errorf("attempt TTL = %v, want at most %v and close to it", ttl, session.AttemptTimeout)
 	}
 }
 
