@@ -78,7 +78,7 @@ func serve(ctx context.Context, logger *slog.Logger, cfg config) error {
 	}
 
 	srv := &http.Server{
-		Handler:           web.NewServer(logger),
+		Handler:           web.NewServer(logger, unconfigured{}, unconfigured{}, unconfigured{}),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

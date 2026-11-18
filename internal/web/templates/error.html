@@ -2,4 +2,5 @@
 {{define "body"}}<main>
 <h1>{{.Status}}</h1>
 <p>{{.Message}}</p>
-</main>{{end}}
+{{if .LoginLink}}<p><a href="/login">다시 로그인</a></p>
+{{end}}</main>{{end}}

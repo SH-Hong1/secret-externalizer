@@ -24,10 +24,14 @@ func errorMessage(status int) string {
 	switch status {
 	case http.StatusBadRequest:
 		return "요청을 처리할 수 없습니다. 처음부터 다시 로그인해 주세요."
+	case http.StatusUnauthorized:
+		return "로그인이 필요합니다."
 	case http.StatusForbidden:
 		return "이 화면을 볼 권한이 없습니다."
 	case http.StatusNotFound:
 		return "화면을 찾을 수 없습니다."
+	case http.StatusMethodNotAllowed:
+		return "이 주소는 이 방식의 요청을 받지 않습니다."
 	case http.StatusServiceUnavailable:
 		return "세션 저장소에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요."
 	default:
@@ -96,9 +100,10 @@ func (rd *renderer) fail(w http.ResponseWriter, r *http.Request, logger *slog.Lo
 	}
 	var buf bytes.Buffer
 	data := struct {
-		Status  int
-		Message string
-	}{status, errorMessage(status)}
+		Status    int
+		Message   string
+		LoginLink bool
+	}{status, errorMessage(status), status == http.StatusBadRequest || status == http.StatusUnauthorized}
 	if execErr := rd.pages[errorFile].ExecuteTemplate(&buf, "layout", data); execErr != nil {
 		logger.ErrorContext(r.Context(), "rendering error page", "error", execErr)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

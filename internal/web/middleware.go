@@ -1,12 +1,17 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"runtime/debug"
 	"time"
+
+	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/session"
 )
 
 // securityHeaders sets the headers every response carries.
@@ -68,7 +73,7 @@ func requestLog(logger *slog.Logger, next http.Handler) http.Handler {
 func recoverPanic(logger *slog.Logger, rd *renderer, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
-		defer func() {
+		defer func(r *http.Request) {
 			v := recover()
 			if v == nil {
 				return
@@ -84,7 +89,84 @@ func recoverPanic(logger *slog.Logger, rd *renderer, next http.Handler) http.Han
 				return
 			}
 			rd.fail(rec, r, logger, http.StatusInternalServerError, errors.New("handler panic"))
-		}()
+		}(r)
 		next.ServeHTTP(rec, r)
+	})
+}
+
+// crossOriginProtection rejects state-changing requests that a browser sends
+// from another origin, and shows the 403 page for them.
+func crossOriginProtection(logger *slog.Logger, rd *renderer, next http.Handler) http.Handler {
+	cop := http.NewCrossOriginProtection()
+	cop.SetDenyHandler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rd.fail(w, r, logger, http.StatusForbidden, errors.New("cross-origin request"))
+	}))
+	return cop.Handler(next)
+}
+
+// userKey is the context key under which loadSession stores the user.
+type userKey struct{}
+
+// userFrom returns the signed-in user of the request, if there is one.
+func userFrom(ctx context.Context) (auth.User, bool) {
+	u, ok := ctx.Value(userKey{}).(auth.User)
+	return u, ok
+}
+
+// loadSession reads the session named by the se_session cookie and puts its
+// user in the request context. A cookie for a session that no longer exists is
+// deleted and the request goes on without a user. Any other store error shows
+// the 503 page, so a store outage never looks like a logout.
+func loadSession(logger *slog.Logger, rd *renderer, sessions SessionStore) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			c, err := r.Cookie(sessionCookie)
+			if err != nil {
+				next.ServeHTTP(w, r)
+				return
+			}
+			s, err := sessions.Get(r.Context(), session.ID(c.Value))
+			if errors.Is(err, session.ErrNotFound) {
+				clearCookie(w, sessionCookie)
+				next.ServeHTTP(w, r)
+				return
+			}
+			if err != nil {
+				rd.fail(w, r, logger, http.StatusServiceUnavailable, fmt.Errorf("reading session: %w", err))
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), userKey{}, s.User)))
+		})
+	}
+}
+
+// requireLogin lets only signed-in requests through. A GET without a user is
+// sent to the login page, which returns it here afterwards; any other method
+// gets 401, because replaying a form after login is not safe.
+func requireLogin(logger *slog.Logger, rd *renderer, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := userFrom(r.Context()); ok {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if r.Method == http.MethodGet || r.Method == http.MethodHead {
+			q := url.Values{"return_to": {r.URL.RequestURI()}}
+			http.Redirect(w, r, "/login?"+q.Encode(), http.StatusSeeOther)
+			return
+		}
+		rd.fail(w, r, logger, http.StatusUnauthorized, errors.New("not signed in"))
+	})
+}
+
+// requireRole lets through only users who have role. It runs inside
+// requireLogin.
+func requireRole(logger *slog.Logger, rd *renderer, role auth.Role, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, ok := userFrom(r.Context())
+		if !ok || !u.Has(role) {
+			rd.fail(w, r, logger, http.StatusForbidden, errors.New("missing role"))
+			return
+		}
+		next.ServeHTTP(w, r)
 	})
 }

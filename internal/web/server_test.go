@@ -16,7 +16,7 @@ import (
 func newTestServer(t *testing.T, logOut io.Writer) *httptest.Server {
 	t.Helper()
 	logger := slog.New(slog.NewJSONHandler(logOut, nil))
-	srv := httptest.NewServer(web.NewServer(logger))
+	srv := httptest.NewServer(web.NewServer(logger, &fakeAuthenticator{}, newFakeSessions(), newFakeAttempts()))
 	t.Cleanup(srv.Close)
 	return srv
 }
