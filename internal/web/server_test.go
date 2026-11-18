@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/web"
 )
@@ -57,16 +58,40 @@ func TestHealthz(t *testing.T) {
 
 func TestSecurityHeaders(t *testing.T) {
 	srv := newTestServer(t, io.Discard)
-	resp := get(t, srv.URL+"/healthz")
 	want := map[string]string{
-		"Content-Security-Policy": "default-src 'self'; frame-ancestors 'none'",
+		"Content-Security-Policy": "default-src 'self'; base-uri 'none'; frame-ancestors 'none'",
 		"X-Content-Type-Options":  "nosniff",
 		"Referrer-Policy":         "no-referrer",
+		"Cache-Control":           "no-store",
 	}
-	for k, v := range want {
-		if got := resp.header.Get(k); got != v {
-			t.Errorf("GET /healthz header %s = %q, want %q", k, got, v)
+	// /healthz is a plain page, /nope an error page, and / a redirect to the
+	// login page; every kind of response carries the headers.
+	for _, path := range []string{"/healthz", "/nope", "/"} {
+		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+path, nil)
+		if err != nil {
+			t.Fatalf("NewRequest(%q) error = %v", path, err)
 		}
+		resp, err := noRedirectClient().Do(req)
+		if err != nil {
+			t.Fatalf("GET %s error = %v", path, err)
+		}
+		if err := resp.Body.Close(); err != nil {
+			t.Fatalf("closing body of %s: %v", path, err)
+		}
+		for k, v := range want {
+			if got := resp.Header.Get(k); got != v {
+				t.Errorf("GET %s header %s = %q, want %q", path, k, got, v)
+			}
+		}
+	}
+}
+
+// noRedirectClient returns a client that hands back redirects instead of
+// following them.
+func noRedirectClient() *http.Client {
+	return &http.Client{
+		Timeout:       5 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
 	}
 }
 

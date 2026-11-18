@@ -40,10 +40,19 @@ func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, 
 	rd := newRenderer()
 	addRoutes(mux, logger, rd, authn, sessions, attempts)
 
-	var h http.Handler = mux
-	h = crossOriginProtection(logger, rd, h)
-	h = securityHeaders(h)
-	h = requestLog(logger, h)
-	h = recoverPanic(logger, rd, h)
+	return chain(mux,
+		recoverPanic(logger, rd),
+		requestLog(logger),
+		securityHeaders(),
+		crossOriginProtection(logger, rd),
+	)
+}
+
+// chain wraps h in middleware. The first middleware is the outermost, so a
+// request passes them in the order given.
+func chain(h http.Handler, middleware ...func(http.Handler) http.Handler) http.Handler {
+	for i := len(middleware) - 1; i >= 0; i-- {
+		h = middleware[i](h)
+	}
 	return h
 }

@@ -19,6 +19,9 @@ const (
 	// loginCookieMaxAge is session.AttemptTimeout in seconds, so the cookie
 	// lives as long as the attempt it names.
 	loginCookieMaxAge = int(session.AttemptTimeout / time.Second)
+	// maxReturnToLen bounds the return address that GET /login, which needs
+	// no sign-in, stores in the session store.
+	maxReturnToLen = 2048
 )
 
 // setCookie sets a cookie with the attributes every cookie of this server
@@ -40,10 +43,11 @@ func clearCookie(w http.ResponseWriter, name string) {
 	setCookie(w, name, "", -1)
 }
 
-// safeReturnTo returns s when it is a path on this site, and "/" otherwise.
-// It rejects "//host" and "/\host", which browsers read as another host.
+// safeReturnTo returns s when it is a path on this site no longer than
+// maxReturnToLen bytes, and "/" otherwise. It rejects "//host" and "/\host",
+// which browsers read as another host.
 func safeReturnTo(s string) string {
-	if len(s) == 0 || s[0] != '/' {
+	if len(s) == 0 || len(s) > maxReturnToLen || s[0] != '/' {
 		return "/"
 	}
 	if len(s) > 1 && (s[1] == '/' || s[1] == '\\') {
@@ -114,7 +118,13 @@ func handleCallback(logger *slog.Logger, rd *renderer, authn Authenticator, sess
 
 		u, err := authn.Exchange(r.Context(), q.Get("code"), a.Verifier, a.Nonce)
 		if errors.Is(err, auth.ErrNoRole) {
-			rd.fail(w, r, logger, http.StatusForbidden, err)
+			attrs := []any{"reason", "no role"}
+			var nr *auth.NoRoleError
+			if errors.As(err, &nr) {
+				attrs = append(attrs, "subject", nr.Subject)
+			}
+			logger.InfoContext(r.Context(), "login refused", attrs...)
+			rd.page(w, r, logger, http.StatusForbidden, "norole.html", nil)
 			return
 		}
 		if err != nil {
@@ -125,29 +135,43 @@ func handleCallback(logger *slog.Logger, rd *renderer, authn Authenticator, sess
 
 		id, err := sessions.Create(r.Context(), u)
 		if err != nil {
-			rd.fail(w, r, logger, http.StatusServiceUnavailable, fmt.Errorf("creating session: %w", err))
+			rd.fail(w, r, logger, http.StatusServiceUnavailable, fmt.Errorf("starting session after login: %w", err))
 			return
+		}
+		if old, err := r.Cookie(sessionCookie); err == nil {
+			// A session from an earlier login in this browser must not
+			// outlive the new one. Failing to remove it does not undo the
+			// login that just succeeded.
+			deleteSession(r, logger, sessions, session.ID(old.Value), "replacing previous session")
 		}
 		setCookie(w, sessionCookie, id.Reveal(), 0)
 		http.Redirect(w, r, safeReturnTo(a.ReturnTo), http.StatusSeeOther)
 	})
 }
 
-// handleLogout ends the session and sends the browser to the identity
-// provider's logout page. It runs behind requireLogin, so the session cookie
-// is present.
-func handleLogout(logger *slog.Logger, rd *renderer, authn Authenticator, sessions SessionStore) http.Handler {
+// handleLogout ends the session named by the se_session cookie, if any, and
+// sends the browser to the identity provider's logout page. It does not need
+// a live session: after the session has expired, or while the session store
+// is down, the provider's own session must still be ended, or the next person
+// at this browser could sign in again without a password. A failure to delete
+// the session is logged and does not stop the logout.
+func handleLogout(logger *slog.Logger, authn Authenticator, sessions SessionStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		c, err := r.Cookie(sessionCookie)
-		if err != nil {
-			rd.fail(w, r, logger, http.StatusUnauthorized, err)
-			return
-		}
-		if err := sessions.Delete(r.Context(), session.ID(c.Value)); err != nil {
-			rd.fail(w, r, logger, http.StatusServiceUnavailable, fmt.Errorf("deleting session: %w", err))
-			return
+		if c, err := r.Cookie(sessionCookie); err == nil {
+			deleteSession(r, logger, sessions, session.ID(c.Value), "logout")
 		}
 		clearCookie(w, sessionCookie)
 		http.Redirect(w, r, authn.LogoutURL(), http.StatusSeeOther)
 	})
+}
+
+// deleteSession removes the session id where the caller goes on whether or not
+// that succeeds. A session that is already gone is not an error; any other
+// failure is logged once, with during naming what the request was doing.
+func deleteSession(r *http.Request, logger *slog.Logger, sessions SessionStore, id session.ID, during string) {
+	err := sessions.Delete(r.Context(), id)
+	if err == nil || errors.Is(err, session.ErrNotFound) {
+		return
+	}
+	logger.ErrorContext(r.Context(), "session not deleted", "during", during, "error", err)
 }

@@ -158,6 +158,13 @@ func TestExchange_NoRole(t *testing.T) {
 	if !errors.Is(err, auth.ErrNoRole) {
 		t.Errorf("Exchange() without roles error = %v, want %v", err, auth.ErrNoRole)
 	}
+	var nr *auth.NoRoleError
+	if !errors.As(err, &nr) {
+		t.Fatalf("Exchange() without roles error = %v, want a *NoRoleError", err)
+	}
+	if nr.Subject != "fake-subject" {
+		t.Errorf("Exchange() without roles NoRoleError.Subject = %q, want %q", nr.Subject, "fake-subject")
+	}
 }
 
 func TestExchange_ErrorHidesSecret(t *testing.T) {

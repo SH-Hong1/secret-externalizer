@@ -75,12 +75,12 @@ func TestRenderer_UnknownTemplate(t *testing.T) {
 func TestRecoverPanic(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
-	h := recoverPanic(logger, newRenderer(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	h := recoverPanic(logger, newRenderer())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("fake-secret-value")
 	}))
 	rec := httptest.NewRecorder()
 
-	h.ServeHTTP(rec, newTestRequest(t))
+	h.ServeHTTP(rec, httptest.NewRequestWithContext(t.Context(), http.MethodPost, "/boom?token=fake-query-value", nil))
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("panicking handler status = %d, want 500", rec.Code)
@@ -97,12 +97,26 @@ func TestRecoverPanic(t *testing.T) {
 	if got := panicType(t, logBuf.String()); got != "string" {
 		t.Errorf("log panic_type = %q, want %q", got, "string")
 	}
+	var logged struct {
+		Method string `json:"method"`
+		Path   string `json:"path"`
+	}
+	first, _, _ := strings.Cut(logBuf.String(), "\n") // the panic is logged first, then the 500 page
+	if err := json.Unmarshal([]byte(first), &logged); err != nil {
+		t.Fatalf("log line %q is not JSON: %v", first, err)
+	}
+	if logged.Method != http.MethodPost || logged.Path != "/boom" {
+		t.Errorf("handler panic log method, path = %q, %q, want %q, %q", logged.Method, logged.Path, http.MethodPost, "/boom")
+	}
+	if strings.Contains(logBuf.String(), "fake-query-value") {
+		t.Errorf("log = %q, want the query string left out", logBuf.String())
+	}
 }
 
 func TestRecoverPanic_AfterPartialWrite(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
-	h := recoverPanic(logger, newRenderer(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := recoverPanic(logger, newRenderer())(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("partial")) // the recorder never fails a write
 		panic("fake-secret-value")
 	}))
@@ -149,7 +163,7 @@ func panicType(t *testing.T, log string) string {
 }
 
 func TestRecoverPanic_AbortHandler(t *testing.T) {
-	h := recoverPanic(slog.New(slog.DiscardHandler), newRenderer(), http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	h := recoverPanic(slog.New(slog.DiscardHandler), newRenderer())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic(http.ErrAbortHandler)
 	}))
 	defer func() {

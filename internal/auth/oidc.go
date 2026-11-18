@@ -124,8 +124,8 @@ func (a *Authenticator) AuthCodeURL(state, nonce, verifier string) string {
 
 // Exchange trades an authorization code for tokens, verifies the ID token's
 // signature, issuer, audience, expiry, and nonce, and returns the user it
-// names. It returns an error wrapping ErrNoRole when the user has neither
-// role. Its errors never contain the client secret, the code, or the verifier.
+// names. When the user has neither role it returns an error wrapping a
+// *NoRoleError, which matches ErrNoRole. Its errors never contain the client secret, the code, or the verifier.
 func (a *Authenticator) Exchange(ctx context.Context, code, verifier, nonce string) (User, error) {
 	if nonce == "" {
 		return User{}, errors.New("exchanging authorization code: nonce is empty")
@@ -155,6 +155,9 @@ func (a *Authenticator) Exchange(ctx context.Context, code, verifier, nonce stri
 		return User{}, fmt.Errorf("reading id token claims: %w", err)
 	}
 	roles, err := rolesFromClaim(claims.Roles)
+	if errors.Is(err, ErrNoRole) {
+		return User{}, fmt.Errorf("reading roles: %w", &NoRoleError{Subject: idToken.Subject})
+	}
 	if err != nil {
 		return User{}, fmt.Errorf("reading roles: %w", err)
 	}

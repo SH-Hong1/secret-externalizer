@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/session"
 	"github.com/SH-Hong1/secret-externalizer/internal/web"
 )
 
@@ -285,20 +287,137 @@ func TestCallback_ProviderError(t *testing.T) {
 	if _, ok := e.attempts.get(c.value); ok {
 		t.Errorf("attempt still stored after a provider error, want it removed")
 	}
+	checkCookie(t, res, "se_login", -1)
 }
 
 func TestCallback_NoRole(t *testing.T) {
+	tests := []struct {
+		name        string
+		err         error
+		wantSubject string
+	}{
+		{name: "with subject", err: fmt.Errorf("reading roles: %w", &auth.NoRoleError{Subject: "fake-subject"}), wantSubject: "fake-subject"},
+		{name: "sentinel only", err: auth.ErrNoRole},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			e.authn.err = tt.err
+			c, state := e.login(t, "/")
+
+			res := e.callback(t, state, c)
+
+			if res.status != http.StatusForbidden {
+				t.Errorf("callback for a user without a role status = %d, want 403", res.status)
+			}
+			if n := e.sessions.count(); n != 0 {
+				t.Errorf("sessions = %d, want 0", n)
+			}
+			for _, want := range []string{`action="/logout"`, `method="post"`} {
+				if !strings.Contains(res.body, want) {
+					t.Errorf("callback for a user without a role body = %q, want it to contain %q", res.body, want)
+				}
+			}
+			refused := logRecords(t, e.log.String(), "login refused")
+			if len(refused) != 1 {
+				t.Fatalf("login refused log lines = %d, want 1; log = %q", len(refused), e.log.String())
+			}
+			if got := refused[0]["level"]; got != "INFO" {
+				t.Errorf("login refused level = %v, want INFO", got)
+			}
+			got, _ := refused[0]["subject"].(string) // absent when the error carries no subject
+			if got != tt.wantSubject {
+				t.Errorf("login refused subject = %q, want %q", got, tt.wantSubject)
+			}
+		})
+	}
+}
+
+func TestCallback_NoState(t *testing.T) {
 	e := newTestEnv(t)
-	e.authn.err = auth.ErrNoRole
-	c, state := e.login(t, "/")
+	c, _ := e.login(t, "/")
 
-	res := e.callback(t, state, c)
+	res := e.do(t, http.MethodGet, "/auth/callback?"+url.Values{"code": {fakeCode}}.Encode(), nil, c)
 
-	if res.status != http.StatusForbidden {
-		t.Errorf("callback for a user without a role status = %d, want 403", res.status)
+	if res.status != http.StatusBadRequest {
+		t.Errorf("callback without state status = %d, want 400", res.status)
 	}
 	if n := e.sessions.count(); n != 0 {
 		t.Errorf("sessions = %d, want 0", n)
+	}
+	if e.authn.exchangeRuns != 0 {
+		t.Errorf("Exchange ran %d times, want 0", e.authn.exchangeRuns)
+	}
+}
+
+func TestCallback_StoreDown(t *testing.T) {
+	storeErr := errors.New("dial tcp 192.0.2.1:6379: connection refused")
+	tests := []struct {
+		name string
+		fail func(e *testEnv)
+	}{
+		{"taking the attempt", func(e *testEnv) { e.attempts.takeErr = storeErr }},
+		{"creating the session", func(e *testEnv) { e.sessions.createErr = storeErr }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			c, state := e.login(t, "/")
+			tt.fail(e)
+
+			res := e.callback(t, state, c)
+
+			if res.status != http.StatusServiceUnavailable {
+				t.Errorf("callback with the store failing at %s status = %d, want 503", tt.name, res.status)
+			}
+			if want := "세션 저장소에 연결할 수 없습니다."; !strings.Contains(res.body, want) {
+				t.Errorf("callback body = %q, want it to contain %q", res.body, want)
+			}
+			if res.cookie("se_session") != nil {
+				t.Errorf("callback with the store failing at %s set se_session, want no session cookie", tt.name)
+			}
+			if n := countErrors(t, e.log.String()); n != 1 {
+				t.Errorf("error log lines = %d, want 1; log = %q", n, e.log.String())
+			}
+		})
+	}
+}
+
+func TestCallback_ReplacesPreviousSession(t *testing.T) {
+	e := newTestEnv(t)
+	old := e.signIn(t, auth.User{Subject: "fake-previous", Name: "Previous User", Roles: []auth.Role{auth.RoleUser}})
+	c, state := e.login(t, "/")
+
+	res := e.callback(t, state, c, old)
+
+	if res.status != http.StatusSeeOther {
+		t.Fatalf("callback status = %d, want 303", res.status)
+	}
+	if _, err := e.sessions.Get(t.Context(), session.ID(old.value)); !errors.Is(err, session.ErrNotFound) {
+		t.Errorf("previous session after a new login: Get error = %v, want ErrNotFound", err)
+	}
+	if n := e.sessions.count(); n != 1 {
+		t.Errorf("sessions after a new login = %d, want 1", n)
+	}
+	if set := res.cookie("se_session"); set == nil || set.Value == old.value {
+		t.Errorf("callback se_session = %v, want a new session cookie", set)
+	}
+}
+
+func TestCallback_PreviousSessionDeleteFails(t *testing.T) {
+	e := newTestEnv(t)
+	old := e.signIn(t, auth.User{Subject: "fake-previous", Name: "Previous User", Roles: []auth.Role{auth.RoleUser}})
+	e.sessions.deleteErr = errors.New("dial tcp 192.0.2.1:6379: connection refused")
+	c, state := e.login(t, "/")
+
+	res := e.callback(t, state, c, old)
+
+	if res.status != http.StatusSeeOther {
+		t.Errorf("callback status = %d, want 303 even when the previous session cannot be deleted", res.status)
+	}
+	checkCookie(t, res, "se_session", 0)
+	if n := countErrors(t, e.log.String()); n != 1 {
+		t.Errorf("error log lines = %d, want 1; log = %q", n, e.log.String())
 	}
 }
 
@@ -330,17 +449,23 @@ func TestCallback_ReturnTo(t *testing.T) {
 		{`/\evil.example`, "/"},
 		{"", "/"},
 		{"/audit?page=2", "/audit?page=2"},
+		{"/" + strings.Repeat("a", 2047), "/" + strings.Repeat("a", 2047)},
+		{"/" + strings.Repeat("a", 2048), "/"},
 	}
 	for _, tt := range tests {
-		t.Run("login "+tt.returnTo, func(t *testing.T) {
+		label := tt.returnTo
+		if len(label) > 40 {
+			label = fmt.Sprintf("/a... (%d bytes)", len(label))
+		}
+		t.Run("login "+label, func(t *testing.T) {
 			e := newTestEnv(t)
 			c, state := e.login(t, tt.returnTo)
 			res := e.callback(t, state, c)
 			if got := res.location(); res.status != http.StatusSeeOther || got != tt.want {
-				t.Errorf("callback after /login?return_to=%q = %d %q, want 303 %q", tt.returnTo, res.status, got, tt.want)
+				t.Errorf("callback after /login?return_to=%q = %d %q, want 303 %q", label, res.status, got, tt.want)
 			}
 		})
-		t.Run("stored "+tt.returnTo, func(t *testing.T) {
+		t.Run("stored "+label, func(t *testing.T) {
 			e := newTestEnv(t)
 			a, err := auth.NewAttempt(tt.returnTo)
 			if err != nil {
@@ -352,7 +477,7 @@ func TestCallback_ReturnTo(t *testing.T) {
 			}
 			res := e.callback(t, a.State, cookie{"se_login", id.Reveal()})
 			if got := res.location(); res.status != http.StatusSeeOther || got != tt.want {
-				t.Errorf("callback for a stored ReturnTo %q = %d %q, want 303 %q", tt.returnTo, res.status, got, tt.want)
+				t.Errorf("callback for a stored ReturnTo %q = %d %q, want 303 %q", label, res.status, got, tt.want)
 			}
 		})
 	}
@@ -370,7 +495,7 @@ func TestHome_ShowsUser(t *testing.T) {
 	if strings.Contains(res.body, "<script>") {
 		t.Errorf("GET / body = %q, want the name escaped", res.body)
 	}
-	for _, want := range []string{"Fake &lt;script&gt;User&lt;/script&gt;", "user", `action="/logout"`, `method="post"`} {
+	for _, want := range []string{"Fake &lt;script&gt;User&lt;/script&gt;", "역할: user", `action="/logout"`, `method="post"`} {
 		if !strings.Contains(res.body, want) {
 			t.Errorf("GET / body = %q, want it to contain %q", res.body, want)
 		}
@@ -439,7 +564,7 @@ func TestSession_StoreDown(t *testing.T) {
 	if got := res.location(); got != "" {
 		t.Errorf("GET / with the store down Location = %q, want none", got)
 	}
-	if n := countLevel(t, e.log.String(), "ERROR"); n != 1 {
+	if n := countErrors(t, e.log.String()); n != 1 {
 		t.Errorf("error log lines = %d, want 1; log = %q", n, e.log.String())
 	}
 }
@@ -501,11 +626,45 @@ func TestLogout_Get(t *testing.T) {
 	}
 }
 
-func TestLogout_Anonymous(t *testing.T) {
+// checkLoggedOut checks that a logout response sends the browser to the
+// provider's logout page and deletes the session cookie.
+func checkLoggedOut(t *testing.T, res result, what string) {
+	t.Helper()
+	if res.status != http.StatusSeeOther {
+		t.Errorf("POST /logout %s status = %d, want 303", what, res.status)
+	}
+	if got := res.location(); got != fakeLogoutURL {
+		t.Errorf("POST /logout %s Location = %q, want %q", what, got, fakeLogoutURL)
+	}
+	checkCookie(t, res, "se_session", -1)
+}
+
+func TestLogout_NoCookie(t *testing.T) {
 	e := newTestEnv(t)
 	res := e.do(t, http.MethodPost, "/logout", sameOrigin())
-	if res.status != http.StatusUnauthorized {
-		t.Errorf("POST /logout without login status = %d, want 401", res.status)
+	checkLoggedOut(t, res, "without a session cookie")
+}
+
+func TestLogout_SessionGone(t *testing.T) {
+	e := newTestEnv(t)
+	res := e.do(t, http.MethodPost, "/logout", sameOrigin(), cookie{"se_session", "fake-gone-session"})
+	checkLoggedOut(t, res, "with an expired session")
+	if n := countErrors(t, e.log.String()); n != 0 {
+		t.Errorf("error log lines = %d, want 0; log = %q", n, e.log.String())
+	}
+}
+
+func TestLogout_StoreDown(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.signIn(t, auth.User{Subject: "fake-subject", Name: "Fake User", Roles: []auth.Role{auth.RoleUser}})
+	e.sessions.getErr = errors.New("dial tcp 192.0.2.1:6379: connection refused")
+	e.sessions.deleteErr = errors.New("dial tcp 192.0.2.1:6379: connection refused")
+
+	res := e.do(t, http.MethodPost, "/logout", sameOrigin(), c)
+
+	checkLoggedOut(t, res, "with the store down")
+	if n := countErrors(t, e.log.String()); n != 1 {
+		t.Errorf("error log lines = %d, want 1; log = %q", n, e.log.String())
 	}
 }
 
@@ -536,8 +695,27 @@ func TestLogs_HaveNoSecrets(t *testing.T) {
 	}
 }
 
-// countLevel returns the number of JSON log lines at level.
-func countLevel(t *testing.T, log, level string) int {
+// logRecords returns the JSON log lines whose message is msg.
+func logRecords(t *testing.T, log, msg string) []map[string]any {
+	t.Helper()
+	var recs []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(log), "\n") {
+		if line == "" {
+			continue
+		}
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line %q is not JSON: %v", line, err)
+		}
+		if rec["msg"] == msg {
+			recs = append(recs, rec)
+		}
+	}
+	return recs
+}
+
+// countErrors returns the number of JSON log lines at level ERROR.
+func countErrors(t *testing.T, log string) int {
 	t.Helper()
 	n := 0
 	for _, line := range strings.Split(strings.TrimSpace(log), "\n") {
@@ -550,7 +728,7 @@ func countLevel(t *testing.T, log, level string) int {
 		if err := json.Unmarshal([]byte(line), &rec); err != nil {
 			t.Fatalf("log line %q is not JSON: %v", line, err)
 		}
-		if rec.Level == level {
+		if rec.Level == "ERROR" {
 			n++
 		}
 	}

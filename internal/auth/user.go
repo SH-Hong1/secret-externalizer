@@ -21,6 +21,20 @@ const (
 // ErrNoRole means the identity provider gave the user neither role.
 var ErrNoRole = errors.New("user has no role in this application")
 
+// NoRoleError reports which user the identity provider gave neither role. It
+// matches ErrNoRole under errors.Is.
+type NoRoleError struct {
+	// Subject is the user's subject identifier from the ID token.
+	Subject string
+}
+
+// Error returns the message of ErrNoRole. It leaves out the subject, which is
+// read from the Subject field where it is wanted.
+func (e *NoRoleError) Error() string { return ErrNoRole.Error() }
+
+// Unwrap returns ErrNoRole.
+func (e *NoRoleError) Unwrap() error { return ErrNoRole }
+
 // User is a signed-in person as the identity provider describes them.
 type User struct {
 	Subject string

@@ -8,21 +8,21 @@ import (
 )
 
 // addRoutes registers every route of the server. Only the routes that need a
-// signed-in user read the session, so /healthz answers even when the session
-// store is down.
+// signed-in user read the session, so /healthz answers and logout works even
+// when the session store is down.
 func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, authn Authenticator, sessions SessionStore, attempts AttemptStore) {
-	withSession := loadSession(logger, rd, sessions)
 	signedIn := func(h http.Handler) http.Handler {
-		return withSession(requireLogin(logger, rd, h))
+		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd))
 	}
 	withRole := func(role auth.Role, h http.Handler) http.Handler {
-		return signedIn(requireRole(logger, rd, role, h))
+		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd), requireRole(logger, rd, role))
 	}
 
 	mux.Handle("GET /healthz", handleHealthz())
 	mux.Handle("GET /login", handleLogin(logger, rd, authn, attempts))
 	mux.Handle("GET /auth/callback", handleCallback(logger, rd, authn, sessions, attempts))
-	mux.Handle("POST /logout", signedIn(handleLogout(logger, rd, authn, sessions)))
+	// Logout needs no live session; see handleLogout.
+	mux.Handle("POST /logout", handleLogout(logger, authn, sessions))
 	mux.Handle("/logout", handleMethodNotAllowed(logger, rd, http.MethodPost))
 	mux.Handle("GET /{$}", signedIn(handleHome(logger, rd)))
 	mux.Handle("GET /audit", withRole(auth.RoleAdmin, handleAudit(logger, rd)))

@@ -35,7 +35,22 @@ services:
     image: valkey/valkey:9.1.3@sha256:3add1a336a920ea54770a001ab6feb3da5fceea96a40373a3a2cd469b815f0b7
     # Sessions and login attempts are short-lived, so valkey keeps nothing on
     # disk: restarting it signs everyone out.
-    command: ["valkey-server", "--save", "", "--appendonly", "no"]
+    #
+    # Memory is capped so that unauthenticated GET /login requests cannot
+    # grow valkey without bound. At the cap, noeviction makes new writes fail:
+    # new logins see the 503 page, while existing sessions keep working and
+    # expire as usual. Any evicting policy would instead drop live sessions or
+    # pending login attempts without telling anyone.
+    command:
+      - valkey-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --maxmemory
+      - 64mb
+      - --maxmemory-policy
+      - noeviction
     ports:
       - "127.0.0.1:16379:6379"
     healthcheck:
