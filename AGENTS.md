@@ -10,18 +10,22 @@ live in `docs/decisions/`. Changes are listed in `CHANGELOG.md`.
 
 ## Project layout
 
-- Each binary has one entry point at `cmd/<binary>/main.go`. Today those are
-  `cmd/web` and `cmd/worker`.
+- Each binary has one entry point at `cmd/<binary>/main.go`. Today that is
+  `cmd/web`.
 - All other code lives under `internal/`. Do not create a `pkg/` directory.
 - Name a package after what it provides: `scan`, `finding`, `manifest`. Do not
   create `util`, `common`, `helpers`, `base`, or `models` packages.
+- Directory names are lower-case ASCII with no spaces. Go cannot import a
+  package whose path has other characters, so such a directory can never pass
+  the linters.
 - Package names are short, lower-case, and singular, with no underscores.
   Do not repeat the package name in its identifiers: `scan.Result`, not
   `scan.ScanResult`.
 - Group code by what it does, not by technical layer. Files that change
   together live in the same package.
 - Do not keep mutable state in package-level variables. Pass state through
-  constructors.
+  constructors. The one exception is a build identifier that is set at link
+  time with `-ldflags -X` and that nothing assigns while the program runs.
 - Do not write `init()` functions, except to register with a standard library
   registry such as `database/sql`.
 
@@ -105,7 +109,9 @@ Sources: Go Code Review Comments; Effective Go; Uber Go Style Guide; 100 Go Mist
 - Define an interface in the package that uses it, not in the package that
   implements it.
 - Keep interfaces small. One or two methods is normal.
-- Accept interfaces and return concrete types.
+- Accept interfaces and return concrete types. The exception is HTTP:
+  `NewServer`, handlers, and middleware return `http.Handler`, because that
+  interface is what `net/http` composes.
 - Do not write an interface until a second implementation or a test needs it.
 - Make the zero value useful, or make the type impossible to build without
   its constructor.
@@ -242,10 +248,13 @@ Sources: Effective Go; Go Code Review Comments; Practical Go.
 
 - Format with `make fmt`, which runs gofumpt and goimports. Do not format by
   hand and do not argue with the formatter.
-- `make check` runs the linters, `go vet`, and the tests with the race
-  detector. It must pass before a task is finished.
+- `make check` runs the linters, `go vet`, the tests with the race detector,
+  and the hook script tests. It must pass before a task is finished.
 - Fix a lint finding. Do not suppress it. Where suppression really is correct,
   write `//nolint:<linter> // <reason>` on that line.
+- `gosec` rule G204 is turned off in `.golangci.yml`. It reports every
+  `exec.CommandContext` call whose arguments are not constants, which is the
+  form the Security section requires.
 - Tool versions are pinned in `Makefile`. Change them there and nowhere else.
 - Add a dependency only when the standard library cannot reasonably do the
   job, and record the reason in `docs/decisions/`.
