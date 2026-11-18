@@ -58,6 +58,11 @@ func (a Attempt) Format(f fmt.State, _ rune) {
 	_, _ = f.Write([]byte(a.String())) // a failed write to a fmt buffer has no one to report to
 }
 
+// MarshalText returns the form String returns, so encoding/json and slog's
+// JSON handler leave out State, Nonce, and Verifier also when an Attempt is a
+// field of the value being written.
+func (a Attempt) MarshalText() ([]byte, error) { return []byte(a.String()), nil }
+
 func randomToken() (string, error) {
 	b := make([]byte, 32)
 	if _, err := rand.Read(b); err != nil {

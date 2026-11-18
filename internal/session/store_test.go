@@ -3,6 +3,7 @@ package session_test
 import (
 	"bufio"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -328,6 +329,32 @@ func TestID_Redacted(t *testing.T) {
 	for _, out := range outputs {
 		if strings.Contains(out, raw) {
 			t.Errorf("output %q contains the session ID", out)
+		}
+	}
+}
+
+func TestID_RedactedInsideStructs(t *testing.T) {
+	id, err := session.NewID()
+	if err != nil {
+		t.Fatalf("NewID() error = %v", err)
+	}
+	raw := id.Reveal()
+	wrapper := struct{ ID session.ID }{id}
+
+	var logged strings.Builder
+	slog.New(slog.NewJSONHandler(&logged, nil)).Info("session", "v", wrapper)
+	slog.New(slog.NewTextHandler(&logged, nil)).Info("session", "v", wrapper)
+	encoded, err := json.Marshal(wrapper)
+	if err != nil {
+		t.Fatalf("json.Marshal(struct with ID) error = %v", err)
+	}
+	outputs := []string{
+		logged.String(), string(encoded),
+		fmt.Sprintf("%v", wrapper), fmt.Sprintf("%+v", wrapper), fmt.Sprintf("%#v", wrapper),
+	}
+	for _, out := range outputs {
+		if strings.Contains(out, raw) {
+			t.Errorf("output %q of a struct with an ID field contains the session ID", out)
 		}
 	}
 }

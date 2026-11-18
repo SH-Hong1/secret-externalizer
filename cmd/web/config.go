@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"net"
 	"net/url"
 	"strings"
@@ -10,11 +11,36 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 )
 
-// config holds the settings read once at start-up.
+// config holds the settings read once at start-up. Its fields are
+// unexported, and fmt prints unexported fields by reflection without calling
+// auth.ClientSecret's redacting methods, so config redacts itself through
+// String, Format, and LogValue.
 type config struct {
 	addr       string
 	valkeyAddr string
 	oidc       auth.Config
+}
+
+// String returns every setting with the client secret redacted.
+func (c config) String() string {
+	// c.oidc is passed as an argument of its own, so fmt calls the
+	// ClientSecret field's Format method.
+	return fmt.Sprintf("{addr:%s valkey_addr:%s oidc:%+v}", c.addr, c.valkeyAddr, c.oidc)
+}
+
+// Format prints the form String returns for every fmt verb, including %#v,
+// which would otherwise print every field by reflection.
+func (c config) Format(f fmt.State, _ rune) {
+	_, _ = f.Write([]byte(c.String())) // a failed write to a fmt buffer has no one to report to
+}
+
+// LogValue returns every setting with the client secret redacted.
+func (c config) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("addr", c.addr),
+		slog.String("valkey_addr", c.valkeyAddr),
+		slog.Any("oidc", c.oidc),
+	)
 }
 
 // loadConfig builds a config from the environment. The flags in args are

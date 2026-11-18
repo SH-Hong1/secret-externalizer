@@ -93,6 +93,15 @@ func TestAuthCodeURL(t *testing.T) {
 	}
 }
 
+func TestAuthenticator_RedactsSecret(t *testing.T) {
+	idp := newFakeIDP(t)
+	a := newTestAuthenticator(t, idp, testConfig(idp.URL()))
+
+	checkRedacted(t, "*Authenticator", a, testClientSecret)
+	checkRedacted(t, "Authenticator", *a, testClientSecret)
+	checkRedacted(t, "a struct with an Authenticator field", struct{ A auth.Authenticator }{*a}, testClientSecret)
+}
+
 func TestExchange_ReturnsUser(t *testing.T) {
 	idp := newFakeIDP(t)
 	a := newTestAuthenticator(t, idp, testConfig(idp.URL()))

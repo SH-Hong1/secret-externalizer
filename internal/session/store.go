@@ -39,9 +39,12 @@ const (
 // ErrNotFound means no live record exists for the ID.
 var ErrNotFound = errors.New("session not found")
 
-// ID identifies a session or a login attempt. It is a credential: every
-// formatting verb and every logger prints a redacted form, and only Reveal
-// returns the value.
+// ID identifies a session or a login attempt. It is a credential: fmt (every
+// verb), slog, and every encoder that uses encoding.TextMarshaler, such as
+// encoding/json, print a redacted form, also when the ID is an exported field
+// of a value being printed. fmt prints unexported struct fields by reflection
+// without calling their methods, so a type that keeps an ID in an unexported
+// field must redact itself. Only Reveal returns the value.
 type ID string
 
 // NewID returns an ID made of 32 bytes from crypto/rand.
@@ -63,6 +66,10 @@ func (ID) LogValue() slog.Value { return slog.StringValue(redacted) }
 func (ID) Format(f fmt.State, _ rune) {
 	_, _ = f.Write([]byte(redacted)) // a failed write to a fmt buffer has no one to report to
 }
+
+// MarshalText returns the redacted form, so encoding/json and slog's JSON
+// handler never write the value.
+func (ID) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 
 // Reveal returns the ID value. Call it only to set or read the cookie.
 func (id ID) Reveal() string { return string(id) }

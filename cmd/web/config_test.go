@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
 
@@ -155,6 +158,28 @@ func TestLoadConfig_BadValkeyAddr(t *testing.T) {
 	env["VALKEY_ADDR"] = "valkey"
 	if _, err := loadConfig(nil, getenvFrom(env)); err == nil {
 		t.Errorf("loadConfig() with VALKEY_ADDR=%q error = nil, want an error", env["VALKEY_ADDR"])
+	}
+}
+
+func TestConfig_Redacted(t *testing.T) {
+	cfg, err := loadConfig(nil, getenvFrom(validEnv()))
+	if err != nil {
+		t.Fatalf("loadConfig(nil, validEnv()) error = %v", err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "config", cfg)
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("config", "config", cfg)
+	outputs := []string{buf.String()}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		outputs = append(outputs, fmt.Sprintf(verb, cfg), fmt.Sprintf(verb, &cfg))
+	}
+	for _, out := range outputs {
+		if strings.Contains(out, testClientSecret) {
+			t.Errorf("output %q of config contains the client secret", out)
+		}
+	}
+	if want := "secret-externalizer-web"; !strings.Contains(fmt.Sprintf("%v", cfg), want) {
+		t.Errorf("Sprintf(%%v, config) = %q, want the client ID %q", fmt.Sprintf("%v", cfg), want)
 	}
 }
 

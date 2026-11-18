@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 
@@ -12,7 +13,8 @@ import (
 	"golang.org/x/oauth2"
 )
 
-// Config describes the OpenID Connect client this application is.
+// Config describes the OpenID Connect client this application is. Its
+// ClientSecret field redacts itself under fmt, slog, and encoding/json.
 type Config struct {
 	// IssuerURL is the issuer as it appears in tokens and in the browser.
 	IssuerURL string
@@ -28,13 +30,28 @@ type Config struct {
 	LogoutReturn string
 }
 
+// LogValue returns every field, with the client secret redacted.
+func (c Config) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("issuer_url", c.IssuerURL),
+		slog.String("discovery_url", c.DiscoveryURL),
+		slog.String("client_id", c.ClientID),
+		slog.String("client_secret", redacted),
+		slog.String("redirect_url", c.RedirectURL),
+		slog.String("logout_return", c.LogoutReturn),
+	)
+}
+
 // Authenticator runs the Authorization Code flow with PKCE against an OpenID
 // Connect provider and turns a verified ID token into a User.
 type Authenticator struct {
-	client      *http.Client
-	endpoint    oauth2.Endpoint
-	clientID    string
-	secret      ClientSecret
+	client   *http.Client
+	endpoint oauth2.Endpoint
+	clientID string
+	// secret returns the client secret. It is a function because fmt prints
+	// unexported fields by reflection: a function prints as an address, where
+	// a ClientSecret field would print its value.
+	secret      func() ClientSecret
 	redirectURL string
 	verifier    *oidc.IDTokenVerifier
 	logoutURL   string
@@ -82,7 +99,7 @@ func NewAuthenticator(ctx context.Context, cfg Config, client *http.Client) (*Au
 		client:      client,
 		endpoint:    provider.Endpoint(),
 		clientID:    cfg.ClientID,
-		secret:      cfg.ClientSecret,
+		secret:      func() ClientSecret { return cfg.ClientSecret },
 		redirectURL: cfg.RedirectURL,
 		verifier:    provider.Verifier(&oidc.Config{ClientID: cfg.ClientID}),
 		logoutURL:   logoutURL,
@@ -109,7 +126,7 @@ func buildLogoutURL(endpoint, clientID, returnTo string) (string, error) {
 func (a *Authenticator) oauthConfig() *oauth2.Config {
 	return &oauth2.Config{
 		ClientID:     a.clientID,
-		ClientSecret: a.secret.Reveal(),
+		ClientSecret: a.secret().Reveal(),
 		Endpoint:     a.endpoint,
 		RedirectURL:  a.redirectURL,
 		Scopes:       []string{oidc.ScopeOpenID, "profile"},
