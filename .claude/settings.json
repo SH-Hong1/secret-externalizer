@@ -1,0 +1,32 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/go-edit-check.sh",
+            "timeout": 60
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/stop-verify.sh",
+            "timeout": 600
+          },
+          {
+            "type": "agent",
+            "prompt": "Follow the instructions in .claude/hooks/review-prompt.md and review the changes on the current branch of this repository. Hook input: $ARGUMENTS. Respond with {\"ok\": true} to allow the turn to end, or {\"ok\": false, \"reason\": \"...\"} listing the violations.",
+            "timeout": 300
+          }
+        ]
+      }
+    ]
+  }
+}
