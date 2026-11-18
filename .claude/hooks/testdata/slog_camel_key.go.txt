@@ -1,0 +1,12 @@
+// Package sample is a hook test fixture.
+package sample
+
+import (
+	"context"
+	"log/slog"
+)
+
+// Report logs that the named scan finished.
+func Report(ctx context.Context, logger *slog.Logger, name string) {
+	logger.InfoContext(ctx, "scan finished", "name", name, "projectID", 1)
+}
