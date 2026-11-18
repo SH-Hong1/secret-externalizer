@@ -19,6 +19,7 @@
 - `AGENTS.md`: 디렉터리 이름 규칙, 링크 시점 버전 변수 예외, `http.Handler` 반환 예외, gosec G204 제외
 - `cmd/web`이 `WEB_ADDR`(기본 `:8080`)에서 HTTP 서버를 띄우고 SIGINT/SIGTERM에서 정상 종료한다. `GET /healthz`, 보안 헤더, 요청 로그, panic 복구를 포함한다.
 - 화면을 버퍼에 그린 뒤 성공했을 때만 쓰는 템플릿 렌더러와 오류 화면(400, 403, 404, 500, 503). 알 수 없는 경로는 404 화면을 보여준다.
+- `internal/auth`: 사용자, 역할, 로그에 원문이 남지 않는 클라이언트 시크릿, 로그인 시도(state, nonce, PKCE verifier) 타입
 
 ### 변경
 
