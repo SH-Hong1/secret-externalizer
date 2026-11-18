@@ -20,10 +20,12 @@ func securityHeaders(next http.Handler) http.Handler {
 	})
 }
 
-// statusRecorder remembers the status code written to the response.
+// statusRecorder remembers the status code written to the response and
+// whether the response has started.
 type statusRecorder struct {
 	http.ResponseWriter
-	status int
+	status  int
+	started bool
 }
 
 // Unwrap returns the underlying writer so http.ResponseController can reach it.
@@ -31,7 +33,15 @@ func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter 
 
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
+	if code >= http.StatusOK {
+		s.started = true
+	}
 	s.ResponseWriter.WriteHeader(code)
+}
+
+func (s *statusRecorder) Write(b []byte) (int, error) {
+	s.started = true
+	return s.ResponseWriter.Write(b)
 }
 
 // requestLog logs the method, path, status and duration of each request. It
@@ -52,10 +62,12 @@ func requestLog(logger *slog.Logger, next http.Handler) http.Handler {
 
 // recoverPanic turns a panic in a handler into a 500 error page. It logs the
 // type of the panic value and a stack trace, never the value itself, because
-// the value can carry secret data. It re-panics http.ErrAbortHandler so that
-// net/http can abort the response as intended.
+// the value can carry secret data. When the response has already started, the
+// error page would be appended to it, so it only logs. It re-panics
+// http.ErrAbortHandler so that net/http can abort the response as intended.
 func recoverPanic(logger *slog.Logger, rd *renderer, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		rec := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
 		defer func() {
 			v := recover()
 			if v == nil {
@@ -68,8 +80,11 @@ func recoverPanic(logger *slog.Logger, rd *renderer, next http.Handler) http.Han
 				"panic_type", fmt.Sprintf("%T", v),
 				"stack", string(debug.Stack()),
 			)
-			rd.fail(w, r, logger, http.StatusInternalServerError, errors.New("handler panic"))
+			if rec.started {
+				return
+			}
+			rd.fail(rec, r, logger, http.StatusInternalServerError, errors.New("handler panic"))
 		}()
-		next.ServeHTTP(w, r)
+		next.ServeHTTP(rec, r)
 	})
 }

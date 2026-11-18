@@ -14,7 +14,10 @@ import (
 //go:embed templates/*.html
 var templateFS embed.FS
 
-const layoutFile = "layout.html"
+const (
+	layoutFile = "layout.html"
+	errorFile  = "error.html"
+)
 
 // errorMessage returns the text shown on the error page for status.
 func errorMessage(status int) string {
@@ -37,11 +40,16 @@ type renderer struct {
 	pages map[string]*template.Template
 }
 
-// newRenderer parses every embedded template. Each page template is parsed
-// together with the layout. It panics when a template is broken, so a bad
-// template stops the program at start-up.
+// newRenderer parses the embedded templates with parseTemplates.
 func newRenderer() *renderer {
-	files, err := fs.Glob(templateFS, "templates/*.html")
+	return parseTemplates(templateFS)
+}
+
+// parseTemplates parses every template under templates/ in fsys. Each page
+// template is parsed together with the layout. It panics when a template is
+// broken, so a bad template stops the program at start-up.
+func parseTemplates(fsys fs.FS) *renderer {
+	files, err := fs.Glob(fsys, "templates/*.html")
 	if err != nil {
 		panic(fmt.Sprintf("listing templates: %v", err))
 	}
@@ -51,11 +59,14 @@ func newRenderer() *renderer {
 		if name == layoutFile {
 			continue
 		}
-		t, err := template.ParseFS(templateFS, "templates/"+layoutFile, file)
+		t, err := template.ParseFS(fsys, "templates/"+layoutFile, file)
 		if err != nil {
 			panic(fmt.Sprintf("parsing template %s: %v", name, err))
 		}
 		rd.pages[name] = t
+	}
+	if _, ok := rd.pages[errorFile]; !ok {
+		panic("missing template " + errorFile)
 	}
 	return rd
 }
@@ -88,7 +99,7 @@ func (rd *renderer) fail(w http.ResponseWriter, r *http.Request, logger *slog.Lo
 		Status  int
 		Message string
 	}{status, errorMessage(status)}
-	if execErr := rd.pages["error.html"].ExecuteTemplate(&buf, "layout", data); execErr != nil {
+	if execErr := rd.pages[errorFile].ExecuteTemplate(&buf, "layout", data); execErr != nil {
 		logger.ErrorContext(r.Context(), "rendering error page", "error", execErr)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return

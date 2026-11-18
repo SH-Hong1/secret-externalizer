@@ -2,12 +2,14 @@ package web
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/fstest"
 )
 
 func TestRenderer_FailHidesError(t *testing.T) {
@@ -92,9 +94,58 @@ func TestRecoverPanic(t *testing.T) {
 	if strings.Contains(logBuf.String(), "fake-secret-value") {
 		t.Errorf("log = %q, want the panic message left out", logBuf.String())
 	}
-	if !strings.Contains(logBuf.String(), "string") {
-		t.Errorf("log = %q, want the panic value type", logBuf.String())
+	if got := panicType(t, logBuf.String()); got != "string" {
+		t.Errorf("log panic_type = %q, want %q", got, "string")
 	}
+}
+
+func TestRecoverPanic_AfterPartialWrite(t *testing.T) {
+	var logBuf bytes.Buffer
+	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
+	h := recoverPanic(logger, newRenderer(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("partial")) // the recorder never fails a write
+		panic("fake-secret-value")
+	}))
+	rec := httptest.NewRecorder()
+
+	h.ServeHTTP(rec, newTestRequest(t))
+
+	if got := rec.Body.String(); got != "partial" {
+		t.Errorf("body after a panic past the first write = %q, want %q with no error page", got, "partial")
+	}
+	if got := panicType(t, logBuf.String()); got != "string" {
+		t.Errorf("log panic_type = %q, want %q", got, "string")
+	}
+}
+
+func TestParseTemplates_MissingErrorPage(t *testing.T) {
+	fsys := fstest.MapFS{
+		"templates/layout.html": {Data: []byte(`{{define "layout"}}{{template "body" .}}{{end}}`)},
+		"templates/home.html":   {Data: []byte(`{{define "title"}}t{{end}}{{define "body"}}b{{end}}`)},
+	}
+	defer func() {
+		if recover() == nil {
+			t.Errorf("parseTemplates(no error.html) did not panic, want a start-up panic")
+		}
+	}()
+	parseTemplates(fsys)
+}
+
+// panicType returns the panic_type attribute of the first log line that has one.
+func panicType(t *testing.T, log string) string {
+	t.Helper()
+	for _, line := range strings.Split(strings.TrimSpace(log), "\n") {
+		var rec struct {
+			PanicType string `json:"panic_type"`
+		}
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line %q is not JSON: %v", line, err)
+		}
+		if rec.PanicType != "" {
+			return rec.PanicType
+		}
+	}
+	return ""
 }
 
 func TestRecoverPanic_AbortHandler(t *testing.T) {
