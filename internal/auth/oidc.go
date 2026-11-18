@@ -42,10 +42,15 @@ type Authenticator struct {
 
 // NewAuthenticator reads the provider's discovery document and returns an
 // Authenticator for cfg. Every request to the provider goes through client,
-// which must have a timeout.
+// which must have a positive Timeout; any other client is rejected.
 func NewAuthenticator(ctx context.Context, cfg Config, client *http.Client) (*Authenticator, error) {
 	if client == nil {
 		return nil, errors.New("creating authenticator: http client is nil")
+	}
+	if client.Timeout <= 0 {
+		// Without a timeout a provider that stops answering would hold a
+		// login request open for as long as the connection lives.
+		return nil, errors.New("creating authenticator: http client has no timeout")
 	}
 	discoveryURL := cfg.DiscoveryURL
 	if discoveryURL == "" {

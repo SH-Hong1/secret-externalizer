@@ -11,7 +11,7 @@
 
 - 인가 요청과 토큰 교환에 `golang.org/x/oauth2`를 쓴다. PKCE는 `S256ChallengeOption`과 `VerifierOption`으로 처리한다.
 - discovery 문서 읽기와 ID 토큰 검증(서명, 발급자, 대상, 만료)에 `github.com/coreos/go-oidc/v3`를 쓴다. nonce 비교만 앱이 직접 한다.
-- 테스트의 가짜 발급자가 ID 토큰에 서명할 때 `github.com/go-jose/go-jose/v4`를 쓴다. go-oidc가 이미 의존하는 모듈이라 새로 끌어오는 코드는 없고, 테스트에서 직접 import하므로 `go.mod`에 직접 의존성으로 적힌다. 운영 코드는 이 모듈을 직접 쓰지 않는다.
+- 테스트의 가짜 발급자가 ID 토큰에 서명할 때 `github.com/go-jose/go-jose/v4`를 쓴다. go-oidc가 이미 의존하는 모듈이라 새로 끌어오는 코드는 없고, 테스트에서 직접 import하므로 `go.mod`에 직접 의존성으로 적힌다. 운영 코드는 이 모듈을 직접 쓰지 않는다. 다만 직접 의존성으로 적은 go-jose 버전이 모듈 그래프에서 선택되므로, go-oidc가 요구하는 것보다 높은 버전을 적으면 운영 빌드에서 go-oidc가 쓰는 go-jose 버전도 함께 올라간다.
 
 ## 이유
 

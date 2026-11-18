@@ -221,3 +221,24 @@ func TestLogoutURL(t *testing.T) {
 		t.Errorf("LogoutURL() post_logout_redirect_uri = %q, want %q", got, testLogoutReturn)
 	}
 }
+
+func TestNewAuthenticator_RequiresClientTimeout(t *testing.T) {
+	idp := newFakeIDP(t)
+	tests := []struct {
+		name    string
+		timeout time.Duration
+	}{
+		{name: "zero", timeout: 0},
+		{name: "negative", timeout: -time.Second},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			client := idp.Client()
+			client.Timeout = tt.timeout
+			_, err := auth.NewAuthenticator(t.Context(), testConfig(idp.URL()), client)
+			if err == nil {
+				t.Errorf("NewAuthenticator() with client timeout %v error = nil, want an error", tt.timeout)
+			}
+		})
+	}
+}

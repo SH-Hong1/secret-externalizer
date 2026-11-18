@@ -48,4 +48,5 @@
 - 수정 hook이 상대 경로 입력을 현재 폴더 기준으로 해석하던 문제. 저장소 루트 기준으로 해석한다.
 - 오류 화면 템플릿(`error.html`)이 없으면 시작할 때 멈춘다.
 - 응답을 이미 쓰기 시작한 뒤 panic이 나면 오류 화면을 덧붙이지 않고 로그만 남긴다.
+- `auth.NewAuthenticator`가 제한 시간(`Timeout`)이 없는 HTTP 클라이언트를 거부한다.
 - 로그인 시도(`Attempt`)를 `%#v`로 출력하면 state, nonce, PKCE verifier가 드러나던 문제
