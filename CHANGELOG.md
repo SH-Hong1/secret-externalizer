@@ -18,6 +18,7 @@
 - `make hooks`. `make check`가 hook 스크립트 테스트도 실행한다.
 - `AGENTS.md`: 디렉터리 이름 규칙, 링크 시점 버전 변수 예외, `http.Handler` 반환 예외, gosec G204 제외
 - `cmd/web`이 `WEB_ADDR`(기본 `:8080`)에서 HTTP 서버를 띄우고 SIGINT/SIGTERM에서 정상 종료한다. `GET /healthz`, 보안 헤더, 요청 로그, panic 복구를 포함한다.
+- 화면을 버퍼에 그린 뒤 성공했을 때만 쓰는 템플릿 렌더러와 오류 화면(400, 403, 404, 500, 503). 알 수 없는 경로는 404 화면을 보여준다.
 
 ### 변경
 
@@ -27,6 +28,7 @@
 
 ### 수정
 
+- panic 복구가 panic 값 대신 값의 타입과 스택만 로그에 남기고, 500 오류 화면을 보여주며, `http.ErrAbortHandler`는 다시 panic으로 넘긴다.
 - 이름이 `testdata`로 시작하는 패키지(예: `internal/testdatabase`)가 린트에서 빠지던 문제
 - 저장소가 `testdata`라는 이름의 폴더 아래에 있으면 수정 hook이 모든 파일을 건너뛰던 문제
 - 수정 hook이 상대 경로 입력을 현재 폴더 기준으로 해석하던 문제. 저장소 루트 기준으로 해석한다.

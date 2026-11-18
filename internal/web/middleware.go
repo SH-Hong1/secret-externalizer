@@ -1,8 +1,11 @@
 package web
 
 import (
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"runtime/debug"
 	"time"
 )
 
@@ -22,6 +25,9 @@ type statusRecorder struct {
 	http.ResponseWriter
 	status int
 }
+
+// Unwrap returns the underlying writer so http.ResponseController can reach it.
+func (s *statusRecorder) Unwrap() http.ResponseWriter { return s.ResponseWriter }
 
 func (s *statusRecorder) WriteHeader(code int) {
 	s.status = code
@@ -44,14 +50,25 @@ func requestLog(logger *slog.Logger, next http.Handler) http.Handler {
 	})
 }
 
-// recoverPanic turns a panic in a handler into a 500 response.
-func recoverPanic(logger *slog.Logger, next http.Handler) http.Handler {
+// recoverPanic turns a panic in a handler into a 500 error page. It logs the
+// type of the panic value and a stack trace, never the value itself, because
+// the value can carry secret data. It re-panics http.ErrAbortHandler so that
+// net/http can abort the response as intended.
+func recoverPanic(logger *slog.Logger, rd *renderer, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		defer func() {
-			if v := recover(); v != nil {
-				logger.ErrorContext(r.Context(), "handler panic", "panic", slog.AnyValue(v).String())
-				http.Error(w, "internal server error", http.StatusInternalServerError)
+			v := recover()
+			if v == nil {
+				return
 			}
+			if v == http.ErrAbortHandler { //nolint:errorlint // net/http panics with the sentinel itself
+				panic(v)
+			}
+			logger.ErrorContext(r.Context(), "handler panic",
+				"panic_type", fmt.Sprintf("%T", v),
+				"stack", string(debug.Stack()),
+			)
+			rd.fail(w, r, logger, http.StatusInternalServerError, errors.New("handler panic"))
 		}()
 		next.ServeHTTP(w, r)
 	})

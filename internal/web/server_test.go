@@ -76,6 +76,12 @@ func TestUnknownPath(t *testing.T) {
 	if resp.status != http.StatusNotFound {
 		t.Errorf("GET /nope status = %d, want 404", resp.status)
 	}
+	if want := "화면을 찾을 수 없습니다."; !strings.Contains(resp.body, want) {
+		t.Errorf("GET /nope body = %q, want it to contain %q", resp.body, want)
+	}
+	if got, want := resp.header.Get("Content-Type"), "text/html; charset=utf-8"; got != want {
+		t.Errorf("GET /nope Content-Type = %q, want %q", got, want)
+	}
 }
 
 func TestRequestLog(t *testing.T) {
