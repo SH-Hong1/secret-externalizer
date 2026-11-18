@@ -2,7 +2,7 @@ GOFUMPT_VERSION := v0.12.0
 GOLANGCI_LINT_VERSION := v2.15.0
 BIN := $(CURDIR)/bin
 
-.PHONY: tools fmt lint vet test hooks check
+.PHONY: tools fmt lint vet test test-integration hooks check
 
 tools:
 	GOBIN=$(BIN) go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
@@ -22,6 +22,10 @@ vet:
 
 test:
 	go test -race ./...
+
+test-integration:
+	@test -n "$(TEST_VALKEY_ADDR)" || { echo "set TEST_VALKEY_ADDR to a running valkey, for example TEST_VALKEY_ADDR=127.0.0.1:16379 make test-integration (the compose valkey)" >&2; exit 1; }
+	TEST_VALKEY_ADDR="$(TEST_VALKEY_ADDR)" go test -race -count=1 ./...
 
 hooks: $(BIN)/gofumpt $(BIN)/golangci-lint
 	bash .claude/hooks/hooks_test.sh

@@ -1,0 +1,8 @@
+{{define "title"}}권한 없음{{end}}
+{{define "body"}}<main>
+<h1>403</h1>
+<p>이 계정에는 이 애플리케이션을 쓸 역할이 없습니다. 관리자에게 역할을 요청하거나, 로그아웃한 뒤 다른 계정으로 로그인해 주세요.</p>
+<form method="post" action="/logout">
+<button type="submit">로그아웃</button>
+</form>
+</main>{{end}}
