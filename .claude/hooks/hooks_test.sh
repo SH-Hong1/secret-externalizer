@@ -15,6 +15,10 @@ SANDBOX="$TMP/repo"
 PKG="$SANDBOX/internal/hooktest"
 TMP_OUTSIDE="$TMP/outside"
 NO_JQ_PATH="$TMP/nojq"
+REVIEW_CALLS="$TMP/review-calls"
+RUNNING_TASK_INPUT='{"hook_event_name":"Stop","stop_hook_active":false,"background_tasks":[{"id":"a1","type":"agent","status":"running","description":"Implement task"}]}'
+ERRORS_VIOLATION='[{"file":"internal/hooktest/sample.go","line":7,"section":"Errors","fix":"wrap the error"}]'
+SECURITY_VIOLATION='[{"file":"internal/hooktest/sample.go","line":7,"section":"Security","fix":"do not log the token"}]'
 failures=0
 status=0
 output=""
@@ -47,7 +51,7 @@ assert_contains() {
 
 # reset_sandbox recreates the throwaway module with one committed, clean tree.
 reset_sandbox() {
-  rm -rf "$SANDBOX" "$TMP_OUTSIDE"
+  rm -rf "$SANDBOX" "$TMP_OUTSIDE" "$REVIEW_CALLS"
   mkdir -p "$PKG" "$TMP_OUTSIDE"
   cp "$ROOT/go.mod" "$ROOT/.golangci.yml" "$SANDBOX/"
   git -C "$SANDBOX" init -q
@@ -78,6 +82,33 @@ run_edit_hook() {
 # stop_hook_active.
 run_stop_hook() {
   run_hook stop-verify.sh "$(jq -n --argjson a "$1" '{hook_event_name: "Stop", stop_hook_active: $a}')"
+}
+
+# run_review_hook ACTIVE runs stop-review.sh. ACTIVE is the value of
+# stop_hook_active.
+run_review_hook() {
+  run_hook stop-review.sh "$(jq -n --argjson a "$1" '{hook_event_name: "Stop", stop_hook_active: $a, background_tasks: []}')"
+}
+
+# add_go_change leaves one untracked Go file in the sandbox.
+add_go_change() {
+  cp "$TESTDATA/clean.go.txt" "$PKG/sample.go"
+}
+
+# fake_reviewer VIOLATIONS prints a HOOK_REVIEW_CMD that records the call and
+# answers with VIOLATIONS, a JSON array, in the shape the real reviewer uses.
+fake_reviewer() {
+  printf "cat >/dev/null; echo call >> '%s'; printf '%%s' '%s'" \
+    "$REVIEW_CALLS" "$(jq -cn --argjson v "$1" '{structured_output: {violations: $v}}')"
+}
+
+# review_calls prints how many times the fake reviewer ran in this case.
+review_calls() {
+  if [ -f "$REVIEW_CALLS" ]; then
+    wc -l < "$REVIEW_CALLS" | tr -d ' '
+  else
+    echo 0
+  fi
 }
 
 case_unformatted_go_fails() {
@@ -184,6 +215,109 @@ case_stop_does_not_loop() {
 
 case_stop_without_jq_reports_and_does_not_loop() {
   HOOK_PATH="$NO_JQ_PATH" HOOK_CHECK_CMD="sh -c 'exit 1'" run_stop_hook true
+  assert_eq 0 "$status" "jq missing"
+  assert_contains "$output" "jq is required"
+}
+
+case_stop_skips_check_while_background_task_runs() {
+  HOOK_CHECK_CMD="sh -c 'echo lint-broke; exit 1'" run_hook stop-verify.sh "$RUNNING_TASK_INPUT"
+  assert_eq 0 "$status" "background task running, failing check"
+  assert_eq "" "$output" "stderr"
+}
+
+case_review_passes_without_violations() {
+  add_go_change
+  HOOK_REVIEW_CMD="$(fake_reviewer '[]')" run_review_hook false
+  assert_eq 0 "$status" "no violations"
+  assert_eq 1 "$(review_calls)" "reviewer calls"
+}
+
+case_review_blocks_on_violation() {
+  add_go_change
+  HOOK_REVIEW_CMD="$(fake_reviewer "$ERRORS_VIOLATION")" run_review_hook false
+  assert_eq 2 "$status" "one violation"
+  assert_contains "$output" "internal/hooktest/sample.go:7 — Errors — wrap the error"
+}
+
+case_review_sends_the_prompt_and_the_change() {
+  add_go_change
+  HOOK_REVIEW_CMD="cat > '$TMP/review-input'; echo '{\"structured_output\":{\"violations\":[]}}'" run_review_hook false
+  assert_eq 0 "$status" "no violations"
+  assert_contains "$(cat "$TMP/review-input")" "# Rules review at the end of a turn"
+  assert_contains "$(cat "$TMP/review-input")" "+++ b/internal/hooktest/sample.go"
+}
+
+case_review_includes_committed_work_on_a_branch() {
+  git -C "$SANDBOX" branch -q -M main
+  git -C "$SANDBOX" checkout -q -b work
+  add_go_change
+  git -C "$SANDBOX" add -A
+  git -C "$SANDBOX" -c user.name=test -c user.email=test@example.invalid commit -q -m work
+  HOOK_REVIEW_CMD="$(fake_reviewer "$ERRORS_VIOLATION")" run_review_hook false
+  assert_eq 2 "$status" "committed violation on a branch"
+}
+
+case_review_skips_when_nothing_reviewable_changed() {
+  echo "note" > "$SANDBOX/NOTES.md"
+  HOOK_REVIEW_CMD="$(fake_reviewer "$ERRORS_VIOLATION")" run_review_hook false
+  assert_eq 0 "$status" "only a markdown file changed"
+  assert_eq 0 "$(review_calls)" "reviewer calls"
+}
+
+case_review_skips_while_background_task_runs() {
+  add_go_change
+  HOOK_REVIEW_CMD="$(fake_reviewer "$ERRORS_VIOLATION")" run_hook stop-review.sh "$RUNNING_TASK_INPUT"
+  assert_eq 0 "$status" "background task running"
+  assert_eq 0 "$(review_calls)" "reviewer calls"
+}
+
+case_review_after_a_block_ignores_non_security_violations() {
+  add_go_change
+  HOOK_REVIEW_CMD="$(fake_reviewer "$ERRORS_VIOLATION")" run_review_hook true
+  assert_eq 0 "$status" "second stop, Errors violation"
+}
+
+case_review_after_a_block_still_blocks_on_security() {
+  add_go_change
+  HOOK_REVIEW_CMD="$(fake_reviewer "$SECURITY_VIOLATION")" run_review_hook true
+  assert_eq 2 "$status" "second stop, Security violation"
+  assert_contains "$output" "Security"
+}
+
+case_review_does_not_repeat_for_an_approved_change() {
+  add_go_change
+  HOOK_REVIEW_CMD="$(fake_reviewer '[]')" run_review_hook false
+  HOOK_REVIEW_CMD="$(fake_reviewer "$ERRORS_VIOLATION")" run_review_hook false
+  assert_eq 0 "$status" "same change, second stop"
+  assert_eq 1 "$(review_calls)" "reviewer calls"
+}
+
+case_review_repeats_when_the_change_differs() {
+  add_go_change
+  HOOK_REVIEW_CMD="$(fake_reviewer '[]')" run_review_hook false
+  echo "// Package hooktest is a sample." >> "$PKG/sample.go"
+  HOOK_REVIEW_CMD="$(fake_reviewer "$ERRORS_VIOLATION")" run_review_hook false
+  assert_eq 2 "$status" "changed again after approval"
+}
+
+case_review_does_not_block_when_reviewer_fails() {
+  add_go_change
+  HOOK_REVIEW_CMD="sh -c 'cat >/dev/null; echo boom >&2; exit 1'" run_review_hook false
+  assert_eq 0 "$status" "reviewer exits non-zero"
+  assert_contains "$stdout" '"systemMessage"'
+  assert_contains "$stdout" "without a rules review"
+}
+
+case_review_does_not_block_on_unreadable_verdict() {
+  add_go_change
+  HOOK_REVIEW_CMD="sh -c 'cat >/dev/null; echo not-json'" run_review_hook false
+  assert_eq 0 "$status" "reviewer prints no verdict"
+  assert_contains "$stdout" "without a rules review"
+}
+
+case_review_without_jq_reports_and_does_not_block() {
+  add_go_change
+  HOOK_PATH="$NO_JQ_PATH" HOOK_REVIEW_CMD="$(fake_reviewer "$ERRORS_VIOLATION")" run_review_hook false
   assert_eq 0 "$status" "jq missing"
   assert_contains "$output" "jq is required"
 }
