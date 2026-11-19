@@ -1,4 +1,5 @@
-# Local development stack: postgres, valkey, keycloak, web, and worker.
+# Local development stack: postgres, valkey, keycloak, openbao, web, and
+# worker.
 #
 # Every password and secret in this file, in deploy/postgres/init.sql, and in
 # deploy/keycloak/realm.json is a fake value for local development only. Do
@@ -10,6 +11,10 @@
 #   valkey    127.0.0.1:16379        (for integration tests; 6379 is often taken
 #                                     by a locally installed redis)
 #   postgres  127.0.0.1:15432        (for integration tests)
+#   openbao-test 127.0.0.1:18200     (profile "test", for integration tests)
+#
+# openbao publishes no port: only the worker reaches it, on the compose
+# network.
 
 name: secret-externalizer
 
@@ -100,6 +105,81 @@ services:
       retries: 60
       start_period: 10s
 
+  # Writes the OpenBao unseal key and the AppRole secret-ids into the
+  # openbao-secrets volume on the first start, and leaves existing files alone
+  # afterwards. See deploy/openbao/make-secrets.sh.
+  openbao-secrets:
+    image: openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
+    entrypoint: ["/bin/sh", "/make-secrets.sh"]
+    volumes:
+      - ./deploy/openbao/make-secrets.sh:/make-secrets.sh:ro
+      - openbao-secrets:/secrets
+    # Root is needed to give each file its owner. It keeps only the
+    # capabilities for that: changing owners and modes, and reaching files
+    # that already belong to another user.
+    user: "0:0"
+    read_only: true
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+  # Holds the original values that scans find. It publishes no host port.
+  openbao:
+    image: openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
+    entrypoint: ["bao", "server", "-config=/openbao/config/config.hcl"]
+    volumes:
+      - ./deploy/openbao/config.hcl:/openbao/config/config.hcl:ro
+      # /openbao/file belongs to the openbao user in the image, so the new
+      # volume starts with that owner.
+      - openbao-data:/openbao/file
+      - openbao-secrets:/openbao/secrets:ro
+    user: "100:1000"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+    depends_on:
+      openbao-secrets:
+        condition: service_completed_successfully
+    healthcheck:
+      # bao status exits 0 only when the server is initialised and unsealed.
+      test: ["CMD", "bao", "status", "-address=http://127.0.0.1:8200"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # An in-memory OpenBao for the integration tests, started only with
+  # --profile test. It never holds real values.
+  openbao-test:
+    profiles: ["test"]
+    image: openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
+    entrypoint:
+      - bao
+      - server
+      - -dev
+      - -dev-root-token-id=dev-only-openbao-test-root-token # local tests only
+      - -dev-listen-address=0.0.0.0:8200
+    environment:
+      HOME: /tmp
+    ports:
+      - "127.0.0.1:18200:8200"
+    user: "100:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+
   web:
     build:
       context: .
@@ -141,9 +221,20 @@ services:
     environment:
       DATABASE_URL: postgres://se_app:dev-only-se-app-password@postgres:5432/secret_externalizer # local development only
       WORKSPACE_ROOT: /workspace
+      BAO_ADDR: http://openbao:8200
+      BAO_ROLE_ID: se-worker
+      BAO_SECRET_ID_FILE: /run/secrets/openbao/secret-id
     volumes:
       # The workspace is read-only: scans read it and never change it.
       - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace:ro
+      # Only the worker's own directory of the openbao-secrets volume, so the
+      # worker cannot read the unseal key or the web role's secret-id.
+      - type: volume
+        source: openbao-secrets
+        target: /run/secrets/openbao
+        read_only: true
+        volume:
+          subpath: worker
     user: "65532:65532"
     read_only: true
     tmpfs:
@@ -156,6 +247,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      openbao:
+        condition: service_healthy
 
 volumes:
   postgres-data:
+  openbao-data:
+  openbao-secrets:

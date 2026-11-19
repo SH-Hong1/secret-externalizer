@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -11,17 +12,30 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 )
 
 // testDatabaseURL is an obviously fake database URL.
 const testDatabaseURL = "postgres://se_app:dev-only-cmd-worker-test-db@postgres:5432/secret_externalizer" //nolint:gosec // G101: an obviously fake fixture value
 
+// testSecretID is an obviously fake AppRole secret-id.
+const testSecretID = "dev-only-cmd-worker-test-secret-id" //nolint:gosec // G101: an obviously fake fixture value
+
+// validEnv returns a complete environment. The secret-id file ends with a
+// newline, as a file written by an editor does.
 func validEnv(t *testing.T) map[string]string {
 	t.Helper()
+	secretIDFile := filepath.Join(t.TempDir(), "secret-id")
+	if err := os.WriteFile(secretIDFile, []byte(testSecretID+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", secretIDFile, err)
+	}
 	return map[string]string{
-		"DATABASE_URL":   testDatabaseURL,
-		"WORKSPACE_ROOT": t.TempDir(),
+		"DATABASE_URL":       testDatabaseURL,
+		"WORKSPACE_ROOT":     t.TempDir(),
+		"BAO_ADDR":           "http://openbao:8200",
+		"BAO_ROLE_ID":        "se-worker",
+		"BAO_SECRET_ID_FILE": secretIDFile,
 	}
 }
 
@@ -41,6 +55,8 @@ func TestLoadConfig(t *testing.T) {
 		poll:      2 * time.Second,
 		lease:     2 * time.Minute,
 		heartbeat: 30 * time.Second,
+		baoAddr:   "http://openbao:8200",
+		baoCreds:  bao.Credentials{RoleID: "se-worker", SecretID: testSecretID},
 	}
 	if diff := cmp.Diff(want, got, cmp.AllowUnexported(config{})); diff != "" {
 		t.Errorf("loadConfig() mismatch (-want +got):\n%s", diff)
@@ -48,7 +64,7 @@ func TestLoadConfig(t *testing.T) {
 }
 
 func TestLoadConfig_MissingRequired(t *testing.T) {
-	for _, name := range []string{"DATABASE_URL", "WORKSPACE_ROOT"} {
+	for _, name := range []string{"DATABASE_URL", "WORKSPACE_ROOT", "BAO_ADDR", "BAO_ROLE_ID", "BAO_SECRET_ID_FILE"} {
 		t.Run(name, func(t *testing.T) {
 			env := validEnv(t)
 			delete(env, name)
@@ -84,7 +100,33 @@ func TestLoadConfig_BadWorkspaceRoot(t *testing.T) {
 	}
 }
 
-func TestConfig_RedactsDatabaseURL(t *testing.T) {
+func TestLoadConfig_BadSecretIDFile(t *testing.T) {
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "empty")
+	if err := os.WriteFile(empty, []byte(" \n"), 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", empty, err)
+	}
+	tests := []struct {
+		name string
+		path string
+	}{
+		{"missing", filepath.Join(dir, "missing")},
+		{"empty", empty},
+		{"a directory", dir},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv(t)
+			env["BAO_SECRET_ID_FILE"] = tt.path
+			_, err := loadConfig(getenvFrom(env))
+			if err == nil || !strings.Contains(err.Error(), "BAO_SECRET_ID_FILE") {
+				t.Errorf("loadConfig() with BAO_SECRET_ID_FILE=%q error = %v, want an error naming BAO_SECRET_ID_FILE", tt.path, err)
+			}
+		})
+	}
+}
+
+func TestConfig_RedactsSecrets(t *testing.T) {
 	cfg, err := loadConfig(getenvFrom(validEnv(t)))
 	if err != nil {
 		t.Fatalf("loadConfig() error = %v", err)
@@ -98,6 +140,9 @@ func TestConfig_RedactsDatabaseURL(t *testing.T) {
 	for _, out := range outputs {
 		if strings.Contains(out, "dev-only-cmd-worker-test-db") {
 			t.Errorf("output %q of config contains the database password", out)
+		}
+		if strings.Contains(out, testSecretID) {
+			t.Errorf("output %q of config contains the secret-id", out)
 		}
 	}
 }

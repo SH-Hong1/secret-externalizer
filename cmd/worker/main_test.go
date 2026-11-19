@@ -115,7 +115,9 @@ func TestRun_RunsQueuedScanUntilCancelled(t *testing.T) {
 		t.Fatalf("RequestScan() error = %v", err)
 	}
 
-	env := map[string]string{"DATABASE_URL": databaseURL, "WORKSPACE_ROOT": root}
+	env := validEnv(t)
+	env["DATABASE_URL"] = databaseURL
+	env["WORKSPACE_ROOT"] = root
 	getenv := func(k string) string { return env[k] }
 	tune := func(c *config) {
 		c.poll = 20 * time.Millisecond

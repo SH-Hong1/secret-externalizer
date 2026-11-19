@@ -10,10 +10,13 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
@@ -37,8 +40,9 @@ func main() {
 //
 // A flag error is returned and not printed, so the caller reports it once.
 // Asking for help prints the usage to stdout and is not an error. Otherwise it
-// reads the configuration, opens and migrates the database, and runs queued
-// scans until SIGINT, SIGTERM or cancellation of ctx.
+// reads the configuration, prepares the OpenBao client, opens and migrates
+// the database, and runs queued scans until SIGINT, SIGTERM or cancellation of
+// ctx.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
 	return runWith(ctx, args, getenv, stdout, stderr, nil)
 }
@@ -72,6 +76,12 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	}
 	if tune != nil {
 		tune(&cfg)
+	}
+	// The client does not contact OpenBao until it is first used, and the scan
+	// runner does not use it yet, so building it here checks the settings at
+	// start-up.
+	if _, err := bao.New(cfg.baoAddr, cfg.baoCreds, &http.Client{Timeout: 10 * time.Second}); err != nil {
+		return fmt.Errorf("preparing openbao client: %w", err)
 	}
 	workerID, err := newWorkerID()
 	if err != nil {
