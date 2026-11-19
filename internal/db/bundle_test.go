@@ -261,7 +261,6 @@ func TestMoveFinding(t *testing.T) {
 	other := newProject(t, s, "other")
 	sid := save(t, s, pid, append(mixed(), fnd(fpD, "conf/a.yml", finding.CategoryStorage, finding.KindToken, 9))...)
 	shared := bundleOf(t, s, pid, fpA, "conf/a.yml")
-	jsp := findingID(t, s, pid, fpA, "web/c.jsp")
 	hostA := bundleOf(t, s, pid, fpB, "conf/a.yml")
 	hostB := bundleOf(t, s, pid, fpB, "conf/b.xml")
 	token := bundleOf(t, s, pid, fpD, "conf/a.yml")
@@ -287,27 +286,78 @@ func TestMoveFinding(t *testing.T) {
 			t.Errorf("audit event after MoveFinding = %+v, want a move of %d from %d to %d", e, id, shared, got)
 		}
 	})
-	t.Run("different fingerprint", func(t *testing.T) {
-		_, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpB, "conf/a.yml"), token, tester)
-		if !errors.Is(err, triage.ErrNotAllowed) {
-			t.Errorf("MoveFinding(host, token bundle) error = %v, want ErrNotAllowed", err)
+	otherHost := func() triage.BundleID {
+		save(t, s, other, host("conf/a.yml"))
+		return bundleOf(t, s, other, fpB, "conf/a.yml")
+	}()
+
+	// refused moves the finding of pid with fp in file to the bundle to as
+	// project in and checks that it fails with want and changes nothing.
+	refused := func(t *testing.T, in project.ID, fp, file string, to triage.BundleID, want error) {
+		t.Helper()
+		before := bundleOf(t, s, pid, fp, file)
+		events, err := s.Count(ctx, "audit_event")
+		if err != nil {
+			t.Fatalf("counting audit_event: %v", err)
 		}
+		bundles, err := s.Count(ctx, "bundle")
+		if err != nil {
+			t.Fatalf("counting bundle: %v", err)
+		}
+		_, err = s.MoveFinding(ctx, in, findingID(t, s, pid, fp, file), to, tester)
+		if !errors.Is(err, want) {
+			t.Errorf("MoveFinding(%.8s in %s, %d) error = %v, want %v", fp, file, to, err, want)
+		}
+		if got := bundleOf(t, s, pid, fp, file); got != before {
+			t.Errorf("bundle of %s after a refused move = %d, want %d", file, got, before)
+		}
+		if n, err := s.Count(ctx, "audit_event"); err != nil || n != events {
+			t.Errorf("rows in audit_event after a refused move = %d, %v, want %d", n, err, events)
+		}
+		if n, err := s.Count(ctx, "bundle"); err != nil || n != bundles {
+			t.Errorf("rows in bundle after a refused move = %d, %v, want %d", n, err, bundles)
+		}
+	}
+
+	t.Run("different fingerprint", func(t *testing.T) {
+		refused(t, pid, fpB, "conf/a.yml", token, triage.ErrNotAllowed)
 	})
 	t.Run("other project", func(t *testing.T) {
-		_, err := s.MoveFinding(ctx, other, findingID(t, s, pid, fpB, "conf/a.yml"), hostB, tester)
-		if !errors.Is(err, db.ErrNotFound) {
-			t.Errorf("MoveFinding() in another project error = %v, want ErrNotFound", err)
+		refused(t, other, fpB, "conf/a.yml", hostB, db.ErrNotFound)
+	})
+	t.Run("bundle of another project", func(t *testing.T) {
+		refused(t, pid, fpB, "conf/a.yml", otherHost, db.ErrNotFound)
+	})
+	t.Run("only member to a new bundle", func(t *testing.T) {
+		d := triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"}
+		decide(t, s, pid, d, hostA)
+		events, err := s.Count(ctx, "audit_event")
+		if err != nil {
+			t.Fatalf("counting audit_event: %v", err)
 		}
-		if got := bundleOf(t, s, pid, fpB, "conf/a.yml"); got != hostA {
-			t.Errorf("bundle of host a.yml after a refused move = %d, want %d", got, hostA)
+		got, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpB, "conf/a.yml"), 0, tester)
+		if err != nil || got != hostA {
+			t.Fatalf("MoveFinding(only member of %d, new) = %d, %v, want %d unchanged", hostA, got, err, hostA)
+		}
+		if b := readBundle(t, s, pid, sid, hostA); b.Decision != d {
+			t.Errorf("Bundle(%d).Decision after a move that changes nothing = %+v, want %+v", hostA, b.Decision, d)
+		}
+		if n, err := s.Count(ctx, "audit_event"); err != nil || n != events {
+			t.Errorf("rows in audit_event after a move that changes nothing = %d, %v, want %d", n, err, events)
 		}
 	})
 	t.Run("last member", func(t *testing.T) {
-		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"}, hostA)
 		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive}, hostB)
+		bundles, err := s.Count(ctx, "bundle")
+		if err != nil {
+			t.Fatalf("counting bundle: %v", err)
+		}
 		got, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpB, "conf/a.yml"), hostB, tester)
 		if err != nil || got != hostB {
 			t.Fatalf("MoveFinding(host a.yml, %d) = %d, %v, want %d", hostB, got, err, hostB)
+		}
+		if n, err := s.Count(ctx, "bundle"); err != nil || n != bundles-1 {
+			t.Errorf("rows in bundle after the last member left = %d, %v, want %d", n, err, bundles-1)
 		}
 		if _, err := s.Bundle(ctx, pid, sid, hostA); !errors.Is(err, db.ErrNotFound) {
 			t.Errorf("Bundle(%d) after its last member left error = %v, want ErrNotFound", hostA, err)
@@ -320,14 +370,41 @@ func TestMoveFinding(t *testing.T) {
 	})
 	t.Run("frontend into externalized", func(t *testing.T) {
 		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}, shared)
-		_, err := s.MoveFinding(ctx, pid, jsp, shared, tester)
-		if !errors.Is(err, triage.ErrNotAllowed) {
-			t.Errorf("MoveFinding(c.jsp, externalized bundle) error = %v, want ErrNotAllowed", err)
-		}
-		if got := bundleOf(t, s, pid, fpA, "web/c.jsp"); got == shared {
-			t.Errorf("bundle of c.jsp after a refused move = %d, want it unchanged", got)
-		}
+		refused(t, pid, fpA, "web/c.jsp", shared, triage.ErrNotAllowed)
 	})
+}
+
+func TestDecideUsesLatestScan(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, mixed()...)
+	shared := bundleOf(t, s, pid, fpA, "conf/a.yml")
+	hostB := bundleOf(t, s, pid, fpB, "conf/b.xml")
+	if _, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "web/c.jsp"), shared, tester); err != nil {
+		t.Fatalf("MoveFinding(c.jsp, shared) error = %v", err)
+	}
+
+	// The JSP value and the host in b.xml are gone from the code.
+	var rest []finding.Finding
+	for _, f := range mixed() {
+		if f.File != "web/c.jsp" && (f.Fingerprint != fpB || f.File != "conf/b.xml") {
+			rest = append(rest, f)
+		}
+	}
+	latest := save(t, s, pid, rest...)
+
+	b := readBundle(t, s, pid, latest, shared)
+	if !cmp.Equal(memberFiles(b), []string{"conf/a.yml", "conf/b.xml"}) || b.Allowed()[0] != triage.VerdictExternalize {
+		t.Fatalf("Bundle(%d) in the latest scan = %+v allowing %v, want a.yml and b.xml allowing externalize", shared, b, b.Allowed())
+	}
+	d := triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}
+	if err := s.Decide(ctx, pid, []triage.BundleID{shared}, d, tester); err != nil {
+		t.Errorf("Decide(externalize) on a bundle whose JSP member is gone error = %v, want nil", err)
+	}
+	if err := s.Decide(ctx, pid, []triage.BundleID{hostB}, triage.Decision{Verdict: triage.VerdictFalsePositive}, tester); !errors.Is(err, db.ErrNotFound) {
+		t.Errorf("Decide() on a bundle the latest scan did not find error = %v, want ErrNotFound", err)
+	}
 }
 
 func TestEntries(t *testing.T) {
