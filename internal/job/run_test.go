@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
@@ -150,22 +151,56 @@ func TestRun_CancelsHandlerWhenLeaseLost(t *testing.T) {
 }
 
 func TestRun_StopsOnCancel(t *testing.T) {
-	q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
-	started := make(chan struct{})
-	var finished sync.WaitGroup
-	finished.Add(1)
-	stop := runInBackground(t, q, func(ctx context.Context, _ job.Job) error {
-		defer finished.Done()
-		close(started)
-		<-ctx.Done()
-		return ctx.Err()
-	}, discardLogger())
+	// Inside the bubble, synctest.Wait returns once every goroutine is blocked,
+	// so "Run has not returned yet" is checked without waiting on a clock.
+	synctest.Test(t, func(t *testing.T) {
+		q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		opts := job.Options{WorkerID: "fake-worker", Poll: time.Millisecond, Lease: time.Minute, Heartbeat: time.Millisecond}
 
-	<-started
-	if err := stop(); err != nil {
-		t.Errorf("Run() after cancel = %v, want nil", err)
-	}
-	finished.Wait() // Run returned only after the handler had, so this does not block
+		release := make(chan struct{})
+		handlerCancelled := make(chan struct{})
+		handlerReturned := false
+		returned := make(chan error, 1)
+		go func() {
+			returned <- job.Run(ctx, discardLogger(), q, func(ctx context.Context, _ job.Job) error {
+				<-ctx.Done()
+				close(handlerCancelled)
+				<-release // the handler is still finishing its work
+				handlerReturned = true
+				return ctx.Err()
+			}, opts)
+		}()
+
+		synctest.Wait() // the handler is running
+		cancel()
+		synctest.Wait() // the handler saw the cancellation and is held
+		select {
+		case <-handlerCancelled:
+		default:
+			t.Fatal("Run() did not cancel the running handler's context when its own was cancelled")
+		}
+		select {
+		case err := <-returned:
+			t.Fatalf("Run() returned %v while the handler was still running, want it to wait", err)
+		default:
+		}
+
+		close(release)
+		synctest.Wait()
+		select {
+		case err := <-returned:
+			if err != nil {
+				t.Errorf("Run() after cancel = %v, want nil", err)
+			}
+		default:
+			t.Fatal("Run() did not return after the handler did")
+		}
+		if !handlerReturned {
+			t.Error("Run() returned before the handler did")
+		}
+	})
 }
 
 func TestRun_OneJobAtATime(t *testing.T) {
