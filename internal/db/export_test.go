@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"io/fs"
 	"os"
 	"testing"
 	"time"
@@ -80,7 +81,7 @@ func (s *Store) Count(ctx context.Context, table string) (int, error) {
 
 // MigrationCount returns the number of embedded migration files.
 func MigrationCount() int {
-	m, err := loadMigrations()
+	m, err := loadMigrations(migrationFiles)
 	if err != nil {
 		panic(err)
 	}
@@ -124,4 +125,10 @@ func (s *Store) Job(ctx context.Context, scanID int64) (JobRow, error) {
 	err := s.pool.QueryRow(ctx, "SELECT state, attempts, locked_by, locked_until FROM job WHERE scan_id = $1", scanID).
 		Scan(&j.State, &j.Attempts, &j.LockedBy, &j.LockedUntil)
 	return j, err
+}
+
+// MigrateFrom runs Migrate with the migration files under migrations/ in
+// fsys in place of the embedded ones.
+func (s *Store) MigrateFrom(ctx context.Context, fsys fs.FS) error {
+	return s.migrate(ctx, fsys)
 }

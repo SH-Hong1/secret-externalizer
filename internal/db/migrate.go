@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io/fs"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 
@@ -29,9 +30,10 @@ type migration struct {
 	sql     string
 }
 
-// loadMigrations reads the embedded files in version order.
-func loadMigrations() ([]migration, error) {
-	entries, err := fs.ReadDir(migrationFiles, "migrations")
+// loadMigrations reads the files under migrations/ in fsys in version
+// order.
+func loadMigrations(fsys fs.FS) ([]migration, error) {
+	entries, err := fs.ReadDir(fsys, "migrations")
 	if err != nil {
 		return nil, fmt.Errorf("listing migrations: %w", err)
 	}
@@ -50,7 +52,7 @@ func loadMigrations() ([]migration, error) {
 			return nil, fmt.Errorf("migration files %q and %q share version %d", other, e.Name(), version)
 		}
 		seen[version] = e.Name()
-		body, err := fs.ReadFile(migrationFiles, "migrations/"+e.Name())
+		body, err := fs.ReadFile(fsys, "migrations/"+e.Name())
 		if err != nil {
 			return nil, fmt.Errorf("reading migration %q: %w", e.Name(), err)
 		}
@@ -64,8 +66,18 @@ func loadMigrations() ([]migration, error) {
 // version order. Each file runs in one transaction together with the row in
 // schema_migration that records it. An advisory lock makes concurrent callers,
 // in this or another process, take turns.
-func (s *Store) Migrate(ctx context.Context) (err error) {
-	migrations, err := loadMigrations()
+//
+// Migrate applies nothing and returns an error naming the versions when the
+// schema does not match the files: schema_migration records a version that
+// has no file, or a file that is not applied has a lower version than the
+// highest applied one.
+func (s *Store) Migrate(ctx context.Context) error {
+	return s.migrate(ctx, migrationFiles)
+}
+
+// migrate is Migrate with the migration files under migrations/ in fsys.
+func (s *Store) migrate(ctx context.Context, fsys fs.FS) (err error) {
+	migrations, err := loadMigrations(fsys)
 	if err != nil {
 		return err
 	}
@@ -105,12 +117,42 @@ func (s *Store) Migrate(ctx context.Context) (err error) {
 	if err != nil {
 		return err
 	}
+	if err := checkDrift(migrations, applied); err != nil {
+		return err
+	}
 	for _, m := range migrations {
 		if applied[m.version] {
 			continue
 		}
 		if err := applyMigration(ctx, conn, m); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// checkDrift returns an error when applied, the versions recorded in
+// schema_migration, does not fit the files in migrations.
+func checkDrift(migrations []migration, applied map[int]bool) error {
+	known := make(map[int]bool, len(migrations))
+	for _, m := range migrations {
+		known[m.version] = true
+	}
+	var unknown []int
+	highest := 0
+	for v := range applied {
+		if !known[v] {
+			unknown = append(unknown, v)
+		}
+		highest = max(highest, v)
+	}
+	if len(unknown) > 0 {
+		slices.Sort(unknown)
+		return fmt.Errorf("checking schema: schema_migration records versions %v that this binary has no migration file for", unknown)
+	}
+	for _, m := range migrations {
+		if !applied[m.version] && m.version < highest {
+			return fmt.Errorf("checking schema: migration %s is not applied but version %d, a later one, is", m.name, highest)
 		}
 	}
 	return nil
