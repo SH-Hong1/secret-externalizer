@@ -15,15 +15,24 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
+// HistoryStore gives the earlier decisions a suggestion is built from.
+// UsedNames returns the placeholder names a project already uses, and
+// PastDecision the newest decision on a value in a bundle other than except,
+// with false when there is none.
+type HistoryStore interface {
+	UsedNames(ctx context.Context, projectID project.ID) ([]triage.Name, error)
+	PastDecision(ctx context.Context, fingerprint string, except triage.BundleID) (triage.Decision, bool, error)
+}
+
 // historySuggester suggests what an earlier verdict on the same value
 // elsewhere says, and what the rules say when there is none.
 type historySuggester struct {
-	store TriageStore
+	store HistoryStore
 }
 
 // NewHistorySuggester returns a Suggester that reads earlier verdicts and
 // used names from store.
-func NewHistorySuggester(store TriageStore) Suggester {
+func NewHistorySuggester(store HistoryStore) Suggester {
 	return historySuggester{store: store}
 }
 
@@ -106,30 +115,29 @@ func handleTriage(logger *slog.Logger, rd *renderer, projects ProjectStore, stor
 			rd.fail(w, r, logger, http.StatusBadRequest, err)
 			return
 		}
-		data := triagePage{User: u, Project: p, Category: q.Category, Status: q.Status, Options: newCategoryOptions(q.Category)}
+		data := triagePage{User: u, Project: p, Status: q.Status, Options: newCategoryOptions(q.Category)}
 		sc, err := store.LatestScan(r.Context(), p.ID)
 		if errors.Is(err, db.ErrNotFound) {
 			data.NoScan = true
-			rd.triage(w, r, logger, data)
+			rd.triage(w, r, logger, http.StatusOK, data)
 			return
 		}
 		if err != nil {
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading latest scan: %w", err))
 			return
 		}
-		status, err := fillTriagePage(r, logger, store, suggester, &data, q, sel, sc)
+		status, err := fillTriagePage(r.Context(), logger, store, suggester, &data, q, sel, sc)
 		if err != nil {
 			rd.fail(w, r, logger, status, err)
 			return
 		}
-		rd.triage(w, r, logger, data)
+		rd.triage(w, r, logger, http.StatusOK, data)
 	})
 }
 
 // fillTriagePage reads the list page and the selected detail of scan sc into
 // data. On failure it returns the status of the error page.
-func fillTriagePage(r *http.Request, logger *slog.Logger, store TriageStore, suggester Suggester, data *triagePage, q triageQuery, sel selection, sc scan.Scan) (int, error) {
-	ctx := r.Context()
+func fillTriagePage(ctx context.Context, logger *slog.Logger, store TriageStore, suggester Suggester, data *triagePage, q triageQuery, sel selection, sc scan.Scan) (int, error) {
 	pid := data.Project.ID
 	page, err := store.Entries(ctx, pid, sc.ID, triage.Filter{Category: q.Category, Status: q.Status, Page: q.Page})
 	if err != nil {
@@ -137,11 +145,18 @@ func fillTriagePage(r *http.Request, logger *slog.Logger, store TriageStore, sug
 	}
 	q.Page = page.Page
 	if q.Sel == "" && len(page.Entries) > 0 {
-		e := page.Entries[0]
-		if e.Bundle != 0 {
-			q.Sel, sel = bundleSel(e.Bundle), selection{Bundle: e.Bundle}
-		} else {
-			q.Sel, sel = groupSel(e.Group), selection{Group: e.Group}
+		q.Sel, sel = entrySel(page.Entries[0])
+	}
+	// A customer data bundle is shown as its group, so the selection is
+	// resolved before the list marks its current line.
+	var b triage.Bundle
+	if sel.Bundle != 0 {
+		if b, err = store.Bundle(ctx, pid, sc.ID, sel.Bundle); err != nil {
+			return bundleReadStatus(err), fmt.Errorf("reading bundle: %w", err)
+		}
+		if b.Category == finding.CategoryCustomerData {
+			sel = selection{Group: triage.GroupKey{File: b.Members[0].File, Kind: b.Kind, Verdict: b.Decision.Verdict}}
+			q.Sel = groupSel(sel.Group)
 		}
 	}
 
@@ -170,17 +185,6 @@ func fillTriagePage(r *http.Request, logger *slog.Logger, store TriageStore, sug
 	case q.Sel == "":
 		data.Empty = newEmptyState(pid, q, sc.ID, page.Counts)
 	case sel.Bundle != 0:
-		b, err := store.Bundle(ctx, pid, sc.ID, sel.Bundle)
-		if errors.Is(err, db.ErrNotFound) {
-			return http.StatusNotFound, err
-		}
-		if err != nil {
-			return http.StatusInternalServerError, fmt.Errorf("reading bundle: %w", err)
-		}
-		if b.Category == finding.CategoryCustomerData {
-			sel.Group = triage.GroupKey{File: b.Members[0].File, Kind: b.Kind, Verdict: b.Decision.Verdict}
-			return fillCustomerDetail(ctx, store, data, sc.ID, sel.Group, ret)
-		}
 		var s triage.Suggestion
 		if b.Decision.Verdict == "" {
 			if s, err = suggester.Suggest(ctx, b); err != nil {
@@ -195,6 +199,23 @@ func fillTriagePage(r *http.Request, logger *slog.Logger, store TriageStore, sug
 	return http.StatusOK, nil
 }
 
+// entrySel returns the selection of a list entry, as a parameter and parsed.
+func entrySel(e triage.Entry) (string, selection) {
+	if e.Bundle != 0 {
+		return bundleSel(e.Bundle), selection{Bundle: e.Bundle}
+	}
+	return groupSel(e.Group), selection{Group: e.Group}
+}
+
+// bundleReadStatus returns the status of the error page for an error from
+// reading a bundle.
+func bundleReadStatus(err error) int {
+	if errors.Is(err, db.ErrNotFound) {
+		return http.StatusNotFound
+	}
+	return http.StatusInternalServerError
+}
+
 // fillCustomerDetail reads the customer data group key names into data.
 func fillCustomerDetail(ctx context.Context, store TriageStore, data *triagePage, scanID scan.ID, key triage.GroupKey, ret string) (int, error) {
 	pid := data.Project.ID
@@ -206,22 +227,19 @@ func fillCustomerDetail(ctx context.Context, store TriageStore, data *triagePage
 		return http.StatusNotFound, errors.New("customer data group names nothing")
 	}
 	first, err := store.Bundle(ctx, pid, scanID, g.Bundles[0])
-	if errors.Is(err, db.ErrNotFound) {
-		return http.StatusNotFound, err
-	}
 	if err != nil {
-		return http.StatusInternalServerError, fmt.Errorf("reading bundle of customer data group: %w", err)
+		return bundleReadStatus(err), fmt.Errorf("reading bundle of customer data group: %w", err)
 	}
 	data.Customer = newCustomerDetail(pid, ret, g, first)
 	return http.StatusOK, nil
 }
 
-// triage writes the triage screen, or only its detail and list for an htmx
-// request that targets the detail.
-func (rd *renderer) triage(w http.ResponseWriter, r *http.Request, logger *slog.Logger, data triagePage) {
+// triage writes the triage screen with status, or only its detail and list
+// for an htmx request that targets the detail.
+func (rd *renderer) triage(w http.ResponseWriter, r *http.Request, logger *slog.Logger, status int, data triagePage) {
 	if r.Header.Get("HX-Request") == "true" && r.Header.Get("HX-Target") == "detail" {
-		rd.fragment(w, r, logger, http.StatusOK, "triage.html", "fragment", data)
+		rd.fragment(w, r, logger, status, "triage.html", "fragment", data)
 		return
 	}
-	rd.page(w, r, logger, http.StatusOK, "triage.html", data)
+	rd.page(w, r, logger, status, "triage.html", data)
 }

@@ -9,17 +9,24 @@ import (
 )
 
 // Suggestion is what the tool proposes for a bundle. It is never stored.
-// Source says where the verdict came from: "rule" or "history".
+// Source says where the verdict came from.
 type Suggestion struct {
 	Decision Decision
-	Source   string
+	Source   Source
 }
 
+// Source names where a suggestion came from.
+type Source string
+
+// The sources of a suggestion.
 const (
-	sourceRule    = "rule"
-	sourceHistory = "history"
-	mainTarget    = "main"
+	// SourceRule means the rules of this package made the suggestion.
+	SourceRule Source = "rule"
+	// SourceHistory means an earlier verdict on the same value made it.
+	SourceHistory Source = "history"
 )
+
+const mainTarget = "main"
 
 var (
 	nameAttr   = regexp.MustCompile(`\bname\s*=\s*["']([^"']*)["']`)
@@ -193,11 +200,11 @@ func Default(b Bundle, used []Name) Suggestion {
 		if Frontend(m.File) {
 			return Suggestion{
 				Decision: Decision{Verdict: VerdictHold, Reason: HoldStructure},
-				Source:   sourceRule,
+				Source:   SourceRule,
 			}
 		}
 	}
-	return Suggestion{Decision: Decision{Name: SuggestName(b, used)}, Source: sourceRule}
+	return Suggestion{Decision: Decision{Name: SuggestName(b, used)}, Source: SourceRule}
 }
 
 // Adapt turns a decision taken earlier for the same value elsewhere into a
@@ -220,5 +227,5 @@ func Adapt(past Decision, b Bundle, used []Name) Suggestion {
 			}
 		}
 	}
-	return Suggestion{Decision: d, Source: sourceHistory}
+	return Suggestion{Decision: d, Source: SourceHistory}
 }

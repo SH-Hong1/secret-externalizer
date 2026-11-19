@@ -248,6 +248,19 @@ func TestTriageCustomerData(t *testing.T) {
 	}
 }
 
+func TestTriageCustomerBundleSelectsGroup(t *testing.T) {
+	e := triageEnv(t)
+	res := e.getTriage(t, url.Values{"sel": {"b103"}}, nil)
+	if res.status != http.StatusOK {
+		t.Fatalf("GET triage sel=b103 status = %d, want 200", res.status)
+	}
+	wantIn(t, "customer data detail", section(res.body, "section", "detail"), "37건")
+	list := section(res.body, "nav", "list")
+	if !regexp.MustCompile(`href="[^"]*sel=c\.none\.phone\.logs%2Fsample\.log[^"]*"[^>]*aria-current="true"`).MatchString(list) {
+		t.Errorf("triage list with sel=b103 does not mark the phone group current:\n%s", list)
+	}
+}
+
 func TestTriageSuggestion(t *testing.T) {
 	e := triageEnv(t)
 	e.triage.past[fpPassword] = triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.order.password", Note: "fake past note"}
@@ -327,6 +340,18 @@ func TestTriageEmpty(t *testing.T) {
 		wantIn(t, "all decided", section(res.body, "section", "detail"),
 			"미판정 항목이 없습니다", "128개를 모두 판정했습니다", "외부화 71", "삭제·마스킹 38", "오탐 14", "보류 5",
 			`href="/projects/1/triage?status=all"`)
+	})
+	t.Run("scan found nothing", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.setScan(scan.Scan{ID: 12, ProjectID: 1, Status: scan.StatusSucceeded},
+			map[triage.Verdict]int{"": 0, triage.VerdictExternalize: 0, triage.VerdictRedact: 0, triage.VerdictFalsePositive: 0, triage.VerdictHold: 0})
+		res := e.getTriage(t, nil, nil)
+		if res.status != http.StatusOK {
+			t.Fatalf("GET triage after an empty scan status = %d, want 200", res.status)
+		}
+		detail := section(res.body, "section", "detail")
+		wantIn(t, "empty scan", detail, "찾은 항목이 없습니다", "스캔 #12에서 비밀 값이나 고객정보를 찾지 못했습니다", `href="/projects/1"`)
+		wantNotIn(t, "empty scan", detail, "모두 판정했습니다")
 	})
 	t.Run("filter matches nothing", func(t *testing.T) {
 		e := triageEnv(t)

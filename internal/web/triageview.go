@@ -2,7 +2,6 @@ package web
 
 import (
 	"net/url"
-	"path"
 	"strconv"
 	"strings"
 
@@ -25,8 +24,9 @@ type triageQuery struct {
 	Sel      string
 }
 
-// values returns q as query parameters, leaving out the default status, an
-// empty category and selection, and page 1 unless withPage is set.
+// values returns q as query parameters. The status is always set; an empty
+// category and selection are left out, and so is page 1 unless withPage is
+// set.
 func (q triageQuery) values(withPage bool) url.Values {
 	v := url.Values{}
 	if q.Category != "" {
@@ -63,7 +63,6 @@ type triagePage struct {
 	Undecided int
 	Total     int
 	Statuses  []statusChip
-	Category  finding.Category
 	Status    string
 	Options   []categoryOption
 	Rows      []listRow
@@ -116,84 +115,6 @@ type emptyState struct {
 	Text     string
 	LinkText string
 	LinkHref string
-}
-
-// verdictButton is one submit button of a verdict form.
-type verdictButton struct {
-	verdictView
-	Suggested bool
-}
-
-type reasonOption struct {
-	Value, Label string
-	Selected     bool
-}
-
-// verdictForm is the form that records a verdict. The hold button submits
-// the reason select with it.
-type verdictForm struct {
-	Action    string
-	Return    string
-	Buttons   []verdictButton
-	Hold      verdictButton
-	Reasons   []reasonOption
-	Note      string
-	Suggested bool
-	Source    string
-	Text      string
-}
-
-// nameField is the placeholder name input of a secret bundle.
-type nameField struct {
-	Value     string
-	Prefix    string
-	Config    string
-	Shell     string
-	Suggested bool
-}
-
-// bundleDetail is the detail of a secret bundle.
-type bundleDetail struct {
-	ID            triage.BundleID
-	KindLabel     string
-	CategoryLabel string
-	Preview       string
-	Verdict       verdictView
-	Frontend      bool
-	Locations     int
-	Members       []memberView
-	Name          *nameField
-	Form          verdictForm
-}
-
-// memberView is one member of a bundle. MoveAction is set for every member
-// after the first, which can be split off into a bundle of its own.
-type memberView struct {
-	FindingID  finding.ID
-	MoveAction string
-	Locations  []locationView
-}
-
-type locationView struct {
-	Where      string
-	Detections []finding.Detection
-	Context    []contextLine
-}
-
-// customerDetail is the detail of the customer data of one kind in one file.
-type customerDetail struct {
-	Kind       finding.Kind
-	KindLabel  string
-	File       string
-	From       string
-	Preview    string
-	Verdict    verdictView
-	Count      int
-	Lines      string
-	Shown      int
-	MoreLines  bool
-	Detections []finding.Detection
-	Form       verdictForm
 }
 
 // verdictOf returns the label and style of v; the zero verdict is undecided.
@@ -268,18 +189,6 @@ func categoryShort(c finding.Category) string {
 	return string(c)
 }
 
-func reasonLabel(r triage.HoldReason) string {
-	switch r {
-	case triage.HoldStructure:
-		return "구조 변경 필요"
-	case triage.HoldConfirm:
-		return "확인 필요"
-	case triage.HoldLater:
-		return "나중에 처리"
-	}
-	return string(r)
-}
-
 // bundleSel returns the selection of a secret bundle.
 func bundleSel(id triage.BundleID) string {
 	return "b" + strconv.FormatInt(int64(id), 10)
@@ -333,8 +242,9 @@ func parseSel(sel string) (selection, bool) {
 }
 
 // newListRows shapes the entries of a page into list lines. The line whose
-// selection is sel is the current one. The verdict of each line is shown
-// when the list holds more than one verdict.
+// selection is sel is the current one. Each line carries its verdict; the
+// template shows it only under the status filter "all" (ShowState), where
+// lines of different verdicts meet.
 func newListRows(id project.ID, q triageQuery, entries []triage.Entry, sel string) []listRow {
 	out := make([]listRow, 0, len(entries))
 	for _, e := range entries {
@@ -400,168 +310,22 @@ func newCategoryOptions(current finding.Category) []categoryOption {
 	return out
 }
 
-// newVerdictForm returns the verdict buttons of allowed with the hold
-// button apart, marking the suggested verdict and choosing the reason of the
-// current decision, or of the suggestion when there is none.
-func newVerdictForm(action, ret string, allowed []triage.Verdict, current triage.Decision, s triage.Suggestion) verdictForm {
-	f := verdictForm{Action: action, Return: ret, Note: current.Note}
-	for _, v := range allowed {
-		b := verdictButton{verdictView: verdictOf(v), Suggested: s.Decision.Verdict == v}
-		if b.Suggested {
-			f.Suggested, f.Source = true, s.Source
-			f.Text = suggestionText(s)
-		}
-		if v == triage.VerdictHold {
-			f.Hold = b
-			continue
-		}
-		f.Buttons = append(f.Buttons, b)
-	}
-	reason := current.Reason
-	if reason == "" {
-		reason = s.Decision.Reason
-	}
-	if reason == "" {
-		reason = triage.HoldConfirm
-	}
-	for _, r := range []triage.HoldReason{triage.HoldStructure, triage.HoldConfirm, triage.HoldLater} {
-		f.Reasons = append(f.Reasons, reasonOption{Value: string(r), Label: reasonLabel(r), Selected: r == reason})
-	}
-	return f
-}
-
-// suggestionText explains where a suggested verdict came from.
-func suggestionText(s triage.Suggestion) string {
-	label := verdictOf(s.Decision.Verdict).Label
-	if s.Decision.Verdict == triage.VerdictHold {
-		label += "(" + reasonLabel(s.Decision.Reason) + ")"
-	}
-	if s.Source == "history" {
-		return "제안: " + label + ". 같은 값을 다른 곳에서 " + verdictOf(s.Decision.Verdict).Label + "(으)로 판정했습니다. 버튼을 눌러야 저장됩니다."
-	}
-	return "제안: " + label + ". 규칙에 따른 제안입니다. 버튼을 눌러야 저장됩니다."
-}
-
-// shellFile reports whether file is a shell script, whose placeholder takes
-// the shell form.
-func shellFile(file string) bool {
-	return strings.EqualFold(path.Ext(file), ".sh")
-}
-
-// newNameField returns the name input of b: its stored name, or the
-// suggested one. The prefix is the shell one when every member is a shell
-// script; Config and Shell are the rendered forms the bundle's files take.
-func newNameField(b triage.Bundle, s triage.Suggestion) *nameField {
-	n := b.Decision.Name
-	f := &nameField{Prefix: "ext."}
-	if n == "" {
-		n = s.Decision.Name
-		f.Suggested = n != ""
-	}
-	f.Value = string(n)
-	shells := 0
-	for _, m := range b.Members {
-		if shellFile(m.File) {
-			shells++
-		}
-	}
-	if shells > 0 && shells == len(b.Members) {
-		f.Prefix = "EXT_"
-	}
-	if n == "" {
-		return f
-	}
-	if shells < len(b.Members) {
-		f.Config = "${" + n.Config() + "}"
-	}
-	if shells > 0 {
-		f.Shell = "${" + n.Shell() + "}"
-	}
-	return f
-}
-
-// newBundleDetail shapes a secret bundle and its suggestion for the detail.
-func newBundleDetail(id project.ID, ret string, b triage.Bundle, s triage.Suggestion) *bundleDetail {
-	d := &bundleDetail{
-		ID:            b.ID,
-		KindLabel:     kindLabel(b.Kind),
-		CategoryLabel: categoryLabel(b.Category),
-		Preview:       b.Preview,
-		Verdict:       verdictOf(b.Decision.Verdict),
-	}
-	allowed := b.Allowed()
-	for _, v := range allowed {
-		if v == triage.VerdictExternalize {
-			d.Name = newNameField(b, s)
-		}
-	}
-	for _, m := range b.Members {
-		d.Frontend = d.Frontend || triage.Frontend(m.File)
-	}
-	pid := strconv.FormatInt(int64(id), 10)
-	for i, m := range b.Members {
-		mv := memberView{FindingID: m.FindingID}
-		if i > 0 {
-			mv.MoveAction = "/projects/" + pid + "/findings/" + strconv.FormatInt(int64(m.FindingID), 10) + "/move"
-		}
-		for _, l := range m.Locations {
-			mv.Locations = append(mv.Locations, locationView{
-				Where:      m.File + ":" + lineRange(l),
-				Detections: l.Detections,
-				Context:    contextLines(l),
-			})
-			d.Locations++
-		}
-		d.Members = append(d.Members, mv)
-	}
-	action := "/projects/" + pid + "/bundles/" + strconv.FormatInt(int64(b.ID), 10) + "/verdict"
-	d.Form = newVerdictForm(action, ret, allowed, b.Decision, s)
-	return d
-}
-
-// newCustomerDetail shapes a customer data group for the detail. first is
-// the group's first bundle, which gives the preview and the detections.
-func newCustomerDetail(id project.ID, ret string, g triage.Group, first triage.Bundle) *customerDetail {
-	d := &customerDetail{
-		Kind:      g.Key.Kind,
-		KindLabel: kindLabel(g.Key.Kind),
-		File:      g.Key.File,
-		From:      string(g.Key.Verdict),
-		Preview:   first.Preview,
-		Verdict:   verdictOf(g.Key.Verdict),
-		Count:     g.Count,
-		Shown:     len(g.Lines),
-		MoreLines: len(g.Lines) >= triage.GroupLines,
-	}
-	lines := make([]string, 0, len(g.Lines))
-	for _, l := range g.Lines {
-		lines = append(lines, strconv.Itoa(l))
-	}
-	d.Lines = strings.Join(lines, ", ")
-	seen := map[finding.Detection]bool{}
-	for _, m := range first.Members {
-		for _, l := range m.Locations {
-			for _, det := range l.Detections {
-				if !seen[det] {
-					seen[det] = true
-					d.Detections = append(d.Detections, det)
-				}
-			}
-		}
-	}
-	action := "/projects/" + strconv.FormatInt(int64(id), 10) + "/customer-data/verdict"
-	d.Form = newVerdictForm(action, ret, first.Allowed(), triage.Decision{Verdict: g.Key.Verdict}, triage.Suggestion{})
-	return d
-}
-
-// newEmptyState returns the detail of a page without entries: everything
-// decided, or a filter that matches nothing.
+// newEmptyState returns the detail of a page without entries: a scan that
+// found nothing, everything decided, or a filter that matches nothing.
 func newEmptyState(id project.ID, q triageQuery, scanID scan.ID, counts map[triage.Verdict]int) *emptyState {
-	if q.Status == triage.StatusUndecided && q.Category == "" {
-		total := 0
-		for _, n := range counts {
-			total += n
+	total := 0
+	for _, n := range counts {
+		total += n
+	}
+	if total == 0 {
+		return &emptyState{
+			Title:    "찾은 항목이 없습니다",
+			Text:     "스캔 #" + strconv.FormatInt(int64(scanID), 10) + "에서 비밀 값이나 고객정보를 찾지 못했습니다.",
+			LinkText: "프로젝트로 돌아가기",
+			LinkHref: "/projects/" + strconv.FormatInt(int64(id), 10),
 		}
+	}
+	if q.Status == triage.StatusUndecided && q.Category == "" {
 		return &emptyState{
 			Title: "미판정 항목이 없습니다",
 			Text: "스캔 #" + strconv.FormatInt(int64(scanID), 10) + "가 찾은 " + strconv.Itoa(total) + "개를 모두 판정했습니다. " +

@@ -673,9 +673,9 @@ func TestProjectSummaries(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("ProjectSummaries() = %d summaries, want 3", len(got))
 	}
-	for i, s := range got {
-		if s.LastScanAt.IsZero() != (s.LastScanID == 0) {
-			t.Errorf("ProjectSummaries()[%d] scan %d at %v, want a time exactly when there is a scan", i, s.LastScanID, s.LastScanAt)
+	for i, sum := range got {
+		if sum.LastScanAt.IsZero() != (sum.LastScanID == 0) {
+			t.Errorf("ProjectSummaries()[%d] scan %d at %v, want a time exactly when there is a scan", i, sum.LastScanID, sum.LastScanAt)
 		}
 	}
 	type row struct {
@@ -688,8 +688,8 @@ func TestProjectSummaries(t *testing.T) {
 		Total      int
 	}
 	var rows []row
-	for _, s := range got {
-		rows = append(rows, row{s.Project.ID, s.Project.Name, s.LastScanID, s.LastScanStatus, s.HasResult, s.Undecided, s.Total})
+	for _, sum := range got {
+		rows = append(rows, row{sum.Project.ID, sum.Project.Name, sum.LastScanID, sum.LastScanStatus, sum.HasResult, sum.Undecided, sum.Total})
 	}
 	want := []row{
 		{alpha, "alpha", 0, "", false, 0, 0},

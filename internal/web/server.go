@@ -69,8 +69,7 @@ type ScanStore interface {
 // scan; a page past the last gives the last. Bundle returns a bundle with
 // the members the scan found, or an error matching db.ErrNotFound.
 // CustomerGroup returns the customer data a key names, with no bundles when
-// it names nothing. Decide and MoveFinding record a user's choice; UsedNames
-// and PastDecision feed suggestions.
+// it names nothing. Decide and MoveFinding record a user's choice.
 type TriageStore interface {
 	LatestScan(ctx context.Context, projectID project.ID) (scan.Scan, error)
 	Entries(ctx context.Context, projectID project.ID, scanID scan.ID, f triage.Filter) (triage.Page, error)
@@ -78,8 +77,6 @@ type TriageStore interface {
 	CustomerGroup(ctx context.Context, projectID project.ID, scanID scan.ID, key triage.GroupKey) (triage.Group, error)
 	Decide(ctx context.Context, projectID project.ID, ids []triage.BundleID, d triage.Decision, by audit.Actor) error
 	MoveFinding(ctx context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (triage.BundleID, error)
-	UsedNames(ctx context.Context, projectID project.ID) ([]triage.Name, error)
-	PastDecision(ctx context.Context, fingerprint string, except triage.BundleID) (triage.Decision, bool, error)
 }
 
 // Suggester proposes a verdict and a name for a bundle that has no verdict.
