@@ -6,12 +6,17 @@ import (
 	"encoding/hex"
 	"io/fs"
 	"os"
+	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/audit"
+	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 // NewTestStore returns a Store whose pool uses a schema of its own, created
@@ -131,4 +136,66 @@ func (s *Store) Job(ctx context.Context, scanID int64) (JobRow, error) {
 // fsys in place of the embedded ones.
 func (s *Store) MigrateFrom(ctx context.Context, fsys fs.FS) error {
 	return s.migrate(ctx, fsys)
+}
+
+// MigrateThrough applies the embedded migrations up to and including
+// version.
+func (s *Store) MigrateThrough(ctx context.Context, version int) error {
+	all, err := loadMigrations(migrationFiles)
+	if err != nil {
+		return err
+	}
+	fsys := fstest.MapFS{}
+	for _, m := range all {
+		if m.version <= version {
+			fsys["migrations/"+m.name] = &fstest.MapFile{Data: []byte(m.sql)}
+		}
+	}
+	return s.migrate(ctx, fsys)
+}
+
+// InsertRawFinding stores a finding of the scan with one location at line,
+// with SQL that needs only the schema of migration 0004.
+func (s *Store) InsertRawFinding(ctx context.Context, projectID project.ID, scanID int64, f finding.Finding, line int) error {
+	var id int64
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO finding (project_id, fingerprint, file_path, category, kind, preview, has_original, first_scan_id, last_scan_id)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8) RETURNING id`,
+		projectID, f.Fingerprint, f.File, f.Category, f.Kind, f.Preview, f.HasOriginal, scanID).Scan(&id)
+	if err != nil {
+		return err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO location (finding_id, scan_id, start_line, start_col, end_line, end_col, file_hash, detections)
+		VALUES ($1, $2, $3, 1, $3, 4, $4, '[]')`, id, scanID, line, strings.Repeat("f", 64))
+	return err
+}
+
+// BundleOf returns the bundle of the finding of the project with the given
+// fingerprint and file.
+func (s *Store) BundleOf(ctx context.Context, projectID project.ID, fingerprint, file string) (triage.BundleID, error) {
+	var id triage.BundleID
+	err := s.pool.QueryRow(ctx,
+		"SELECT bundle_id FROM finding WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3",
+		projectID, fingerprint, file).Scan(&id)
+	return id, err
+}
+
+// LastAuditEvent returns the newest row of audit_event.
+func (s *Store) LastAuditEvent(ctx context.Context) (audit.Event, error) {
+	var (
+		e                   audit.Event
+		bundleID, findingID *int64
+	)
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, at, actor_subject, actor_name, action, project_id, bundle_id, finding_id, detail
+		FROM audit_event ORDER BY id DESC LIMIT 1`).
+		Scan(&e.ID, &e.At, &e.Actor.Subject, &e.Actor.Name, &e.Action, &e.ProjectID, &bundleID, &findingID, &e.Detail)
+	if bundleID != nil {
+		e.BundleID = triage.BundleID(*bundleID)
+	}
+	if findingID != nil {
+		e.FindingID = finding.ID(*findingID)
+	}
+	return e, err
 }

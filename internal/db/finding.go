@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
@@ -24,7 +25,7 @@ type detection struct {
 // the job, which is also the case when the result was already saved.
 //
 // A finding is keyed by project, fingerprint, and file. A finding that an
-// earlier scan stored keeps its ID and its first scan; its last scan becomes
+// earlier scan stored keeps its ID, its bundle, and its first scan; its last scan becomes
 // this one, and its category, kind, preview, and whether it has an original
 // become what this scan found, since the rules or the masking may have
 // changed in between. Locations belong to the scan that found them, so each
@@ -55,19 +56,30 @@ func (s *Store) SaveResult(ctx context.Context, jobID int64, workerID string, id
 	})
 }
 
-// insertFinding upserts f and adds its locations for the scan.
+// insertFinding stores f, or updates it when an earlier scan stored it, and
+// adds its locations for the scan. A finding stored for the first time joins
+// the bundle bundleForNew gives it; a stored finding keeps its bundle.
 func insertFinding(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, f finding.Finding) error {
 	var findingID int64
 	err := tx.QueryRow(ctx, `
-		INSERT INTO finding (project_id, fingerprint, file_path, category, kind, preview, has_original, first_scan_id, last_scan_id)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8)
-		ON CONFLICT (project_id, fingerprint, file_path) DO UPDATE SET
-			category = EXCLUDED.category, kind = EXCLUDED.kind, preview = EXCLUDED.preview,
-			has_original = EXCLUDED.has_original, last_scan_id = EXCLUDED.last_scan_id
+		UPDATE finding SET category = $4, kind = $5, preview = $6, has_original = $7, last_scan_id = $8
+		WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3
 		RETURNING id`,
 		projectID, f.Fingerprint, f.File, f.Category, f.Kind, f.Preview, f.HasOriginal, id).Scan(&findingID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		bundleID, berr := bundleForNew(ctx, tx, projectID, f)
+		if berr != nil {
+			return berr
+		}
+		err = tx.QueryRow(ctx, `
+			INSERT INTO finding (project_id, fingerprint, file_path, category, kind, preview, has_original,
+				first_scan_id, last_scan_id, bundle_id)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9)
+			RETURNING id`,
+			projectID, f.Fingerprint, f.File, f.Category, f.Kind, f.Preview, f.HasOriginal, id, bundleID).Scan(&findingID)
+	}
 	if err != nil {
-		return fmt.Errorf("upserting finding: %w", err)
+		return fmt.Errorf("storing finding: %w", err)
 	}
 	batch := &pgx.Batch{}
 	for _, l := range f.Locations {
@@ -95,13 +107,41 @@ func insertFinding(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, 
 	return nil
 }
 
-// FindingsByScan returns the findings the scan found, each with the
-// locations of that scan only. Findings are ordered by file and then by
+// locationColumns are the columns of location l that scanLocation reads.
+const locationColumns = `l.start_line, l.start_col, l.end_line, l.end_col, l.context, l.context_first_line,
+	l.file_hash, l.detections`
+
+// scanLocation scans the current row into dest followed by the
+// locationColumns, and returns the location.
+func scanLocation(rows pgx.Rows, dest ...any) (finding.Location, error) {
+	var (
+		l          finding.Location
+		detections []byte
+	)
+	dest = append(dest, &l.StartLine, &l.StartCol, &l.EndLine, &l.EndCol, &l.Context, &l.ContextFirstLine, &l.FileHash, &detections)
+	if err := rows.Scan(dest...); err != nil {
+		return finding.Location{}, fmt.Errorf("reading location row: %w", err)
+	}
+	var ds []detection
+	if err := json.Unmarshal(detections, &ds); err != nil {
+		return finding.Location{}, fmt.Errorf("decoding detections: %w", err)
+	}
+	for _, d := range ds {
+		l.Detections = append(l.Detections, finding.Detection(d))
+	}
+	if len(l.Context) == 0 {
+		l.Context = nil
+	}
+	return l, nil
+}
+
+// FindingsByScan returns the findings the scan found, each with its ID and
+// the locations of that scan only. Findings are ordered by file and then by
 // their first location; locations by line and column.
 func (s *Store) FindingsByScan(ctx context.Context, id scan.ID) ([]finding.Finding, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT f.id, f.fingerprint, f.file_path, f.category, f.kind, f.preview, f.has_original,
-			l.start_line, l.start_col, l.end_line, l.end_col, l.context, l.context_first_line, l.file_hash, l.detections
+			`+locationColumns+`
 		FROM location l JOIN finding f ON f.id = l.finding_id
 		WHERE l.scan_id = $1
 		ORDER BY f.file_path, l.start_line, l.start_col, f.id, l.id`, id)
@@ -111,32 +151,17 @@ func (s *Store) FindingsByScan(ctx context.Context, id scan.ID) ([]finding.Findi
 	defer rows.Close()
 
 	var out []finding.Finding
-	index := map[int64]int{}
+	index := map[finding.ID]int{}
 	for rows.Next() {
-		var (
-			findingID  int64
-			f          finding.Finding
-			l          finding.Location
-			detections []byte
-		)
-		if err := rows.Scan(&findingID, &f.Fingerprint, &f.File, &f.Category, &f.Kind, &f.Preview, &f.HasOriginal,
-			&l.StartLine, &l.StartCol, &l.EndLine, &l.EndCol, &l.Context, &l.ContextFirstLine, &l.FileHash, &detections); err != nil {
-			return nil, fmt.Errorf("reading finding row: %w", err)
+		var f finding.Finding
+		l, err := scanLocation(rows, &f.ID, &f.Fingerprint, &f.File, &f.Category, &f.Kind, &f.Preview, &f.HasOriginal)
+		if err != nil {
+			return nil, err
 		}
-		var ds []detection
-		if err := json.Unmarshal(detections, &ds); err != nil {
-			return nil, fmt.Errorf("decoding detections of finding %d: %w", findingID, err)
-		}
-		for _, d := range ds {
-			l.Detections = append(l.Detections, finding.Detection(d))
-		}
-		if len(l.Context) == 0 {
-			l.Context = nil
-		}
-		i, seen := index[findingID]
+		i, seen := index[f.ID]
 		if !seen {
 			i = len(out)
-			index[findingID] = i
+			index[f.ID] = i
 			out = append(out, f)
 		}
 		out[i].Locations = append(out[i].Locations, l)

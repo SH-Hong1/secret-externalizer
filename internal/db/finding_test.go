@@ -118,7 +118,8 @@ func TestSaveResult_StoresScanAndFindings(t *testing.T) {
 	sorted := customer
 	sorted.Locations = []finding.Location{customer.Locations[1], customer.Locations[0]}
 	want := []finding.Finding{secretAt(fpC, 2), secretAt(fpA, 4), sorted}
-	if diff := cmp.Diff(want, findings, cmpopts.EquateEmpty()); diff != "" {
+	// Each finding gets its own ID; TestBundle checks the IDs.
+	if diff := cmp.Diff(want, findings, cmpopts.EquateEmpty(), cmpopts.IgnoreFields(finding.Finding{}, "ID")); diff != "" {
 		t.Errorf("FindingsByScan(%d) (-want +got):\n%s", id, diff)
 	}
 }

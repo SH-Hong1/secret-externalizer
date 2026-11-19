@@ -278,13 +278,13 @@
 
   `triage.Filter`는 `Category finding.Category`(빈 값은 전체), `Status string`(`undecided`, 판정 네 가지, `all`), `Page int`다. `triage.Page`는 `Entries []Entry`, `Total int`, `Page int`, `Pages int`, 그리고 필터와 상관없는 상태별 건수 `Counts map[Verdict]int`다. `triage.Entry`는 목록 한 줄이다: 비밀 값 묶음 하나(`Bundle BundleID`, 이름, 분류, 종류, 미리보기, 위치 수, 판정) 또는 고객정보 한 무리(`Group GroupKey{File string; Kind finding.Kind; Verdict Verdict}`, 건수, 묶음 수). `triage.Group`은 그 무리의 묶음 ID 목록, 건수, 줄 번호(처음 50개)다. 한 쪽은 50줄이고 순서는 분류, 파일, 첫 줄이다.
 
-- [ ] **Step 1: `triage`의 실패하는 테스트를 쓴다.**
+- [x] **Step 1: `triage`의 실패하는 테스트를 쓴다.**
   - `TestParseName`: `db.main.password`, `ssh.deploy2.key`는 통과한다. 빈 값, 마디 하나(`password`), 여섯 마디, 대문자, `-`와 `_`, 숫자로 시작하는 마디, `ext.`으로 시작하는 이름, 101자는 `ErrInvalidName`이다.
   - `TestNameForms`: `db.main.password`의 `Config()`는 `ext.db.main.password`, `Shell()`은 `EXT_DB_MAIN_PASSWORD`다.
   - `TestAllowed`: 비밀 값 묶음은 `externalize, false-positive, hold`, 고객정보는 `redact, false-positive, hold`, 구성원 중 `Frontend` 파일이 하나라도 있는 비밀 값 묶음은 `false-positive, hold`다.
   - `TestCheck`: 허용되지 않은 판정, 이름 없는 외부화, 외부화가 아닌데 이름이 있는 것, 사유 없는 보류, 보류가 아닌데 사유가 있는 것, 500자를 넘거나 제어 문자가 든 메모는 `ErrNotAllowed`다. 빈 `Decision`은 언제나 통과한다.
-- [ ] **Step 2:** 실패를 확인하고 `triage`와 `audit`을 쓴다.
-- [ ] **Step 3: `db`의 실패하는 테스트를 쓴다.** 실행 중인 postgres가 없으면 건너뛴다(기존 `db` 테스트의 방식).
+- [x] **Step 2:** 실패를 확인하고 `triage`와 `audit`을 쓴다.
+- [x] **Step 3: `db`의 실패하는 테스트를 쓴다.** 실행 중인 postgres가 없으면 건너뛴다(기존 `db` 테스트의 방식).
   - `TestSaveResultAssignsBundles`: 한 스캔 결과에 같은 지문의 비밀번호가 `a.yml`, `b.xml`, `c.jsp`에, 같은 지문의 호스트가 `a.yml`, `b.xml`에, 같은 전화번호가 `x.log`, `y.log`에 있으면 묶음은 비밀번호 2개(`a.yml`+`b.xml`, `c.jsp`), 호스트 2개, 전화번호 2개다.
   - `TestRescanKeepsDecisions`: 판정하고 이름을 준 뒤 같은 결과를 다시 저장하면 판정과 이름이 그대로다. 새 파일 `d.properties`에 같은 비밀번호가 더해지면 `a.yml`의 묶음에 들어간다. `MoveFinding`으로 `b.xml`을 떼어 낸 뒤 다시 저장해도 `b.xml`은 떼어 낸 묶음에 있다.
   - `TestDecide`: 저장한 값이 `Bundle`로 읽히고 `audit_event`에 한 줄이 생긴다. 다른 프로젝트 ID로 부르면 `ErrNotFound`이고 아무것도 바뀌지 않는다. ID 여러 개 중 하나가 없으면 전부 저장되지 않는다. 다른 묶음이 쓰는 이름은 `ErrDuplicate`다. `Check`에 걸리는 값은 `triage.ErrNotAllowed`다.
@@ -292,7 +292,7 @@
   - `TestEntries`: 묶음 120개에서 `Page: 3`이 20줄, `Pages`가 3이다. `Page: 9`는 3쪽을 준다. 한 파일의 전화번호 37개는 한 줄(건수 37)이고, 그중 5개를 오탐으로 판정하면 두 줄(32, 5)이 된다. `scanID`에 없는 묶음(값이 사라진 것)은 나오지 않는다. 분류와 상태 필터가 줄을 거른다.
   - `TestPastDecision`: 다른 프로젝트의 같은 지문에 판정이 있으면 가장 최근 것을 주고, 없으면 `false`다.
   - `TestMigration0005Backfill`: `0004`까지 적용한 DB에 항목을 넣고 `0005`를 적용하면 모든 항목에 `bundle_id`가 있고 묶음 수가 `TestSaveResultAssignsBundles`의 규칙과 같다.
-- [ ] **Step 4:** `0005_bundle_and_audit.sql`을 쓴다.
+- [x] **Step 4:** `0005_bundle_and_audit.sql`을 쓴다.
 
   ```sql
   CREATE TABLE bundle (
@@ -318,9 +318,9 @@
   ```
 
   `finding.bundle_id bigint REFERENCES bundle (id)`를 더하고, 기존 항목의 묶음을 만든 뒤 `NOT NULL`로 바꾸고 인덱스를 건다. `audit_event(id, at, actor_subject, actor_name, action, project_id, bundle_id, finding_id, detail jsonb)`는 `project`만 참조하고 묶음과 항목은 참조하지 않는다(묶음이 지워져도 기록은 남는다). `action`은 CHECK로 세 값에 묶는다.
-- [ ] **Step 5:** `bundle.go`, `audit.go`를 쓰고 `insertFinding`을 고친다. 새 항목의 묶음은 고객정보이거나 `SharesBundle`이 false면 새 `own` 묶음, `Frontend` 파일이면 그 지문의 `frontend` 묶음, 그 밖에는 `shared` 묶음이다(없으면 만든다). 이미 있는 항목의 묶음은 건드리지 않는다. `Decide`와 `MoveFinding`은 한 트랜잭션에서 묶음을 잠그고(`FOR UPDATE`), `Check`로 확인하고, 바꾸고, 감사 기록을 쓴다.
-- [ ] **Step 6:** `make check`와 `make test-integration`이 통과하는지 확인한다.
-- [ ] **Step 7:** `CHANGELOG.md`와 결정 기록 0027(검토 항목 4, 5, 7의 결정과 이유)을 쓰고 커밋한다. `feat(triage): store bundles, verdicts and the audit trail`
+- [x] **Step 5:** `bundle.go`, `audit.go`를 쓰고 `insertFinding`을 고친다. 새 항목의 묶음은 고객정보이거나 `SharesBundle`이 false면 새 `own` 묶음, `Frontend` 파일이면 그 지문의 `frontend` 묶음, 그 밖에는 `shared` 묶음이다(없으면 만든다). 이미 있는 항목의 묶음은 건드리지 않는다. `Decide`와 `MoveFinding`은 한 트랜잭션에서 묶음을 잠그고(`FOR UPDATE`), `Check`로 확인하고, 바꾸고, 감사 기록을 쓴다.
+- [x] **Step 6:** `make check`와 `make test-integration`이 통과하는지 확인한다.
+- [x] **Step 7:** `CHANGELOG.md`와 결정 기록 0027(검토 항목 4, 5, 7의 결정과 이유)을 쓰고 커밋한다. `feat(triage): store bundles, verdicts and the audit trail`
 
 ### Task 5: 제안
 

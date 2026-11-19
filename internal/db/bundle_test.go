@@ -1,0 +1,569 @@
+package db_test
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"testing"
+
+	"github.com/google/go-cmp/cmp"
+
+	"github.com/SH-Hong1/secret-externalizer/internal/audit"
+	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/scan"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
+)
+
+var fpD = strings.Repeat("d", 64)
+
+// tester is the actor of every decision in these tests.
+var tester = audit.Actor{Subject: "fake-subject", Name: "Fake Tester"}
+
+// fnd returns a finding of the value fp in file with one location at line.
+func fnd(fp, file string, c finding.Category, k finding.Kind, line int) finding.Finding {
+	f := finding.Finding{
+		Fingerprint: fp, File: file, Category: c, Kind: k, Preview: "****",
+		HasOriginal: c != finding.CategoryCustomerData,
+		Locations: []finding.Location{{
+			StartLine: line, StartCol: 1, EndLine: line, EndCol: 4, FileHash: fileHash,
+			Detections: []finding.Detection{{Tool: "opengrep", Rule: "fake-rule"}},
+		}},
+	}
+	if c == finding.CategoryCustomerData {
+		f.Preview = "010-****-****"
+	}
+	return f
+}
+
+func password(file string) finding.Finding {
+	return fnd(fpA, file, finding.CategoryStorage, finding.KindPassword, 3)
+}
+
+func host(file string) finding.Finding {
+	return fnd(fpB, file, finding.CategoryStorage, finding.KindHost, 2)
+}
+
+func phone(file string) finding.Finding {
+	return fnd(fpC, file, finding.CategoryCustomerData, finding.KindPhone, 7)
+}
+
+// mixed is the scan result of the bundling rules: one password in three
+// files, one of them a JSP, one host in two files, and one phone number in
+// two logs.
+func mixed() []finding.Finding {
+	return []finding.Finding{
+		password("conf/a.yml"), password("conf/b.xml"), password("web/c.jsp"),
+		host("conf/a.yml"), host("conf/b.xml"),
+		phone("logs/x.log"), phone("logs/y.log"),
+	}
+}
+
+// save stores findings as the result of a new scan of the project.
+func save(t *testing.T, s *db.Store, pid project.ID, findings ...finding.Finding) scan.ID {
+	t.Helper()
+	id, j := claimedScan(t, s, pid)
+	if err := s.SaveResult(t.Context(), j.ID, "worker-a", id, result(findings...)); err != nil {
+		t.Fatalf("SaveResult(scan %d) error = %v", id, err)
+	}
+	return id
+}
+
+func bundleOf(t *testing.T, s *db.Store, pid project.ID, fp, file string) triage.BundleID {
+	t.Helper()
+	id, err := s.BundleOf(t.Context(), pid, fp, file)
+	if err != nil {
+		t.Fatalf("BundleOf(%d, %.8s, %q) error = %v", pid, fp, file, err)
+	}
+	return id
+}
+
+func findingID(t *testing.T, s *db.Store, pid project.ID, fp, file string) finding.ID {
+	t.Helper()
+	row, err := s.FindingRow(t.Context(), pid, fp, file)
+	if err != nil {
+		t.Fatalf("FindingRow(%d, %.8s, %q) error = %v", pid, fp, file, err)
+	}
+	return finding.ID(row.ID)
+}
+
+func decide(t *testing.T, s *db.Store, pid project.ID, d triage.Decision, ids ...triage.BundleID) {
+	t.Helper()
+	if err := s.Decide(t.Context(), pid, ids, d, tester); err != nil {
+		t.Fatalf("Decide(%d, %v, %+v) error = %v", pid, ids, d, err)
+	}
+}
+
+func readBundle(t *testing.T, s *db.Store, pid project.ID, sid scan.ID, id triage.BundleID) triage.Bundle {
+	t.Helper()
+	b, err := s.Bundle(t.Context(), pid, sid, id)
+	if err != nil {
+		t.Fatalf("Bundle(%d, %d, %d) error = %v", pid, sid, id, err)
+	}
+	return b
+}
+
+func memberFiles(b triage.Bundle) []string {
+	var out []string
+	for _, m := range b.Members {
+		out = append(out, m.File)
+	}
+	return out
+}
+
+// assertMixedBundles checks the bundles of the findings of mixed.
+func assertMixedBundles(t *testing.T, s *db.Store, pid project.ID) {
+	t.Helper()
+	pwA := bundleOf(t, s, pid, fpA, "conf/a.yml")
+	pwB := bundleOf(t, s, pid, fpA, "conf/b.xml")
+	pwC := bundleOf(t, s, pid, fpA, "web/c.jsp")
+	if pwA != pwB || pwA == pwC {
+		t.Errorf("password bundles a.yml, b.xml, c.jsp = %d, %d, %d, want a.yml and b.xml shared and c.jsp apart", pwA, pwB, pwC)
+	}
+	if hA, hB := bundleOf(t, s, pid, fpB, "conf/a.yml"), bundleOf(t, s, pid, fpB, "conf/b.xml"); hA == hB {
+		t.Errorf("host bundles a.yml, b.xml = %d, %d, want one each", hA, hB)
+	}
+	if pX, pY := bundleOf(t, s, pid, fpC, "logs/x.log"), bundleOf(t, s, pid, fpC, "logs/y.log"); pX == pY {
+		t.Errorf("phone bundles x.log, y.log = %d, %d, want one each", pX, pY)
+	}
+	if n, err := s.Count(t.Context(), "bundle"); err != nil || n != 6 {
+		t.Errorf("rows in bundle = %d, %v, want 6", n, err)
+	}
+}
+
+func TestSaveResultAssignsBundles(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, mixed()...)
+	assertMixedBundles(t, s, pid)
+}
+
+func TestRescanKeepsDecisions(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, mixed()...)
+	shared := bundleOf(t, s, pid, fpA, "conf/a.yml")
+	want := triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password", Note: "move to vault"}
+	decide(t, s, pid, want, shared)
+
+	second := save(t, s, pid, append(mixed(), password("conf/d.properties"))...)
+	b := readBundle(t, s, pid, second, shared)
+	if b.Decision != want {
+		t.Errorf("Bundle(%d).Decision after a rescan = %+v, want %+v", shared, b.Decision, want)
+	}
+	if got := bundleOf(t, s, pid, fpA, "conf/d.properties"); got != shared {
+		t.Errorf("bundle of the password in a new file = %d, want the shared bundle %d", got, shared)
+	}
+
+	moved, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/b.xml"), 0, tester)
+	if err != nil {
+		t.Fatalf("MoveFinding(b.xml, new) error = %v", err)
+	}
+	third := save(t, s, pid, append(mixed(), password("conf/d.properties"))...)
+	if got := bundleOf(t, s, pid, fpA, "conf/b.xml"); got != moved {
+		t.Errorf("bundle of b.xml after a rescan = %d, want the bundle it was moved to %d", got, moved)
+	}
+	b = readBundle(t, s, pid, third, shared)
+	if diff := cmp.Diff([]string{"conf/a.yml", "conf/d.properties"}, memberFiles(b)); diff != "" {
+		t.Errorf("members of the shared bundle after the rescan (-want +got):\n%s", diff)
+	}
+}
+
+func TestDecide(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	other := newProject(t, s, "other")
+	sid := save(t, s, pid, mixed()...)
+	shared := bundleOf(t, s, pid, fpA, "conf/a.yml")
+	hostA := bundleOf(t, s, pid, fpB, "conf/a.yml")
+	hostB := bundleOf(t, s, pid, fpB, "conf/b.xml")
+	phoneX := bundleOf(t, s, pid, fpC, "logs/x.log")
+
+	t.Run("stores and records", func(t *testing.T) {
+		d := triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldConfirm, Note: "ask the owner"}
+		decide(t, s, pid, d, hostA)
+		b := readBundle(t, s, pid, sid, hostA)
+		if b.Decision != d || b.DecidedBy != tester.Subject || b.DecidedAt.IsZero() {
+			t.Errorf("Bundle(%d) = %+v, want decision %+v by %q with a time", hostA, b, d, tester.Subject)
+		}
+		e, err := s.LastAuditEvent(ctx)
+		if err != nil {
+			t.Fatalf("LastAuditEvent() error = %v", err)
+		}
+		wantDetail := map[string]string{"verdict": "hold", "reason": "needs-confirmation", "note": "ask the owner"}
+		if e.Action != audit.ActionVerdict || e.Actor != tester || e.ProjectID != pid || e.BundleID != hostA ||
+			e.FindingID != 0 || !cmp.Equal(e.Detail, wantDetail) {
+			t.Errorf("audit event after Decide = %+v, want a verdict on bundle %d with detail %v", e, hostA, wantDetail)
+		}
+		if n, err := s.Count(ctx, "audit_event"); err != nil || n != 1 {
+			t.Errorf("rows in audit_event = %d, %v, want 1", n, err)
+		}
+	})
+
+	assertRefused := func(t *testing.T, err, want error, ids ...triage.BundleID) {
+		t.Helper()
+		if !errors.Is(err, want) {
+			t.Errorf("Decide() error = %v, want %v", err, want)
+		}
+		for _, id := range ids {
+			if b := readBundle(t, s, pid, sid, id); b.Decision != (triage.Decision{}) {
+				t.Errorf("Bundle(%d).Decision after a refused Decide = %+v, want none", id, b.Decision)
+			}
+		}
+		if n, err := s.Count(ctx, "audit_event"); err != nil || n != 1 {
+			t.Errorf("rows in audit_event after a refused Decide = %d, %v, want 1", n, err)
+		}
+	}
+	fp := triage.Decision{Verdict: triage.VerdictFalsePositive}
+
+	t.Run("other project", func(t *testing.T) {
+		err := s.Decide(ctx, other, []triage.BundleID{shared}, fp, tester)
+		assertRefused(t, err, db.ErrNotFound, shared)
+	})
+	t.Run("one id missing", func(t *testing.T) {
+		err := s.Decide(ctx, pid, []triage.BundleID{shared, hostB, 999999}, fp, tester)
+		assertRefused(t, err, db.ErrNotFound, shared, hostB)
+	})
+	t.Run("not allowed", func(t *testing.T) {
+		err := s.Decide(ctx, pid, []triage.BundleID{phoneX},
+			triage.Decision{Verdict: triage.VerdictExternalize, Name: "customer.phone"}, tester)
+		assertRefused(t, err, triage.ErrNotAllowed, phoneX)
+	})
+	t.Run("duplicate name", func(t *testing.T) {
+		name := triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"}
+		decide(t, s, pid, name, hostB)
+		err := s.Decide(ctx, pid, []triage.BundleID{shared}, name, tester)
+		if !errors.Is(err, db.ErrDuplicate) {
+			t.Errorf("Decide() with a name another bundle uses error = %v, want ErrDuplicate", err)
+		}
+		if b := readBundle(t, s, pid, sid, shared); b.Decision != (triage.Decision{}) {
+			t.Errorf("Bundle(%d).Decision after a duplicate name = %+v, want none", shared, b.Decision)
+		}
+	})
+	t.Run("clear", func(t *testing.T) {
+		decide(t, s, pid, triage.Decision{}, hostB)
+		b := readBundle(t, s, pid, sid, hostB)
+		if b.Decision != (triage.Decision{}) || b.DecidedBy != "" || !b.DecidedAt.IsZero() {
+			t.Errorf("Bundle(%d) after clearing = %+v, want no decision", hostB, b)
+		}
+		// The name is free again.
+		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"}, hostA)
+	})
+}
+
+func TestMoveFinding(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	other := newProject(t, s, "other")
+	sid := save(t, s, pid, append(mixed(), fnd(fpD, "conf/a.yml", finding.CategoryStorage, finding.KindToken, 9))...)
+	shared := bundleOf(t, s, pid, fpA, "conf/a.yml")
+	jsp := findingID(t, s, pid, fpA, "web/c.jsp")
+	hostA := bundleOf(t, s, pid, fpB, "conf/a.yml")
+	hostB := bundleOf(t, s, pid, fpB, "conf/b.xml")
+	token := bundleOf(t, s, pid, fpD, "conf/a.yml")
+
+	t.Run("to a new bundle", func(t *testing.T) {
+		id := findingID(t, s, pid, fpA, "conf/b.xml")
+		got, err := s.MoveFinding(ctx, pid, id, 0, tester)
+		if err != nil {
+			t.Fatalf("MoveFinding(%d, new) error = %v", id, err)
+		}
+		if got == 0 || got == shared {
+			t.Fatalf("MoveFinding(%d, new) = %d, want a new bundle", id, got)
+		}
+		if b := readBundle(t, s, pid, sid, got); !cmp.Equal(memberFiles(b), []string{"conf/b.xml"}) || b.Fingerprint != fpA {
+			t.Errorf("Bundle(%d) after the move = %+v, want b.xml alone", got, b)
+		}
+		e, err := s.LastAuditEvent(ctx)
+		if err != nil {
+			t.Fatalf("LastAuditEvent() error = %v", err)
+		}
+		if e.Action != audit.ActionMove || e.BundleID != shared || e.FindingID != id ||
+			!cmp.Equal(e.Detail, map[string]string{"to": fmt.Sprint(got)}) {
+			t.Errorf("audit event after MoveFinding = %+v, want a move of %d from %d to %d", e, id, shared, got)
+		}
+	})
+	t.Run("different fingerprint", func(t *testing.T) {
+		_, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpB, "conf/a.yml"), token, tester)
+		if !errors.Is(err, triage.ErrNotAllowed) {
+			t.Errorf("MoveFinding(host, token bundle) error = %v, want ErrNotAllowed", err)
+		}
+	})
+	t.Run("other project", func(t *testing.T) {
+		_, err := s.MoveFinding(ctx, other, findingID(t, s, pid, fpB, "conf/a.yml"), hostB, tester)
+		if !errors.Is(err, db.ErrNotFound) {
+			t.Errorf("MoveFinding() in another project error = %v, want ErrNotFound", err)
+		}
+		if got := bundleOf(t, s, pid, fpB, "conf/a.yml"); got != hostA {
+			t.Errorf("bundle of host a.yml after a refused move = %d, want %d", got, hostA)
+		}
+	})
+	t.Run("last member", func(t *testing.T) {
+		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"}, hostA)
+		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive}, hostB)
+		got, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpB, "conf/a.yml"), hostB, tester)
+		if err != nil || got != hostB {
+			t.Fatalf("MoveFinding(host a.yml, %d) = %d, %v, want %d", hostB, got, err, hostB)
+		}
+		if _, err := s.Bundle(ctx, pid, sid, hostA); !errors.Is(err, db.ErrNotFound) {
+			t.Errorf("Bundle(%d) after its last member left error = %v, want ErrNotFound", hostA, err)
+		}
+		b := readBundle(t, s, pid, sid, hostB)
+		if !cmp.Equal(memberFiles(b), []string{"conf/a.yml", "conf/b.xml"}) || b.Decision.Verdict != triage.VerdictFalsePositive {
+			t.Errorf("Bundle(%d) after the move = %+v, want both hosts as false positives", hostB, b)
+		}
+		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"}, token)
+	})
+	t.Run("frontend into externalized", func(t *testing.T) {
+		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}, shared)
+		_, err := s.MoveFinding(ctx, pid, jsp, shared, tester)
+		if !errors.Is(err, triage.ErrNotAllowed) {
+			t.Errorf("MoveFinding(c.jsp, externalized bundle) error = %v, want ErrNotAllowed", err)
+		}
+		if got := bundleOf(t, s, pid, fpA, "web/c.jsp"); got == shared {
+			t.Errorf("bundle of c.jsp after a refused move = %d, want it unchanged", got)
+		}
+	})
+}
+
+func TestEntries(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	var findings []finding.Finding
+	for i := range 120 {
+		findings = append(findings, fnd(fmt.Sprintf("%064x", i+1), "conf/app.yml", finding.CategoryStorage, finding.KindPassword, i+1))
+	}
+	for i := range 37 {
+		findings = append(findings, fnd(fmt.Sprintf("%064x", 1000+i), "logs/app.log", finding.CategoryCustomerData, finding.KindPhone, i+1))
+	}
+	sid := save(t, s, pid, findings...)
+	storage := triage.Filter{Category: finding.CategoryStorage, Status: triage.StatusAll}
+
+	entries := func(t *testing.T, f triage.Filter) triage.Page {
+		t.Helper()
+		p, err := s.Entries(ctx, pid, sid, f)
+		if err != nil {
+			t.Fatalf("Entries(%+v) error = %v", f, err)
+		}
+		return p
+	}
+
+	t.Run("pages", func(t *testing.T) {
+		f := storage
+		f.Page = 3
+		p := entries(t, f)
+		if len(p.Entries) != 20 || p.Pages != 3 || p.Page != 3 || p.Total != 120 {
+			t.Errorf("Entries(page 3) = %d entries, page %d of %d, total %d, want 20, 3 of 3, 120", len(p.Entries), p.Page, p.Pages, p.Total)
+		}
+		if p.Entries[0].FirstLine != 101 || p.Entries[0].Bundle == 0 || p.Entries[0].Count != 1 {
+			t.Errorf("Entries(page 3)[0] = %+v, want the bundle at line 101", p.Entries[0])
+		}
+		f.Page = 9
+		if p := entries(t, f); p.Page != 3 || len(p.Entries) != 20 {
+			t.Errorf("Entries(page 9) = page %d with %d entries, want page 3 with 20", p.Page, len(p.Entries))
+		}
+		f.Page = 0
+		if p := entries(t, f); p.Page != 1 || len(p.Entries) != triage.PageSize {
+			t.Errorf("Entries(page 0) = page %d with %d entries, want page 1 with %d", p.Page, len(p.Entries), triage.PageSize)
+		}
+	})
+
+	customer := triage.Filter{Category: finding.CategoryCustomerData, Status: triage.StatusAll, Page: 1}
+	t.Run("customer data is one line per file and kind", func(t *testing.T) {
+		p := entries(t, customer)
+		want := []triage.Entry{{
+			Group:    triage.GroupKey{File: "logs/app.log", Kind: finding.KindPhone},
+			Category: finding.CategoryCustomerData, Kind: finding.KindPhone, Preview: "010-****-****",
+			File: "logs/app.log", FirstLine: 1, Count: 37, Bundles: 37,
+		}}
+		if diff := cmp.Diff(want, p.Entries); diff != "" {
+			t.Errorf("Entries(customer data) (-want +got):\n%s", diff)
+		}
+	})
+
+	t.Run("a verdict splits the line", func(t *testing.T) {
+		g, err := s.CustomerGroup(ctx, pid, sid, triage.GroupKey{File: "logs/app.log", Kind: finding.KindPhone})
+		if err != nil {
+			t.Fatalf("CustomerGroup() error = %v", err)
+		}
+		if len(g.Bundles) != 37 || g.Count != 37 || len(g.Lines) != 37 || g.Lines[0] != 1 || g.Lines[36] != 37 {
+			t.Fatalf("CustomerGroup() = %+v, want 37 bundles on lines 1 to 37", g)
+		}
+		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive}, g.Bundles[:5]...)
+		p := entries(t, customer)
+		var counts []int
+		for _, e := range p.Entries {
+			counts = append(counts, e.Count)
+		}
+		// The false positives are the bundles with the lowest IDs, on lines 1
+		// to 5, so their line comes first.
+		if diff := cmp.Diff([]int{5, 32}, counts); diff != "" {
+			t.Errorf("counts of the customer data lines after 5 false positives (-want +got):\n%s", diff)
+		}
+		if p.Counts[""] != 152 || p.Counts[triage.VerdictFalsePositive] != 5 {
+			t.Errorf("Entries().Counts = %v, want 152 undecided and 5 false positives", p.Counts)
+		}
+	})
+
+	t.Run("filters", func(t *testing.T) {
+		p := entries(t, triage.Filter{Status: string(triage.VerdictFalsePositive), Page: 1})
+		if len(p.Entries) != 1 || p.Entries[0].Group.Verdict != triage.VerdictFalsePositive || p.Entries[0].Count != 5 {
+			t.Errorf("Entries(false positives) = %+v, want the one line of 5", p.Entries)
+		}
+		p = entries(t, triage.Filter{Status: triage.StatusUndecided, Page: 1})
+		if p.Total != 121 {
+			t.Errorf("Entries(undecided).Total = %d, want 121", p.Total)
+		}
+		p = entries(t, triage.Filter{Category: finding.CategorySSH, Status: triage.StatusAll, Page: 1})
+		if p.Total != 0 || p.Pages != 1 || p.Page != 1 {
+			t.Errorf("Entries(ssh) = total %d, page %d of %d, want 0, 1 of 1", p.Total, p.Page, p.Pages)
+		}
+	})
+
+	t.Run("values gone from the scan are left out", func(t *testing.T) {
+		next := save(t, s, pid, findings[:3]...)
+		p, err := s.Entries(ctx, pid, next, triage.Filter{Status: triage.StatusAll, Page: 1})
+		if err != nil {
+			t.Fatalf("Entries(next scan) error = %v", err)
+		}
+		if p.Total != 3 || p.Counts[""] != 3 {
+			t.Errorf("Entries(next scan) = total %d, counts %v, want the 3 values it found", p.Total, p.Counts)
+		}
+		gone := bundleOf(t, s, pid, findings[5].Fingerprint, "conf/app.yml")
+		if _, err := s.Bundle(ctx, pid, next, gone); !errors.Is(err, db.ErrNotFound) {
+			t.Errorf("Bundle(%d) in a scan without it error = %v, want ErrNotFound", gone, err)
+		}
+	})
+
+	t.Run("unknown status", func(t *testing.T) {
+		if _, err := s.Entries(ctx, pid, sid, triage.Filter{Status: "maybe"}); err == nil {
+			t.Error("Entries(status maybe) error = nil, want an error")
+		}
+	})
+}
+
+func TestBundle(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	sid := save(t, s, pid, mixed()...)
+	shared := bundleOf(t, s, pid, fpA, "conf/a.yml")
+	b := readBundle(t, s, pid, sid, shared)
+	first := findingID(t, s, pid, fpA, "conf/a.yml")
+	want := triage.Bundle{
+		ID: shared, ProjectID: pid, Fingerprint: fpA, Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "****",
+		Members: []triage.Member{
+			{FindingID: first, File: "conf/a.yml", HasOriginal: true, Locations: password("conf/a.yml").Locations},
+			{FindingID: findingID(t, s, pid, fpA, "conf/b.xml"), File: "conf/b.xml", HasOriginal: true, Locations: password("conf/b.xml").Locations},
+		},
+	}
+	if diff := cmp.Diff(want, b); diff != "" {
+		t.Errorf("Bundle(%d) (-want +got):\n%s", shared, diff)
+	}
+	if _, err := s.Bundle(t.Context(), newProject(t, s, "other"), sid, shared); !errors.Is(err, db.ErrNotFound) {
+		t.Errorf("Bundle() in another project error = %v, want ErrNotFound", err)
+	}
+
+	findings, err := s.FindingsByScan(t.Context(), sid)
+	if err != nil {
+		t.Fatalf("FindingsByScan(%d) error = %v", sid, err)
+	}
+	for _, f := range findings {
+		if f.File == "conf/a.yml" && f.Fingerprint == fpA && f.ID != first {
+			t.Errorf("FindingsByScan(%d) ID of the a.yml password = %d, want %d", sid, f.ID, first)
+		}
+	}
+}
+
+func TestUsedNames(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, mixed()...)
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}, bundleOf(t, s, pid, fpA, "conf/a.yml"))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"}, bundleOf(t, s, pid, fpB, "conf/a.yml"))
+	got, err := s.UsedNames(t.Context(), pid)
+	if err != nil {
+		t.Fatalf("UsedNames(%d) error = %v", pid, err)
+	}
+	if diff := cmp.Diff([]triage.Name{"db.main.host", "db.main.password"}, got); diff != "" {
+		t.Errorf("UsedNames(%d) (-want +got):\n%s", pid, diff)
+	}
+}
+
+func TestLatestScan(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	if _, err := s.LatestScan(ctx, pid); !errors.Is(err, db.ErrNotFound) {
+		t.Errorf("LatestScan() with no scan error = %v, want ErrNotFound", err)
+	}
+	first := save(t, s, pid)
+	second := save(t, s, pid)
+	if _, err := s.RequestScan(ctx, pid, "fake-subject"); err != nil {
+		t.Fatalf("RequestScan() error = %v", err)
+	}
+	got, err := s.LatestScan(ctx, pid)
+	if err != nil || got.ID != second {
+		t.Errorf("LatestScan() = %d, %v, want %d (not %d or the queued one)", got.ID, err, second, first)
+	}
+}
+
+func TestPastDecision(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	var (
+		pids    []project.ID
+		bundles []triage.BundleID
+	)
+	for _, name := range []string{"one", "two", "three"} {
+		pid := newProject(t, s, name)
+		save(t, s, pid, password("conf/a.yml"))
+		pids = append(pids, pid)
+		bundles = append(bundles, bundleOf(t, s, pid, fpA, "conf/a.yml"))
+	}
+
+	if _, ok, err := s.PastDecision(ctx, fpA, bundles[2]); err != nil || ok {
+		t.Errorf("PastDecision() with no verdict = %v, %v, want false", ok, err)
+	}
+	first := triage.Decision{Verdict: triage.VerdictFalsePositive}
+	decide(t, s, pids[0], first, bundles[0])
+	latest := triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldLater}
+	decide(t, s, pids[1], latest, bundles[1])
+
+	got, ok, err := s.PastDecision(ctx, fpA, bundles[2])
+	if err != nil || !ok || got != latest {
+		t.Errorf("PastDecision(%d) = %+v, %v, %v, want %+v", bundles[2], got, ok, err, latest)
+	}
+	if got, ok, err := s.PastDecision(ctx, fpA, bundles[1]); err != nil || !ok || got != first {
+		t.Errorf("PastDecision(except %d) = %+v, %v, %v, want %+v", bundles[1], got, ok, err, first)
+	}
+	if _, ok, err := s.PastDecision(ctx, fpB, 0); err != nil || ok {
+		t.Errorf("PastDecision(another value) = %v, %v, want false", ok, err)
+	}
+}
+
+func TestMigration0005Backfill(t *testing.T) {
+	s := db.NewTestStore(t)
+	ctx := t.Context()
+	if err := s.MigrateThrough(ctx, 4); err != nil {
+		t.Fatalf("MigrateThrough(4) error = %v", err)
+	}
+	pid := newProject(t, s, "shop")
+	sid, err := s.RequestScan(ctx, pid, "fake-subject")
+	if err != nil {
+		t.Fatalf("RequestScan() error = %v", err)
+	}
+	for i, f := range mixed() {
+		if err := s.InsertRawFinding(ctx, pid, int64(sid), f, i+1); err != nil {
+			t.Fatalf("InsertRawFinding(%s) error = %v", f.File, err)
+		}
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() over 0004 error = %v", err)
+	}
+	assertMixedBundles(t, s, pid)
+}

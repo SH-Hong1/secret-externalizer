@@ -95,9 +95,13 @@ type Location struct {
 	Detections          []Detection
 }
 
+// ID identifies a stored finding.
+type ID int64
+
 // Finding is a detected value, identified by its fingerprint. It never holds
-// the value itself.
+// the value itself. ID is zero until the finding is stored.
 type Finding struct {
+	ID          ID
 	Fingerprint string
 	File        string
 	Category    Category
