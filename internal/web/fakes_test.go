@@ -286,3 +286,50 @@ func (f *fakeScans) all() []scan.Scan {
 	slices.SortFunc(out, func(a, b scan.Scan) int { return cmp.Compare(a.ID, b.ID) })
 	return out
 }
+
+// blockingStore is a project and scan store whose every call waits until
+// its context ends. It records whether each call's context had a deadline.
+type blockingStore struct {
+	mu        sync.Mutex
+	calls     int
+	deadlines int
+}
+
+func (b *blockingStore) wait(ctx context.Context) error {
+	b.mu.Lock()
+	b.calls++
+	if _, ok := ctx.Deadline(); ok {
+		b.deadlines++
+	}
+	b.mu.Unlock()
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// counts returns the number of calls and of calls whose context had a
+// deadline.
+func (b *blockingStore) counts() (calls, deadlines int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.calls, b.deadlines
+}
+
+func (b *blockingStore) CreateProject(ctx context.Context, _ project.Project) (project.ID, error) {
+	return 0, b.wait(ctx)
+}
+
+func (b *blockingStore) Project(ctx context.Context, _ project.ID) (project.Project, error) {
+	return project.Project{}, b.wait(ctx)
+}
+
+func (b *blockingStore) Projects(ctx context.Context) ([]project.Project, error) {
+	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) RequestScan(ctx context.Context, _ project.ID, _ string) (scan.ID, error) {
+	return 0, b.wait(ctx)
+}
+
+func (b *blockingStore) Scan(ctx context.Context, _ scan.ID) (scan.Scan, error) {
+	return scan.Scan{}, b.wait(ctx)
+}

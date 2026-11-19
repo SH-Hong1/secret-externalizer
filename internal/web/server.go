@@ -6,6 +6,7 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
@@ -55,11 +56,13 @@ type ScanStore interface {
 
 // NewServer returns the complete handler, including middleware. From the
 // outside in, a request passes panic recovery, the request log, the security
-// headers, and cross-origin protection before it reaches its route.
-func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore) http.Handler {
+// headers, and cross-origin protection before it reaches its route. A route
+// that calls projects or scans runs under a deadline storeLimit from the
+// moment it is reached; the session is read before that deadline starts.
+func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, storeLimit time.Duration) http.Handler {
 	mux := http.NewServeMux()
 	rd := newRenderer()
-	addRoutes(mux, logger, rd, authn, sessions, attempts, projects, scans)
+	addRoutes(mux, logger, rd, authn, sessions, attempts, projects, scans, storeLimit)
 
 	return chain(mux,
 		recoverPanic(logger, rd),

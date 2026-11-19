@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
+	"net"
 	"strings"
 	"sync"
 	"testing"
 	"testing/fstest"
+	"time"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 )
@@ -67,6 +69,53 @@ func TestOpen_ErrorHidesDSN(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), testPassword) {
 		t.Errorf("Open(malformed) error = %q, want no password", err)
+	}
+}
+
+func TestOpen_ConnectTimeout(t *testing.T) {
+	// The listener accepts connections and never answers, as a hung
+	// postgres would.
+	ln, err := (&net.ListenConfig{}).Listen(t.Context(), "tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen() error = %v", err)
+	}
+	t.Cleanup(func() { _ = ln.Close() }) // closing a listener the test only accepted on loses nothing
+	var conns []net.Conn
+	var mu sync.Mutex
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			conns = append(conns, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range conns {
+			_ = c.Close() // nothing was written to the connection
+		}
+	})
+
+	dsn := db.DSN("postgres://se_app:" + testPassword + "@" + ln.Addr().String() + "/x?sslmode=disable")
+	start := time.Now()
+	s, err := db.Open(t.Context(), dsn)
+	elapsed := time.Since(start)
+	if err == nil {
+		s.Close()
+		t.Fatal("Open(silent server) error = nil, want an error")
+	}
+	// The connection check in Open gives up after 10 seconds; the connect
+	// timeout must end the attempt well before that.
+	if elapsed > 7*time.Second {
+		t.Errorf("Open(silent server) returned after %v, want within the connect timeout", elapsed)
+	}
+	if strings.Contains(err.Error(), testPassword) || strings.Contains(err.Error(), dsn.Reveal()) {
+		t.Errorf("Open(silent server) error = %q, want no DSN in it", err)
 	}
 }
 

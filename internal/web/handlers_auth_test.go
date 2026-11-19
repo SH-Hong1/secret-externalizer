@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
@@ -41,7 +42,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		scans:    newFakeScans(),
 	}
 	logger := slog.New(slog.NewJSONHandler(e.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts, e.projects, e.scans)
+	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts, e.projects, e.scans, time.Minute)
 	return e
 }
 

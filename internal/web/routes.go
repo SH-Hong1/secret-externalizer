@@ -3,16 +3,22 @@ package web
 import (
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 )
 
 // addRoutes registers every route of the server. Only the routes that need a
 // signed-in user read the session, so /healthz answers and logout works even
-// when the session store is down.
-func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore) {
+// when the session store is down. The routes that call projects or scans get
+// a deadline of storeLimit.
+func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, storeLimit time.Duration) {
 	signedIn := func(h http.Handler) http.Handler {
 		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd))
+	}
+	// usesStore is signedIn for a route that calls the database.
+	usesStore := func(h http.Handler) http.Handler {
+		return signedIn(timeLimit(storeLimit)(h))
 	}
 	withRole := func(role auth.Role, h http.Handler) http.Handler {
 		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd), requireRole(logger, rd, role))
@@ -26,11 +32,11 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, authn Auth
 	mux.Handle("/logout", handleMethodNotAllowed(logger, rd, http.MethodPost))
 	mux.Handle("GET /{$}", signedIn(handleHome(logger, rd)))
 	mux.Handle("GET /audit", withRole(auth.RoleAdmin, handleAudit(logger, rd)))
-	mux.Handle("GET /projects", signedIn(handleProjectList(logger, rd, projects)))
+	mux.Handle("GET /projects", usesStore(handleProjectList(logger, rd, projects)))
 	mux.Handle("GET /projects/new", signedIn(handleProjectNew(logger, rd)))
-	mux.Handle("POST /projects", signedIn(handleProjectCreate(logger, rd, projects)))
-	mux.Handle("GET /projects/{id}", signedIn(handleProject(logger, rd, projects)))
-	mux.Handle("POST /projects/{id}/scans", signedIn(handleScanCreate(logger, rd, scans)))
-	mux.Handle("GET /scans/{id}", signedIn(handleScan(logger, rd, scans)))
+	mux.Handle("POST /projects", usesStore(handleProjectCreate(logger, rd, projects)))
+	mux.Handle("GET /projects/{id}", usesStore(handleProject(logger, rd, projects)))
+	mux.Handle("POST /projects/{id}/scans", usesStore(handleScanCreate(logger, rd, scans)))
+	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, scans)))
 	mux.Handle("/", handleNotFound(logger, rd))
 }
