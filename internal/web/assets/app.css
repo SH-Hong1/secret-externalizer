@@ -162,6 +162,10 @@
     color: var(--color-white);
     text-decoration: none;
   }
+  /* The accent ring is too dark on the band; use the band's light blue. */
+  .site-header :focus-visible {
+    outline-color: var(--color-header-current);
+  }
   .site-nav {
     display: flex;
     flex-grow: 1;
@@ -722,6 +726,7 @@
     padding: 0 12px;
   }
   .code-line-hit {
+    color: inherit;
     background: var(--color-hit);
     box-shadow: inset 3px 0 0 var(--color-hit-edge);
   }

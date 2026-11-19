@@ -5,6 +5,7 @@ import (
 	"embed"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"log/slog"
 	"net/http"
@@ -54,7 +55,9 @@ func newRenderer(a *assets) *renderer {
 
 // parseTemplates parses every template under templates/ in fsys. Each page
 // template is parsed together with the layout. It panics when a template is
-// broken, so a bad template stops the program at start-up.
+// broken or when the layout's "assets" template names a static file that a
+// does not hold, so a bad template or a missing file stops the program at
+// start-up.
 //
 // Templates may call two functions. asset returns the versioned address of
 // a static file in a. section returns the text of the page's "section"
@@ -81,6 +84,9 @@ func parseTemplates(fsys fs.FS, a *assets) *renderer {
 		}
 		section := sectionOf(t)
 		t.Funcs(template.FuncMap{"section": func() string { return section }})
+		if err := t.ExecuteTemplate(io.Discard, "assets", nil); err != nil {
+			panic(fmt.Sprintf("checking the static files of template %s: %v", name, err))
+		}
 		rd.pages[name] = t
 	}
 	if _, ok := rd.pages[errorFile]; !ok {

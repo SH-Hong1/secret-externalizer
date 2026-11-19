@@ -44,3 +44,31 @@ func TestAsset_UnknownNameFailsTemplate(t *testing.T) {
 		t.Errorf(`executing {{asset "nope.css"}} = %q, nil, want an error`, buf.String())
 	}
 }
+
+func TestParseTemplates_MissingAsset(t *testing.T) {
+	for _, missing := range []string{"app.css", "htmx.min.js"} {
+		t.Run(missing, func(t *testing.T) {
+			files := fstest.MapFS{
+				"app.css":     {Data: []byte("a{}")},
+				"htmx.min.js": {Data: []byte("x")},
+			}
+			delete(files, missing)
+			defer func() {
+				if recover() == nil {
+					t.Errorf("parseTemplates(static files without %s) did not panic, want a start-up panic", missing)
+				}
+			}()
+			parseTemplates(templateFS, loadAssets(files))
+		})
+	}
+}
+
+func TestParseTemplates_AllAssets(t *testing.T) {
+	files := fstest.MapFS{
+		"app.css":     {Data: []byte("a{}")},
+		"htmx.min.js": {Data: []byte("x")},
+	}
+	if rd := parseTemplates(templateFS, loadAssets(files)); len(rd.pages) == 0 {
+		t.Errorf("parseTemplates(all assets) parsed no pages")
+	}
+}

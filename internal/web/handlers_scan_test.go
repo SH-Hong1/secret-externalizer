@@ -278,7 +278,7 @@ func TestScan_ShowsContextLineNumbers(t *testing.T) {
 
 	wantContains(t, body,
 		`<span class="code-line"><span class="line-no">11</span># settings</span>`,
-		`<span class="code-line code-line-hit"><span class="line-no">12</span>db.password=****</span>`,
+		`<mark class="code-line code-line-hit"><span class="sr-only">탐지된 줄 </span><span class="line-no">12</span>db.password=****</mark>`,
 		`<span class="code-line"><span class="line-no">13</span>  indented = 1</span>`,
 	)
 }
@@ -327,9 +327,9 @@ func TestScan_CountsByCategory(t *testing.T) {
 	body := e.succeeded(t, scan.Scan{Findings: 3}, a, b, c)
 
 	wantContains(t, body,
-		`<span class="bar-label">저장소 접속 정보</span><meter class="bar" min="0" max="3" value="1"></meter><span class="bar-count">1</span>`,
-		`<span class="bar-label">SSH 접속 정보</span><meter class="bar" min="0" max="3" value="1"></meter><span class="bar-count">1</span>`,
-		`<span class="bar-label">고객정보</span><meter class="bar" min="0" max="3" value="1"></meter><span class="bar-count">1</span>`,
+		`<span class="bar-label" id="count-storage-credential">저장소 접속 정보</span><meter class="bar" min="0" max="3" value="1" aria-labelledby="count-storage-credential"></meter><span class="bar-count">1</span>`,
+		`<span class="bar-label" id="count-ssh-credential">SSH 접속 정보</span><meter class="bar" min="0" max="3" value="1" aria-labelledby="count-ssh-credential"></meter><span class="bar-count">1</span>`,
+		`<span class="bar-label" id="count-customer-data">고객정보</span><meter class="bar" min="0" max="3" value="1" aria-labelledby="count-customer-data"></meter><span class="bar-count">1</span>`,
 		"찾은 항목 3개",
 	)
 }
@@ -369,7 +369,7 @@ func TestScan_ShowsHeader(t *testing.T) {
 		ToolVersions: map[string]string{"opengrep": "2.0.0", "betterleaks": "1.10.1"},
 	})
 
-	wantContains(t, body, "fake-subject-7", "2026-11-19 00:05:07 UTC", "0123abcd", "rules-v9", "betterleaks 1.10.1", "opengrep 2.0.0")
+	wantContains(t, body, "fake-subject-7", `<span class="mono">2026-11-19 00:05:07 UTC</span>`, "0123abcd", "rules-v9", "betterleaks 1.10.1", "opengrep 2.0.0")
 	if b, o := strings.Index(body, "betterleaks 1.10.1"), strings.Index(body, "opengrep 2.0.0"); b > o {
 		t.Errorf("tool versions are not ordered by tool name")
 	}
@@ -420,7 +420,7 @@ func TestProject_ListsScans(t *testing.T) {
 
 	res := e.do(t, http.MethodGet, "/projects/"+itoa(pid), nil, e.user(t))
 
-	wantContains(t, res.body, `href="/scans/1"`, `href="/scans/2"`, "2026-11-19 04:05:06 UTC", "2026-11-18 01:02:03 UTC", "완료", "실패", "17건")
+	wantContains(t, res.body, `href="/scans/1"`, `href="/scans/2"`, `<span class="mono">2026-11-19 04:05:06 UTC</span>`, `<span class="mono">2026-11-18 01:02:03 UTC</span>`, "완료", "실패", "17건")
 	wantAbsent(t, res.body, `href="/scans/3"`, "99건")
 	if i, j := strings.Index(res.body, `href="/scans/2"`), strings.Index(res.body, `href="/scans/1"`); i > j {
 		t.Errorf("project page lists scan 1 before scan 2, want newest first")

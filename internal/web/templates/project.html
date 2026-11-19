@@ -20,7 +20,7 @@
 <tbody>
 {{range .Scans}}<tr>
 <td><a class="row-link" href="/scans/{{.ID}}">#{{.ID}}</a></td>
-<td>{{.RequestedAt}} · <span class="text-2">{{.RequestedBy}}</span></td>
+<td><span class="mono">{{.RequestedAt}}</span> · <span class="text-2">{{.RequestedBy}}</span></td>
 <td><span class="badge badge-{{.Status}}">{{.StatusLabel}}</span></td>
 <td class="code-cell">{{if .Commit}}{{.Commit}}{{else}}<span class="muted">—</span>{{end}}</td>
 <td class="num">{{if .Succeeded}}{{.Findings}}건{{else}}<span class="muted">—</span>{{end}}</td>

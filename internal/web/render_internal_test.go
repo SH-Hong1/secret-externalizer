@@ -134,7 +134,7 @@ func TestRecoverPanic_AfterPartialWrite(t *testing.T) {
 
 func TestParseTemplates_MissingErrorPage(t *testing.T) {
 	fsys := fstest.MapFS{
-		"templates/layout.html": {Data: []byte(`{{define "layout"}}{{template "body" .}}{{end}}`)},
+		"templates/layout.html": {Data: []byte(`{{define "layout"}}{{template "body" .}}{{end}}{{define "assets"}}{{end}}`)},
 		"templates/home.html":   {Data: []byte(`{{define "title"}}t{{end}}{{define "body"}}b{{end}}`)},
 	}
 	defer func() {

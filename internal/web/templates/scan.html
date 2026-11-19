@@ -12,16 +12,16 @@
 </div>
 {{if .Scan.Status.Active}}<div class="card card-pad flex flex-col gap-2.5">
 {{if eq .Scan.Status "running"}}<div class="progress" role="progressbar" aria-label="스캔 진행 중"></div>
-{{end}}<p class="text-2">{{.Scan.RequestedBy}} · {{.RequestedAt}}에 요청. {{if eq .Scan.Status "queued"}}worker가 가져가기를 기다립니다. {{end}}이 화면은 3초마다 새로 고쳐집니다.</p>
+{{end}}<p class="text-2">{{.Scan.RequestedBy}} · <span class="mono">{{.RequestedAt}}</span>에 요청. {{if eq .Scan.Status "queued"}}worker가 가져가기를 기다립니다. {{end}}이 화면은 3초마다 새로 고쳐집니다.</p>
 </div>
 {{else if eq .Scan.Status "failed"}}<div class="card card-pad card-failed flex flex-col gap-2.5">
 <p class="failure"><strong>실패 사유</strong> <span class="mono text-sm">{{.Scan.FailureReason}}</span></p>
-<p class="text-2">{{.Scan.RequestedBy}} · {{.RequestedAt}}에 요청{{if .FinishedAt}}, {{.FinishedAt}}에 끝남{{end}}. 저장된 항목은 없습니다.</p>
+<p class="text-2">{{.Scan.RequestedBy}} · <span class="mono">{{.RequestedAt}}</span>에 요청{{if .FinishedAt}}, <span class="mono">{{.FinishedAt}}</span>에 끝남{{end}}. 저장된 항목은 없습니다.</p>
 <div><a class="btn btn-secondary" href="/projects/{{.Scan.ProjectID}}">프로젝트에서 다시 스캔</a></div>
 </div>
 {{end}}{{if .Findings}}<dl class="facts">
-<div><dt>요청</dt><dd>{{.Scan.RequestedBy}} · {{.RequestedAt}}</dd></div>
-<div><dt>끝난 시각</dt><dd>{{if .FinishedAt}}{{.FinishedAt}}{{else}}<span class="muted">—</span>{{end}}</dd></div>
+<div><dt>요청</dt><dd>{{.Scan.RequestedBy}} · <span class="mono">{{.RequestedAt}}</span></dd></div>
+<div><dt>끝난 시각</dt><dd>{{if .FinishedAt}}<span class="mono">{{.FinishedAt}}</span>{{else}}<span class="muted">—</span>{{end}}</dd></div>
 <div><dt>커밋</dt><dd class="mono">{{if .Scan.CommitHash}}{{.Scan.CommitHash}}{{else}}<span class="muted">없음</span>{{end}}</dd></div>
 <div><dt>규칙 버전</dt><dd class="mono">{{.Scan.RulesVersion}}</dd></div>
 <div><dt>도구</dt><dd class="mono">{{range $i, $t := .Tools}}{{if $i}} · {{end}}{{$t.Name}} {{$t.Version}}{{end}}</dd></div>
@@ -30,7 +30,7 @@
 <section>
 <h2 class="section-title">찾은 항목 {{.FindingsTotal}}개</h2>
 {{if .Counts}}<div class="card bars">
-{{range .Counts}}<div class="bar-row" title="{{.Category}}"><span class="bar-label">{{.Label}}</span><meter class="bar" min="0" max="{{$.FindingsTotal}}" value="{{.N}}"></meter><span class="bar-count">{{.N}}</span></div>
+{{range .Counts}}<div class="bar-row" title="{{.Category}}"><span class="bar-label" id="count-{{.Category}}">{{.Label}}</span><meter class="bar" min="0" max="{{$.FindingsTotal}}" value="{{.N}}" aria-labelledby="count-{{.Category}}"></meter><span class="bar-count">{{.N}}</span></div>
 {{end}}</div>
 {{else}}<p class="notice">탐지된 항목이 없습니다.</p>
 {{end}}</section>
@@ -50,7 +50,7 @@
 <span class="grow"></span>
 {{range .Detections}}<span class="code-rule">{{.Tool}} {{.Rule}}</span>
 {{end}}</div>
-{{if .Context}}<pre class="code">{{range .Context}}<span class="code-line{{if .Hit}} code-line-hit{{end}}"><span class="line-no">{{.Number}}</span>{{.Text}}</span>{{end}}</pre>
+{{if .Context}}<pre class="code">{{range .Context}}{{if .Hit}}<mark class="code-line code-line-hit"><span class="sr-only">탐지된 줄 </span><span class="line-no">{{.Number}}</span>{{.Text}}</mark>{{else}}<span class="code-line"><span class="line-no">{{.Number}}</span>{{.Text}}</span>{{end}}{{end}}</pre>
 {{else}}<p class="code-empty">주변 줄을 저장하지 않았습니다.</p>
 {{end}}</div>
 {{end}}</section>
