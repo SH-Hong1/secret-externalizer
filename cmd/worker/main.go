@@ -77,10 +77,9 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	if tune != nil {
 		tune(&cfg)
 	}
-	// The client does not contact OpenBao until it is first used, and the scan
-	// runner does not use it yet, so building it here checks the settings at
-	// start-up.
-	if _, err := bao.New(cfg.baoAddr, cfg.baoCreds, &http.Client{Timeout: 10 * time.Second}); err != nil {
+	// The client does not contact OpenBao until it is first used.
+	baoClient, err := bao.New(cfg.baoAddr, cfg.baoCreds, &http.Client{Timeout: 10 * time.Second})
+	if err != nil {
 		return fmt.Errorf("preparing openbao client: %w", err)
 	}
 	workerID, err := newWorkerID()
@@ -102,7 +101,7 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	}
 
 	logger.InfoContext(ctx, "worker started", "worker_id", workerID, "config", cfg)
-	runner := scan.NewRunner(logger, database, cfg.root, workerID)
+	runner := scan.NewRunner(logger, database, baoClient, baoClient, nil, scan.Options{WorkerID: workerID, Root: cfg.root})
 	opts := job.Options{WorkerID: workerID, Poll: cfg.poll, Lease: cfg.lease, Heartbeat: cfg.heartbeat}
 	if err := job.Run(ctx, logger, database, runner.Handle, opts); err != nil {
 		return fmt.Errorf("running jobs: %w", err)
