@@ -24,10 +24,10 @@
 <tbody>
 {{range .Scans}}<tr>
 <td><a class="row-link" href="/scans/{{.ID}}">#{{.ID}}</a></td>
-<td><span class="mono">{{.RequestedAt}}</span> · <span class="text-2">{{.RequestedBy}}</span></td>
+<td><span class="mono">{{.RequestedAt}}</span> · <span class="text-2">{{.Requester}}</span></td>
 <td><span class="badge badge-{{.Status}}">{{.StatusLabel}}</span>{{if .Basis}} <span class="muted text-xs">판정 기준</span>{{end}}</td>
 <td class="code-cell">{{if .Commit}}{{.Commit}}{{else}}<span class="muted">—</span>{{end}}</td>
-<td class="num">{{if .Succeeded}}{{.Findings}}건{{else}}<span class="muted">—</span>{{end}}</td>
+<td class="num">{{if .Succeeded}}{{.Findings}}개{{else}}<span class="muted">—</span>{{end}}</td>
 </tr>
 {{end}}</tbody>
 </table>

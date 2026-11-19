@@ -17,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
@@ -207,7 +208,7 @@ func TestRun_RunsQueuedScanUntilCancelled(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateProject() error = %v", err)
 	}
-	scanID, err := store.RequestScan(ctx, projectID, "worker-test")
+	scanID, err := store.RequestScan(ctx, projectID, audit.Actor{Subject: "worker-test"})
 	if err != nil {
 		t.Fatalf("RequestScan() error = %v", err)
 	}

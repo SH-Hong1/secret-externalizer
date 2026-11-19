@@ -33,14 +33,18 @@ const (
 func (s Status) Active() bool { return s == StatusQueued || s == StatusRunning }
 
 // Scan is one run of the scanner over a project. The time fields that do not
-// apply yet are zero. FailureReason is fixed wording chosen by the code that
-// fails the scan, never text from an error. Dropped counts scanner results
-// whose value was not where the scanner reported it.
+// apply yet are zero. RequestedBy is the subject of the user who asked for
+// the scan and RequesterName the name shown for that user, empty for a scan
+// requested before names were kept. FailureReason is fixed wording chosen by
+// the code that fails the scan, never text from an error. Dropped counts
+// scanner results whose value was not where the scanner reported it.
+// SkippedFiles and ScannerErrors are as in Result.
 type Scan struct {
 	ID            ID
 	ProjectID     project.ID
 	Status        Status
 	RequestedBy   string
+	RequesterName string
 	RequestedAt   time.Time
 	StartedAt     time.Time
 	FinishedAt    time.Time
@@ -50,6 +54,8 @@ type Scan struct {
 	FailureReason string
 	Files         int
 	Skipped       int
+	SkippedFiles  []string
+	ScannerErrors map[string]int
 	Dropped       int
 	Findings      int
 }
@@ -66,15 +72,35 @@ type Scan struct {
 // the text there, a range outside the text or off a character boundary, or
 // a result the scanner itself could not place. Results for files the scan
 // did not list or read are left out and not counted.
+//
+// SkippedFiles holds the paths, relative to the project folder, of the first
+// MaxSkippedFiles skipped files in path order, leaving out the paths that
+// are not valid UTF-8 or hold a control character; Skipped counts those
+// too. ScannerErrors holds, by tool name, the number of errors a scanner
+// reported for files it could analyse only in part, for the tools that
+// reported any.
 type Result struct {
-	CommitHash   string
-	RulesVersion string
-	ToolVersions map[string]string
-	Files        int
-	Skipped      int
-	Dropped      int
-	Findings     []finding.Finding
+	CommitHash    string
+	RulesVersion  string
+	ToolVersions  map[string]string
+	Files         int
+	Skipped       int
+	SkippedFiles  []string
+	ScannerErrors map[string]int
+	Dropped       int
+	Findings      []finding.Finding
 }
+
+// CategoryCount is what a scan found in one category: the number of
+// findings and the number of their locations in that scan.
+type CategoryCount struct {
+	Category  finding.Category
+	Findings  int
+	Locations int
+}
+
+// MaxSkippedFiles is the number of skipped file paths a scan keeps.
+const MaxSkippedFiles = 200
 
 // ErrScannerFailed means a scanner did not finish with a usable report. The
 // error says which tool failed and its exit code or a fixed reason, and never

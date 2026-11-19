@@ -55,13 +55,13 @@ type ProjectStore interface {
 // already queued or running, and an error matching db.ErrNotFound when the
 // project is unknown. Scan fails with an error matching db.ErrNotFound when
 // the ID is unknown. ScansByProject returns the project's scans, newest
-// first. FindingsByScan returns the findings of one scan, ordered by file and
-// line, with the locations of that scan only.
+// first. CategoryCounts returns the number of findings and locations a scan
+// found in each category, leaving out the categories it found nothing in.
 type ScanStore interface {
-	RequestScan(ctx context.Context, projectID project.ID, requestedBy string) (scan.ID, error)
+	RequestScan(ctx context.Context, projectID project.ID, by audit.Actor) (scan.ID, error)
 	Scan(ctx context.Context, id scan.ID) (scan.Scan, error)
 	ScansByProject(ctx context.Context, projectID project.ID) ([]scan.Scan, error)
-	FindingsByScan(ctx context.Context, id scan.ID) ([]finding.Finding, error)
+	CategoryCounts(ctx context.Context, id scan.ID) ([]scan.CategoryCount, error)
 }
 
 // TriageStore keeps the bundles of a project and the verdicts users give

@@ -477,12 +477,12 @@
 **Interfaces:**
 - Produces: `scan.Result`와 `scan.Scan`에 `SkippedFiles []string`(상대 경로, 처음 200개, 경로순), `ScannerErrors map[string]int`(도구 이름별)를 더한다. `scan` 테이블에 `skipped_files text[] NOT NULL DEFAULT '{}'`, `scanner_errors jsonb NOT NULL DEFAULT '{}'`.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다.**
+- [x] **Step 1: 실패하는 테스트를 쓴다.**
   - 러너: 건너뛴 파일이 250개면 `Result.SkippedFiles`가 경로순 200개이고 `Skipped`는 250이다. 경로가 UTF-8이 아니거나 제어 문자가 든 파일은 `SkippedFiles`에 넣지 않는다(`Skipped`에는 센다). 스캐너가 오류 3건을 보고하면 `ScannerErrors["opengrep"]`이 3이다.
   - `db`: `SaveResult` 뒤에 `Scan`이 두 값을 그대로 돌려준다.
   - web `TestScanPage`: 건너뛴 파일 목록이 `<details>` 안에 있고, 250개 중 200개만 저장했으면 "외 50개"가 보인다. 스캐너 오류가 있으면 도구별 건수와 "일부 파일을 끝까지 분석하지 못했습니다"가 보인다. 탐지 표는 없고 분류별 건수와 판정 화면으로 가는 링크가 있다. 프로젝트의 마지막 성공한 스캔이 아니면 링크 대신 "이후 스캔이 있습니다" 안내가 있다. 실패한 스캔에도 요청한 사람과 시각이 보인다.
-- [ ] **Step 2:** 실패를 확인하고 구현한다. 러너가 로그에 쓰려고 이미 모으는 값을 `Result`에 싣는다. 스캔 화면에서 `FindingsByScan`으로 그리던 표를 지우고 `rowsOf`, `secretRow`, `customerGroup` 등 쓰이지 않게 된 코드를 지운다. 건수의 단위는 "항목 N개(위치 M곳)"로 통일한다.
-- [ ] **Step 3:** `make check`와 `make test-integration`이 통과하는지 확인하고 커밋한다. `feat(scan): keep the skipped file names and move the findings to the triage screen`
+- [x] **Step 2:** 실패를 확인하고 구현한다. 러너가 로그에 쓰려고 이미 모으는 값을 `Result`에 싣는다. 스캔 화면에서 `FindingsByScan`으로 그리던 표를 지우고 `rowsOf`, `secretRow`, `customerGroup` 등 쓰이지 않게 된 코드를 지운다. 건수의 단위는 "항목 N개(위치 M곳)"로 통일한다.
+- [x] **Step 3:** `make check`와 `make test-integration`이 통과하는지 확인하고 커밋한다. `feat(scan): keep the skipped file names and move the findings to the triage screen`
 
 ### Task 10: 실제 확인과 문서
 

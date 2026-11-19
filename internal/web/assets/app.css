@@ -469,7 +469,11 @@
     border: 1px solid var(--color-line);
     border-radius: var(--radius-lg);
   }
+  /* Every cell draws the line under it and reaches 1px into the next row,
+     so a line runs under each full row. The line under the last row, full
+     or not, falls outside the box and is clipped. */
   .facts > div {
+    margin-bottom: -1px;
     padding: 12px 16px;
     border-bottom: 1px solid var(--color-line-soft);
   }
@@ -483,6 +487,45 @@
   }
   .facts dd.mono {
     font-size: var(--text-sm);
+  }
+
+  /* The files a scan skipped: a disclosure in the hold colours with a
+     scrolling list of paths. */
+  .skips {
+    background: var(--color-surface);
+    border: 1px solid var(--color-hold-line);
+    border-radius: var(--radius-lg);
+  }
+  .skips > summary {
+    padding: 12px 16px;
+    border-radius: var(--radius-lg);
+    background: var(--color-hold-soft);
+    color: var(--color-hold-ink);
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .skips[open] > summary {
+    border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  }
+  .skips-body {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px 16px;
+  }
+  .skips-body p {
+    margin: 0;
+  }
+  .skips-list {
+    max-height: 150px;
+    margin: 0;
+    padding: 0;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+    line-height: 1.8;
+    list-style: none;
+    overflow-wrap: anywhere;
   }
 
   /* Count bars: a label, a meter, a number. */

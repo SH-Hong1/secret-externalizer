@@ -261,22 +261,22 @@ func (f *fakeProjects) all() []project.Project {
 // the database does. A non-nil error field makes the matching method return
 // that error.
 type fakeScans struct {
-	requestErr  error
-	getErr      error
-	listErr     error
-	findingsErr error
+	requestErr error
+	getErr     error
+	listErr    error
+	countsErr  error
 
-	mu       sync.Mutex
-	scans    map[scan.ID]scan.Scan
-	findings map[scan.ID][]finding.Finding
-	next     scan.ID
+	mu     sync.Mutex
+	scans  map[scan.ID]scan.Scan
+	counts map[scan.ID][]scan.CategoryCount
+	next   scan.ID
 }
 
 func newFakeScans() *fakeScans {
-	return &fakeScans{scans: make(map[scan.ID]scan.Scan), findings: make(map[scan.ID][]finding.Finding)}
+	return &fakeScans{scans: make(map[scan.ID]scan.Scan), counts: make(map[scan.ID][]scan.CategoryCount)}
 }
 
-func (f *fakeScans) RequestScan(_ context.Context, projectID project.ID, requestedBy string) (scan.ID, error) {
+func (f *fakeScans) RequestScan(_ context.Context, projectID project.ID, by audit.Actor) (scan.ID, error) {
 	if f.requestErr != nil {
 		return 0, f.requestErr
 	}
@@ -288,7 +288,7 @@ func (f *fakeScans) RequestScan(_ context.Context, projectID project.ID, request
 		}
 	}
 	f.next++
-	f.scans[f.next] = scan.Scan{ID: f.next, ProjectID: projectID, Status: scan.StatusQueued, RequestedBy: requestedBy}
+	f.scans[f.next] = scan.Scan{ID: f.next, ProjectID: projectID, Status: scan.StatusQueued, RequestedBy: by.Subject, RequesterName: by.Name}
 	return f.next, nil
 }
 
@@ -321,20 +321,20 @@ func (f *fakeScans) ScansByProject(_ context.Context, projectID project.ID) ([]s
 	return out, nil
 }
 
-func (f *fakeScans) FindingsByScan(_ context.Context, id scan.ID) ([]finding.Finding, error) {
-	if f.findingsErr != nil {
-		return nil, f.findingsErr
+func (f *fakeScans) CategoryCounts(_ context.Context, id scan.ID) ([]scan.CategoryCount, error) {
+	if f.countsErr != nil {
+		return nil, f.countsErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Clone(f.findings[id]), nil
+	return slices.Clone(f.counts[id]), nil
 }
 
-// putFindings stores the findings that FindingsByScan returns for id.
-func (f *fakeScans) putFindings(id scan.ID, fs ...finding.Finding) {
+// putCounts stores the category counts that CategoryCounts returns for id.
+func (f *fakeScans) putCounts(id scan.ID, counts ...scan.CategoryCount) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.findings[id] = fs
+	f.counts[id] = counts
 }
 
 // put stores sc under its ID.
@@ -395,7 +395,7 @@ func (b *blockingStore) ProjectSummaries(ctx context.Context) ([]project.Summary
 	return nil, b.wait(ctx)
 }
 
-func (b *blockingStore) RequestScan(ctx context.Context, _ project.ID, _ string) (scan.ID, error) {
+func (b *blockingStore) RequestScan(ctx context.Context, _ project.ID, _ audit.Actor) (scan.ID, error) {
 	return 0, b.wait(ctx)
 }
 
@@ -407,7 +407,7 @@ func (b *blockingStore) ScansByProject(ctx context.Context, _ project.ID) ([]sca
 	return nil, b.wait(ctx)
 }
 
-func (b *blockingStore) FindingsByScan(ctx context.Context, _ scan.ID) ([]finding.Finding, error) {
+func (b *blockingStore) CategoryCounts(ctx context.Context, _ scan.ID) ([]scan.CategoryCount, error) {
 	return nil, b.wait(ctx)
 }
 
@@ -451,6 +451,7 @@ func (b *blockingStore) PastDecision(ctx context.Context, _ string, _ triage.Bun
 // and pages entries the way the database does, and returns counts as given.
 // A non-nil error field makes the matching method return that error.
 type fakeTriage struct {
+	latestErr  error
 	entriesErr error
 	bundleErr  error
 	pastErr    error
@@ -502,6 +503,9 @@ func newFakeTriage() *fakeTriage {
 }
 
 func (f *fakeTriage) LatestScan(_ context.Context, projectID project.ID) (scan.Scan, error) {
+	if f.latestErr != nil {
+		return scan.Scan{}, f.latestErr
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	sc, ok := f.latest[projectID]

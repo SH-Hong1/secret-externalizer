@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 )
@@ -24,16 +25,17 @@ const foreignKeyViolation = "23503"
 // blocked it finishes before it can be read.
 const requestScanAttempts = 3
 
-const scanColumns = `id, project_id, status, requested_by, requested_at, started_at, finished_at,
-	commit_hash, rules_version, tool_versions, failure_reason, files, skipped, dropped, findings`
+const scanColumns = `id, project_id, status, requested_by, requester_name, requested_at, started_at, finished_at,
+	commit_hash, rules_version, tool_versions, failure_reason, files, skipped, skipped_files, scanner_errors,
+	dropped, findings`
 
-// RequestScan records a queued scan of the project and the job that runs it,
-// in one transaction, and returns the scan ID. When the project already has
+// RequestScan records a queued scan of the project, requested by the user
+// by, and the job that runs it, in one transaction, and returns the scan ID. When the project already has
 // a queued or running scan, it returns that scan's ID with ErrScanActive and
 // stores nothing. It returns ErrNotFound when the project does not exist.
-func (s *Store) RequestScan(ctx context.Context, projectID project.ID, requestedBy string) (scan.ID, error) {
+func (s *Store) RequestScan(ctx context.Context, projectID project.ID, by audit.Actor) (scan.ID, error) {
 	for range requestScanAttempts {
-		id, err := s.insertScan(ctx, projectID, requestedBy)
+		id, err := s.insertScan(ctx, projectID, by)
 		if !errors.Is(err, ErrScanActive) {
 			return id, err
 		}
@@ -50,7 +52,7 @@ func (s *Store) RequestScan(ctx context.Context, projectID project.ID, requested
 
 // insertScan adds the scan and its job. It returns ErrScanActive, unwrapped,
 // when the partial unique index refuses the scan.
-func (s *Store) insertScan(ctx context.Context, projectID project.ID, requestedBy string) (_ scan.ID, err error) {
+func (s *Store) insertScan(ctx context.Context, projectID project.ID, by audit.Actor) (_ scan.ID, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("starting transaction: %w", err)
@@ -59,8 +61,8 @@ func (s *Store) insertScan(ctx context.Context, projectID project.ID, requestedB
 
 	var id scan.ID
 	err = tx.QueryRow(ctx,
-		"INSERT INTO scan (project_id, requested_by) VALUES ($1, $2) RETURNING id",
-		projectID, requestedBy).Scan(&id)
+		"INSERT INTO scan (project_id, requested_by, requester_name) VALUES ($1, $2, $3) RETURNING id",
+		projectID, by.Subject, by.Name).Scan(&id)
 	var pgErr *pgconn.PgError
 	switch {
 	case errors.As(err, &pgErr) && pgErr.Code == uniqueViolation:
@@ -159,9 +161,12 @@ func scanScan(row pgx.Row) (scan.Scan, error) {
 		sc                scan.Scan
 		started, finished *time.Time
 		toolVersions      map[string]string
+		skippedFiles      []string
+		scannerErrors     map[string]int
 	)
-	err := row.Scan(&sc.ID, &sc.ProjectID, &sc.Status, &sc.RequestedBy, &sc.RequestedAt, &started, &finished,
-		&sc.CommitHash, &sc.RulesVersion, &toolVersions, &sc.FailureReason, &sc.Files, &sc.Skipped, &sc.Dropped, &sc.Findings)
+	err := row.Scan(&sc.ID, &sc.ProjectID, &sc.Status, &sc.RequestedBy, &sc.RequesterName, &sc.RequestedAt, &started, &finished,
+		&sc.CommitHash, &sc.RulesVersion, &toolVersions, &sc.FailureReason, &sc.Files, &sc.Skipped, &skippedFiles, &scannerErrors,
+		&sc.Dropped, &sc.Findings)
 	if err != nil {
 		return scan.Scan{}, err
 	}
@@ -173,6 +178,12 @@ func scanScan(row pgx.Row) (scan.Scan, error) {
 	}
 	if len(toolVersions) > 0 {
 		sc.ToolVersions = toolVersions
+	}
+	if len(skippedFiles) > 0 {
+		sc.SkippedFiles = skippedFiles
+	}
+	if len(scannerErrors) > 0 {
+		sc.ScannerErrors = scannerErrors
 	}
 	return sc, nil
 }

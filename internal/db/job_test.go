@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
@@ -14,7 +15,7 @@ import (
 // requestScan registers a project named shop and requests a scan of it.
 func requestScan(t *testing.T, s *db.Store) scan.ID {
 	t.Helper()
-	id, err := s.RequestScan(t.Context(), newProject(t, s, "shop"), "fake-subject")
+	id, err := s.RequestScan(t.Context(), newProject(t, s, "shop"), audit.Actor{Subject: "fake-subject"})
 	if err != nil {
 		t.Fatalf("RequestScan() error = %v", err)
 	}
@@ -135,7 +136,7 @@ func TestClaimJob_GivesUpAfterThree(t *testing.T) {
 	}
 	assertJobState(t, s, id, "failed")
 	// The failed scan no longer blocks the project.
-	if _, err := s.RequestScan(ctx, got.ProjectID, "fake-subject"); err != nil {
+	if _, err := s.RequestScan(ctx, got.ProjectID, audit.Actor{Subject: "fake-subject"}); err != nil {
 		t.Errorf("RequestScan() after the scan failed error = %v, want nil", err)
 	}
 }

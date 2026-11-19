@@ -580,7 +580,7 @@ func TestLatestScan(t *testing.T) {
 	}
 	first := save(t, s, pid)
 	second := save(t, s, pid)
-	if _, err := s.RequestScan(ctx, pid, "fake-subject"); err != nil {
+	if _, err := s.RequestScan(ctx, pid, audit.Actor{Subject: "fake-subject"}); err != nil {
 		t.Fatalf("RequestScan() error = %v", err)
 	}
 	got, err := s.LatestScan(ctx, pid)
@@ -630,9 +630,9 @@ func TestMigration0005Backfill(t *testing.T) {
 		t.Fatalf("MigrateThrough(4) error = %v", err)
 	}
 	pid := newProject(t, s, "shop")
-	sid, err := s.RequestScan(ctx, pid, "fake-subject")
+	sid, err := s.InsertRawScan(ctx, pid)
 	if err != nil {
-		t.Fatalf("RequestScan() error = %v", err)
+		t.Fatalf("InsertRawScan() error = %v", err)
 	}
 	for i, f := range mixed() {
 		if err := s.InsertRawFinding(ctx, pid, int64(sid), f, i+1); err != nil {
@@ -661,7 +661,7 @@ func TestProjectSummaries(t *testing.T) {
 
 	save(t, s, charlie, mixed()...)
 	save(t, s, charlie, password("conf/a.yml"))
-	queued, err := s.RequestScan(ctx, charlie, "fake-subject")
+	queued, err := s.RequestScan(ctx, charlie, audit.Actor{Subject: "fake-subject"})
 	if err != nil {
 		t.Fatalf("RequestScan(%d) error = %v", charlie, err)
 	}

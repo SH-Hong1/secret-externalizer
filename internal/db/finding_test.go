@@ -9,6 +9,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	"github.com/google/go-cmp/cmp/cmpopts"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
@@ -31,7 +32,7 @@ var fileHash = strings.Repeat("f", 64)
 func claimedScan(t *testing.T, s *db.Store, pid project.ID) (scan.ID, job.Job) {
 	t.Helper()
 	ctx := t.Context()
-	id, err := s.RequestScan(ctx, pid, "fake-subject")
+	id, err := s.RequestScan(ctx, pid, audit.Actor{Subject: "fake-subject"})
 	if err != nil {
 		t.Fatalf("RequestScan(%d) error = %v", pid, err)
 	}
@@ -195,7 +196,7 @@ func TestSaveResult_LeaseLost(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()
 	pid := newProject(t, s, "shop")
-	id, err := s.RequestScan(ctx, pid, "fake-subject")
+	id, err := s.RequestScan(ctx, pid, audit.Actor{Subject: "fake-subject"})
 	if err != nil {
 		t.Fatalf("RequestScan() error = %v", err)
 	}
@@ -292,5 +293,87 @@ func TestFindingsByScan_NoFindings(t *testing.T) {
 	got, err := s.FindingsByScan(ctx, id)
 	if err != nil || len(got) != 0 {
 		t.Errorf("FindingsByScan(%d) = %+v, %v, want none", id, got, err)
+	}
+}
+
+func TestSaveResult_KeepsSkippedFilesAndScannerErrors(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	id, j := claimedScan(t, s, newProject(t, s, "shop"))
+
+	in := result()
+	in.SkippedFiles = []string{"bin/fake.jar", "docs/한글 설명서.pdf"}
+	in.ScannerErrors = map[string]int{"opengrep": 3}
+	if err := s.SaveResult(ctx, j.ID, "worker-a", id, in); err != nil {
+		t.Fatalf("SaveResult() error = %v", err)
+	}
+	got, err := s.Scan(ctx, id)
+	if err != nil {
+		t.Fatalf("Scan(%d) error = %v", id, err)
+	}
+	if diff := cmp.Diff(in.SkippedFiles, got.SkippedFiles); diff != "" {
+		t.Errorf("Scan(%d) SkippedFiles (-want +got):\n%s", id, diff)
+	}
+	if diff := cmp.Diff(in.ScannerErrors, got.ScannerErrors); diff != "" {
+		t.Errorf("Scan(%d) ScannerErrors (-want +got):\n%s", id, diff)
+	}
+}
+
+func TestSaveResult_NoSkippedFilesOrScannerErrors(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	id, j := claimedScan(t, s, newProject(t, s, "shop"))
+	if err := s.SaveResult(ctx, j.ID, "worker-a", id, result()); err != nil {
+		t.Fatalf("SaveResult() error = %v", err)
+	}
+	got, err := s.Scan(ctx, id)
+	if err != nil {
+		t.Fatalf("Scan(%d) error = %v", id, err)
+	}
+	if got.SkippedFiles != nil || got.ScannerErrors != nil {
+		t.Errorf("Scan(%d) SkippedFiles = %q, ScannerErrors = %v, want both nil", id, got.SkippedFiles, got.ScannerErrors)
+	}
+}
+
+func TestCategoryCounts(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	customer := finding.Finding{
+		Fingerprint: fpB, File: "logs/app.log", Category: finding.CategoryCustomerData, Kind: finding.KindPhone,
+		Preview: "010-****-****",
+		Locations: []finding.Location{
+			{StartLine: 9, StartCol: 3, EndLine: 9, EndCol: 15, FileHash: fileHash},
+			{StartLine: 2, StartCol: 1, EndLine: 2, EndCol: 13, FileHash: fileHash},
+		},
+	}
+	first, j := claimedScan(t, s, pid)
+	if err := s.SaveResult(ctx, j.ID, "worker-a", first, result(secretAt(fpA, 4), customer, secretAt(fpC, 2))); err != nil {
+		t.Fatalf("SaveResult(%d) error = %v", first, err)
+	}
+	second, j := claimedScan(t, s, pid)
+	if err := s.SaveResult(ctx, j.ID, "worker-a", second, result(secretAt(fpA, 4))); err != nil {
+		t.Fatalf("SaveResult(%d) error = %v", second, err)
+	}
+
+	tests := []struct {
+		id   scan.ID
+		want []scan.CategoryCount
+	}{
+		{first, []scan.CategoryCount{
+			{Category: finding.CategoryCustomerData, Findings: 1, Locations: 2},
+			{Category: finding.CategoryStorage, Findings: 2, Locations: 2},
+		}},
+		{second, []scan.CategoryCount{{Category: finding.CategoryStorage, Findings: 1, Locations: 1}}},
+		{424242, nil},
+	}
+	for _, tt := range tests {
+		got, err := s.CategoryCounts(ctx, tt.id)
+		if err != nil {
+			t.Fatalf("CategoryCounts(%d) error = %v", tt.id, err)
+		}
+		if diff := cmp.Diff(tt.want, got); diff != "" {
+			t.Errorf("CategoryCounts(%d) (-want +got):\n%s", tt.id, diff)
+		}
 	}
 }
