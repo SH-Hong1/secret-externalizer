@@ -64,13 +64,12 @@ func (o Options) validate() error {
 // Run claims jobs from q one at a time and passes each to h, until ctx is
 // cancelled. A job's lease is renewed while h runs, and h's context is
 // cancelled when the lease is lost or runs out without a successful
-// renewal. A job that h returns an
-// error for is logged and left to its lease, so it is retried when the lease
-// runs out. On cancellation Run cancels the running job's context and waits
-// for h to return. When h then returns an error, so that it did not finish
-// the job, and the lease was not lost, Run gives the job back to the queue
-// with ReleaseJob under a context of its own bounded by
-// opts.ReleaseTimeout. Run then returns nil.
+// renewal. A job that h returns an error for is logged and left to its
+// lease, so it is retried when the lease runs out. On cancellation Run
+// cancels the running job's context and waits for h to return. When h then
+// returns an error, so that it did not finish the job, and the lease was
+// not lost, Run gives the job back to the queue with ReleaseJob under a
+// context of its own bounded by opts.ReleaseTimeout. Run then returns nil.
 func Run(ctx context.Context, logger *slog.Logger, q Queue, h Handler, opts Options) error {
 	if err := opts.validate(); err != nil {
 		return fmt.Errorf("checking options: %w", err)

@@ -7,8 +7,9 @@
 //
 // The package wraps the official OpenBao client, and none of its types
 // appear in this API. Errors from the official client can carry the response
-// body and the request URL, so no error returned here wraps one: an error
-// names the operation and the HTTP status, and nothing else.
+// body and the request URL, so no error returned here wraps one. An error
+// from a request names the operation and the HTTP status, and nothing else;
+// an error from New is fixed text, with the server address where it helps.
 package bao
 
 import (
@@ -105,7 +106,7 @@ func New(addr string, creds Credentials, hc *http.Client) (*Client, error) {
 	// NewConfig, unlike DefaultConfig, reads no environment variables.
 	cfg := api.NewConfig()
 	if cfg.Error != nil {
-		return nil, fmt.Errorf("creating openbao client: %w", cfg.Error)
+		return nil, errors.New("creating openbao client: preparing the default configuration")
 	}
 	httpClient := *hc
 	// The official client handles redirects itself and expects the HTTP
@@ -116,7 +117,7 @@ func New(addr string, creds Credentials, hc *http.Client) (*Client, error) {
 	cfg.MaxRetries = 2
 	ac, err := api.NewClient(cfg)
 	if err != nil {
-		return nil, fmt.Errorf("creating openbao client for %q: %w", addr, err)
+		return nil, fmt.Errorf("creating openbao client for %q: the official client refused the configuration", addr)
 	}
 	auth, err := approle.NewAppRoleAuth(creds.RoleID, &approle.SecretID{FromString: string(creds.SecretID)})
 	if err != nil {

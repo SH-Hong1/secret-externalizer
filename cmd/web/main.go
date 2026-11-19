@@ -116,9 +116,9 @@ const databaseLimit = 5 * time.Second
 
 // valkeyOption configures the valkey client so that a command fails within a
 // few seconds when valkey is gone. Sessions are read under a request context
-// that carries no deadline, and
-// without a limit the client would retry a read until valkey came back, so a
-// page would hang instead of showing the 503 page.
+// that carries no deadline, and without a limit the client would retry a
+// read until valkey came back, so a page would hang instead of showing the
+// 503 page.
 func valkeyOption(addr string) valkey.ClientOption {
 	return valkey.ClientOption{
 		InitAddress: []string{addr},

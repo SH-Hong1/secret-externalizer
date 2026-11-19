@@ -4,7 +4,7 @@
 
 ## 띄우고 내리기
 
-Docker와 Compose v2 이상이 필요하다. 아래의 `docker compose`는 따로 설치한 `docker-compose`로 바꿔 써도 된다.
+Docker Engine 26 이상과, 볼륨 마운트의 `subpath`를 지원하는 그에 맞는 Compose가 필요하다. worker는 `openbao-secrets` 볼륨의 `worker` 폴더만 `volume.subpath`로 마운트하는데, 이전 Engine이나 이 옵션을 모르는 Compose에서는 worker가 뜨지 않는다. 아래의 `docker compose`는 따로 설치한 `docker-compose`로 바꿔 써도 된다.
 
 ```sh
 docker compose up --build -d   # 처음에는 Keycloak이 realm을 가져오느라 30초쯤 걸린다
@@ -36,7 +36,7 @@ docker compose up --build -d
 - 스캔이 성공하면 worker 로그(`docker compose logs worker`)에 `scan finished` 기록이 하나 남는다. 스캔 ID(`scan_id`), 읽은 파일 수(`files`), 건너뛴 수(`skipped`), 버린 건수(`dropped`), 항목 수(`findings`), 텍스트로 읽지 못해 건너뛴 파일에 스캐너가 낸 결과 수(`results_in_skipped_files`), 도구별로 파일을 일부만 분석했다고 알린 오류 수(`scanner_errors`, opengrep의 파일별 10초 시간 초과나 부분 파싱 등)가 들어 있다. 건너뛴 파일이 있으면 `scan skipped files` 기록에 처음 50개의 상대 경로(`paths`)와 전체 수(`total`)가 남는다. 경로의 제어 문자와 깨진 UTF-8은 `U+FFFD`로 바뀐다. 읽지 못한 폴더는 수만 `skipped`에 들어가고 경로는 남지 않는다. 화면에는 건너뛴 파일의 이름과 스캐너 오류 수가 아직 보이지 않는다.
 - 프로젝트 폴더 맨 위에 `.gitleaksignore`나 `.betterleaksignore`가 있으면 스캔하지 않고 `project has a scanner ignore file (.gitleaksignore or .betterleaksignore); remove it and scan again`으로 실패한다. betterleaks가 이 파일에 적힌 결과를 숨기고, 이를 끄는 옵션이 없기 때문이다. 작업 폴더에서 파일을 지우거나 이름을 바꾼 뒤 다시 스캔한다. 하위 폴더에 있는 같은 이름의 파일은 betterleaks가 읽지 않으므로 상관없다.
 - EUC-KR 파일은 스캔하는 동안 UTF-8 사본을 worker의 `/tmp`(tmpfs, 1GiB)에 두고 스캔이 끝나면 지운다. EUC-KR 파일이 1GiB 가까이 되는 프로젝트를 스캔하려면 `compose.yaml`에서 크기를 늘린다. tmpfs는 호스트 메모리를 쓴다.
-- OpenBao에 닿지 않으면 스캔은 `the secret store could not be reached; see the worker log`로 실패하고 아무것도 저장하지 않는다.
+- OpenBao에 닿지 않으면 스캔은 `the secret store could not be reached; see the worker log`로 실패하고 postgres에는 항목을 하나도 저장하지 않는다. 그 실행이 실패하기 전에 OpenBao에 이미 보관한 원본은 남아 있다가, 그 프로젝트의 다음 스캔이 성공하면 그 스캔에 없는 것이 지워진다.
 - 커밋 해시는 프로젝트 폴더가 git 저장소 안에 있을 때만 기록한다. 저장소가 아니거나 커밋이 없으면 비워 둔다.
 - worker가 스캔 중에 멈추면 임대(2분)가 끝난 뒤 다시 실행한다. 세 번 멈추면 스캔이 `failed`로 끝난다.
 
@@ -197,10 +197,13 @@ go test -count=1 -v -run 'TestRules|TestVersion' ./internal/ruleset/
 
 valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이, OpenBao가 필요한 테스트는 `TEST_BAO_ADDR`가 없으면 건너뛴다. `make test-integration`은 셋 다 요구한다. OpenBao 테스트는 원본을 보관하는 `openbao`가 아니라 `test` 프로필의 `openbao-test`를 쓰고, 테스트가 개발용 루트 토큰으로 transit, KV, AppRole을 직접 만든다. compose의 서비스로 실행하려면 다음과 같이 한다. 새 셸에서는 compose 명령마다 `SE_WORKSPACE`가 설정되어 있어야 한다. 없으면 compose가 파일을 읽다가 멈춘다(worker를 띄우지 않는 명령도 같다).
 
+실제 스캐너를 쓰는 테스트(`internal/scan`의 `TestHandle_RealScanners…`, `internal/ruleset`의 규칙 테스트 등)는 `bin/`에 스캐너가 없으면 실패하지 않고 건너뛴다. 통합 테스트를 돌리기 전에 `make scanners`를 먼저 실행하고, `-v` 출력에서 이 테스트가 `SKIP`이 아닌지 확인한다.
+
 ```sh
 export SE_WORKSPACE=$HOME/work     # 값은 존재하는 폴더면 된다
 docker compose up -d valkey postgres
 docker compose --profile test up -d openbao-test
+make scanners                      # 처음 한 번. 없으면 실제 스캐너 테스트가 건너뛰어진다
 TEST_VALKEY_ADDR=127.0.0.1:16379 \
 TEST_DATABASE_URL=postgres://se_app:dev-only-se-app-password@127.0.0.1:15432/secret_externalizer_test \
 TEST_BAO_ADDR=http://127.0.0.1:18200 \

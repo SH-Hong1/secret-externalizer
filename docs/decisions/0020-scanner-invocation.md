@@ -46,14 +46,15 @@ opengrep:
 ```
 scan --config=<rulesDir> --json --quiet --no-git-ignore --x-ignore-semgrepignore-files
      --no-rewrite-rule-ids --disable-nosem --project-root=<dir> --max-target-bytes=20MB --timeout=10
-     --exclude=.git/ --exclude=target/ --exclude=build/ --exclude=node_modules/
-     --exclude=/<프로젝트 제외 경로>… -- .
+     --exclude=.git/ --exclude=target/ --exclude=build/ --exclude=node_modules/ -- .
 ```
 
 작업 디렉터리는 스캔 폴더(`<dir>`)다. 종료 코드 0만 정상이다.
 
+`opengrep.New`의 `excludes` 인자에 제외 경로를 주면 `--` 앞에 `--exclude=/<제외 경로>`가 경로마다 붙는다. 지금 worker(`cmd/worker`)는 이 인자에 `nil`을 넘기므로 프로젝트별 제외 경로는 opengrep에 전달되지 않는다. 제외한 폴더도 스캐너가 읽고, 스캔 실행기가 자기 파일 목록(제외 경로를 뺀 목록)에 없는 파일의 결과를 버리는 것으로 제외한다. 인자와 그 이스케이프는 스캔마다 제외 경로를 넘기게 될 때를 위해 있다.
+
 - 계획의 표에 더한 것: betterleaks의 `--ignore-gitleaks-allow`, opengrep의 `--no-rewrite-rule-ids`, `--disable-nosem`, `--project-root`, 그리고 두 도구의 `--` 구분자. 값은 `--옵션=값` 한 인자로 넘긴다.
-- 기본 제외 디렉터리는 끝에 `/`를 붙여 같은 이름의 파일은 제외하지 않는다(`textfile.Walk`와 같다). 프로젝트 제외 경로는 앞에 `/`를 붙여 스캔 폴더 기준으로 고정하고 gitignore의 특수 문자를 이스케이프한다.
+- 기본 제외 디렉터리는 끝에 `/`를 붙여 같은 이름의 파일은 제외하지 않는다(`textfile.Walk`와 같다). `excludes`로 받은 제외 경로는 앞에 `/`를 붙여 스캔 폴더 기준으로 고정하고 gitignore의 특수 문자를 이스케이프한다.
 - 두 도구 모두 스캔 폴더에서 실행하고 대상으로 `.`을 넘긴다(`scanexec.Command.Dir`). 규칙의 경로 조건(betterleaks의 `path`, opengrep의 `paths`)이 스캔 폴더 안의 경로에만 맞춰지게 하려는 것이다. 절대 경로를 넘기면 스캔 폴더가 `data`, `logs` 같은 이름의 폴더 아래에 있을 때 고객정보 규칙이 모든 파일에 적용되었다(`.java`의 이메일 주소가 고객정보로 나왔다).
 - betterleaks에는 제외 옵션을 주지 않는다. 이후 스캔 실행기가 자기 파일 목록에 없는 파일의 결과를 버린다.
 
@@ -95,4 +96,4 @@ scan --config=<rulesDir> --json --quiet --no-git-ignore --x-ignore-semgrepignore
 
 ## 남은 일
 
-- betterleaks는 스캔 폴더의 `.gitleaksignore`/`.betterleaksignore`를 끌 수 없다. 스캔 실행기가 스캐너에 UTF-8 사본 폴더를 넘길 때 이 두 파일은 사본에 넣지 않는다(실행기를 만드는 계획에서 처리한다).
+- betterleaks는 스캔 폴더의 `.gitleaksignore`/`.betterleaksignore`를 끌 수 없다. 스캔 실행기는 프로젝트 폴더 맨 위에 이 파일이 있으면 스캐너를 실행하기 전에 스캔을 실패로 끝낸다(0021). 사본 폴더에서 이 파일을 빼는 방법은 쓰지 않았다. 프로젝트 폴더 자체도 스캔하기 때문이다.

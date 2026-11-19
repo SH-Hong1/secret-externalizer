@@ -13,7 +13,7 @@ worker는 OpenBao transit으로 지문을 계산하고, KV v2에 판정 전의 �
 - 두 모듈은 `internal/bao`만 쓴다. 이 패키지의 공개 API에는 두 모듈의 타입이 나오지 않는다.
 - 설정은 `api.NewConfig()`로 시작한다. `DefaultConfig()`와 달리 환경 변수(`BAO_ADDR`, `BAO_TOKEN` 등)를 읽지 않는다. 주소, HTTP 클라이언트, 재시도 횟수(2번)는 `bao.New`의 인자로만 정한다.
 - HTTP 클라이언트는 호출하는 쪽이 넘기며 제한 시간이 없으면 거부한다. 넘긴 값은 복사해서 쓴다.
-- 공식 클라이언트의 오류는 감싸지 않는다. `*api.ResponseError`에서 상태 코드만 꺼내 새 오류를 만든다. 응답이 없으면 고정 문장을 쓰고, `ctx`가 취소되었으면 `ctx.Err()`만 감싼다.
+- 공식 클라이언트의 오류는 감싸지 않는다. 요청이 실패하면 `*api.ResponseError`에서 상태 코드만 꺼내 새 오류를 만든다. 응답이 없으면 고정 문장을 쓰고, `ctx`가 취소되었으면 `ctx.Err()`만 감싼다. `bao.New`에서 `api.NewConfig()`의 `Error`나 `api.NewClient`의 오류를 받으면 고정 문장으로 새 오류를 만들고, `api.NewClient`의 경우에는 서버 주소만 덧붙인다.
 - 토큰을 갱신하는 goroutine은 두지 않는다. 처음 쓸 때 로그인하고, 403을 받으면 한 번 다시 로그인해 재시도한다.
 
 ## 이유
