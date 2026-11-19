@@ -10,6 +10,7 @@ import (
 
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
@@ -703,4 +704,139 @@ func (f *fakeTriage) lastFilter() (triage.Filter, bool) {
 		return triage.Filter{}, false
 	}
 	return f.filters[len(f.filters)-1], true
+}
+
+// callLog records the order of calls across fakes.
+type callLog struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (c *callLog) add(call string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, call)
+}
+
+func (c *callLog) all() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.calls)
+}
+
+// revealCall is the arguments of one RecordReveal call.
+type revealCall struct {
+	Project project.ID
+	Bundle  triage.BundleID
+	By      audit.Actor
+}
+
+// fakeAudit keeps audit events in memory, newest first. RecordReveal records
+// its call in log and returns revealErr.
+type fakeAudit struct {
+	log       *callLog
+	revealErr error
+	eventsErr error
+
+	mu      sync.Mutex
+	reveals []revealCall
+	events  []audit.Event
+	befores []int64
+	limits  []int
+}
+
+func (f *fakeAudit) RecordReveal(_ context.Context, projectID project.ID, id triage.BundleID, by audit.Actor) error {
+	f.log.add("RecordReveal")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reveals = append(f.reveals, revealCall{projectID, id, by})
+	return f.revealErr
+}
+
+// AuditEvents returns at most limit of the stored events with an ID below
+// before, or from the first when before is 0.
+func (f *fakeAudit) AuditEvents(_ context.Context, before int64, limit int) ([]audit.Event, error) {
+	if f.eventsErr != nil {
+		return nil, f.eventsErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.befores = append(f.befores, before)
+	f.limits = append(f.limits, limit)
+	var out []audit.Event
+	for _, e := range f.events {
+		if before != 0 && e.ID >= before {
+			continue
+		}
+		if len(out) == limit {
+			break
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+func (f *fakeAudit) revealCalls() []revealCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.reveals)
+}
+
+// fakeOriginals returns the value stored for a project and fingerprint, or
+// err when it is set, or bao.ErrNoOriginal. It records each call in log.
+type fakeOriginals struct {
+	log *callLog
+	err error
+
+	mu     sync.Mutex
+	values map[string]bao.Value
+	reads  []string
+}
+
+func originalKey(projectID int64, fingerprint string) string {
+	return fmt.Sprintf("%d/%s", projectID, fingerprint)
+}
+
+func (f *fakeOriginals) ReadPending(_ context.Context, projectID int64, fingerprint string) (bao.Value, error) {
+	f.log.add("ReadPending")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := originalKey(projectID, fingerprint)
+	f.reads = append(f.reads, key)
+	if f.err != nil {
+		return nil, f.err
+	}
+	v, ok := f.values[key]
+	if !ok {
+		return nil, fmt.Errorf("reading: %w", bao.ErrNoOriginal)
+	}
+	return v, nil
+}
+
+// put stores value as the original of fingerprint in the project.
+func (f *fakeOriginals) put(projectID int64, fingerprint string, value bao.Value) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.values == nil {
+		f.values = make(map[string]bao.Value)
+	}
+	f.values[originalKey(projectID, fingerprint)] = value
+}
+
+func (f *fakeOriginals) readCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.reads)
+}
+
+func (b *blockingStore) RecordReveal(ctx context.Context, _ project.ID, _ triage.BundleID, _ audit.Actor) error {
+	return b.wait(ctx)
+}
+
+func (b *blockingStore) AuditEvents(ctx context.Context, _ int64, _ int) ([]audit.Event, error) {
+	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) ReadPending(ctx context.Context, _ int64, _ string) (bao.Value, error) {
+	return nil, b.wait(ctx)
 }

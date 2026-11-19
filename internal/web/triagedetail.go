@@ -78,8 +78,10 @@ func (f *nameField) setValue(value string) {
 
 // bundleDetail is the detail of a secret bundle. From is its ID, which the
 // move forms send so the screen can return to it; Targets are the other
-// bundles of the same value a member can move to.
+// bundles of the same value a member can move to. Original is the slot of
+// the original value, set only for an admin when a scan kept the value.
 type bundleDetail struct {
+	Original      *originalView
 	From          string
 	Targets       []moveTarget
 	KindLabel     string

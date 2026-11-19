@@ -22,14 +22,17 @@ const fakeCode = "fake-auth-code-0000"
 
 // testEnv is a server built on fakes, with its log captured.
 type testEnv struct {
-	handler  http.Handler
-	log      *bytes.Buffer
-	authn    *fakeAuthenticator
-	sessions *fakeSessions
-	attempts *fakeAttempts
-	projects *fakeProjects
-	scans    *fakeScans
-	triage   *fakeTriage
+	handler   http.Handler
+	log       *bytes.Buffer
+	authn     *fakeAuthenticator
+	sessions  *fakeSessions
+	attempts  *fakeAttempts
+	projects  *fakeProjects
+	scans     *fakeScans
+	triage    *fakeTriage
+	calls     *callLog
+	audits    *fakeAudit
+	originals *fakeOriginals
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -42,9 +45,12 @@ func newTestEnv(t *testing.T) *testEnv {
 		projects: newFakeProjects(),
 		scans:    newFakeScans(),
 		triage:   newFakeTriage(),
+		calls:    &callLog{},
 	}
+	e.audits = &fakeAudit{log: e.calls}
+	e.originals = &fakeOriginals{log: e.calls}
 	logger := slog.New(slog.NewJSONHandler(e.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts, e.projects, e.scans, e.triage, web.NewHistorySuggester(e.triage), time.Minute)
+	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts, e.projects, e.scans, e.triage, web.NewHistorySuggester(e.triage), e.audits, e.originals, time.Minute)
 	return e
 }
 

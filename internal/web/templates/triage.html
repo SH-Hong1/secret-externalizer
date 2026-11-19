@@ -70,7 +70,8 @@
 </div>{{end}}
 
 {{define "bundle"}}{{template "detail-head" .}}
-<div class="detail-block">
+{{with .Original}}{{template "original" .}}
+{{end}}<div class="detail-block">
 <h3 class="detail-subtitle">같은 값이 나온 위치 {{.Locations}}곳</h3>
 {{range .Members}}{{$m := .}}{{range $i, $l := .Locations}}<div class="code-box">
 <div class="code-head">

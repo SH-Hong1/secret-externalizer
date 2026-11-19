@@ -21,6 +21,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 
@@ -58,6 +59,35 @@ func (SecretID) Format(f fmt.State, _ rune) {
 
 // MarshalText returns "[redacted]".
 func (SecretID) MarshalText() ([]byte, error) { return []byte(redacted), nil }
+
+// ErrNoOriginal means OpenBao holds no pending original at that path.
+var ErrNoOriginal = errors.New("no pending original")
+
+// Value holds an original read from OpenBao. fmt, slog and encoding/json
+// print a redacted form. Only Reveal gives the bytes. fmt cannot call the
+// methods of a value in an unexported struct field, so a Value is never kept
+// in one.
+type Value []byte
+
+// Reveal returns a copy of the original bytes.
+func (v Value) Reveal() []byte { return slices.Clone(v) }
+
+// String returns "[redacted]".
+func (Value) String() string { return redacted }
+
+// GoString returns "[redacted]".
+func (Value) GoString() string { return redacted }
+
+// LogValue returns "[redacted]".
+func (Value) LogValue() slog.Value { return slog.StringValue(redacted) }
+
+// Format prints "[redacted]" for every fmt verb, including %x and %#v.
+func (Value) Format(f fmt.State, _ rune) {
+	_, _ = f.Write([]byte(redacted)) // a failed write to a fmt buffer has no one to report to
+}
+
+// MarshalText returns "[redacted]", which encoding/json also uses.
+func (Value) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 
 // Credentials identify the AppRole that a Client logs in as.
 type Credentials struct {
@@ -204,6 +234,43 @@ func (c *Client) PutPending(ctx context.Context, projectID int64, fingerprint st
 		return c.api.Logical().WriteWithContext(ctx, pendingPath("data", projectID, fingerprint), body)
 	})
 	return err
+}
+
+// ReadPending returns the pending original for fingerprint in the project.
+// It returns an error matching ErrNoOriginal when OpenBao holds none there,
+// including when its latest version was deleted.
+func (c *Client) ReadPending(ctx context.Context, projectID int64, fingerprint string) (Value, error) {
+	const op = "reading a pending value"
+	if err := checkPendingKey(projectID, fingerprint); err != nil {
+		return nil, fmt.Errorf("%s: %w", op, err)
+	}
+	// The official client answers a 404 that carries no data with a nil
+	// secret and no error, and one that carries the metadata of a deleted
+	// version with that metadata and no data.
+	secret, err := c.do(ctx, op, func() (*api.Secret, error) {
+		return c.api.Logical().ReadWithContext(ctx, pendingPath("data", projectID, fingerprint))
+	})
+	if err != nil {
+		return nil, err
+	}
+	if secret == nil {
+		return nil, fmt.Errorf("%s: %w", op, ErrNoOriginal)
+	}
+	data, _ := secret.Data["data"].(map[string]any) // a missing or null data field means no version to read
+	if data == nil {
+		return nil, fmt.Errorf("%s: %w", op, ErrNoOriginal)
+	}
+	encoded, ok := data["value"].(string)
+	if !ok {
+		return nil, fmt.Errorf("%s: response holds no value", op)
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		// The decoding error names only an offset, but it is dropped all
+		// the same.
+		return nil, fmt.Errorf("%s: the stored value is not base64", op)
+	}
+	return Value(raw), nil
 }
 
 // ListPending returns the fingerprints that have a pending original in the

@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -331,6 +332,10 @@ func TestClient_ErrorsHideValues(t *testing.T) {
 		"DeletePending": func(c *bao.Client) error {
 			return c.DeletePending(t.Context(), 7, fingerprint)
 		},
+		"ReadPending": func(c *bao.Client) error {
+			_, err := c.ReadPending(t.Context(), 7, fingerprint)
+			return err
+		},
 	}
 	encoded := base64.StdEncoding.EncodeToString([]byte(testValue))
 	forbidden := []string{testValue, encoded, testSecretID, tokenPrefix}
@@ -457,6 +462,9 @@ func TestPending_RejectsBadArguments(t *testing.T) {
 			if err := c.DeletePending(t.Context(), tt.projectID, tt.fingerprint); err == nil {
 				t.Errorf("DeletePending(%d, %q) error = nil, want an error", tt.projectID, tt.fingerprint)
 			}
+			if _, err := c.ReadPending(t.Context(), tt.projectID, tt.fingerprint); err == nil || errors.Is(err, bao.ErrNoOriginal) {
+				t.Errorf("ReadPending(%d, %q) error = %v, want an error other than ErrNoOriginal", tt.projectID, tt.fingerprint, err)
+			}
 		})
 	}
 	if _, err := c.ListPending(t.Context(), 0); err == nil {
@@ -541,6 +549,142 @@ func TestNew_RequiresCredentials(t *testing.T) {
 	for _, creds := range []bao.Credentials{{RoleID: testRoleID}, {SecretID: testSecretID}} {
 		if _, err := bao.New("http://127.0.0.1:1", creds, hc); err == nil {
 			t.Errorf("New() with role-id %q and secret-id set=%t error = nil, want an error", creds.RoleID, creds.SecretID != "")
+		}
+	}
+}
+
+// kvFake answers the KV v2 requests of the pending originals from memory, as
+// OpenBao does: a write stores the data under the path, a read returns it
+// with its metadata, and a read of a path with nothing stored answers 404.
+type kvFake struct {
+	t *testing.T
+
+	// mu guards data.
+	mu   sync.Mutex
+	data map[string]map[string]any
+}
+
+func (k *kvFake) handle(w http.ResponseWriter, r *http.Request, _ string) {
+	k.mu.Lock()
+	defer k.mu.Unlock()
+	switch r.Method {
+	case http.MethodPut, http.MethodPost:
+		var body struct {
+			Data map[string]any `json:"data"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			k.t.Errorf("decoding body: %v", err)
+		}
+		k.data[r.URL.Path] = body.Data
+		writeJSON(k.t, w, http.StatusOK, map[string]any{"data": map[string]any{"version": 1}})
+	case http.MethodGet:
+		d, ok := k.data[r.URL.Path]
+		if !ok {
+			writeJSON(k.t, w, http.StatusNotFound, map[string]any{"errors": []string{}})
+			return
+		}
+		writeJSON(k.t, w, http.StatusOK, map[string]any{"data": map[string]any{
+			"data":     d,
+			"metadata": map[string]any{"version": 1, "deletion_time": "", "destroyed": false},
+		}})
+	default:
+		k.t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		w.WriteHeader(http.StatusMethodNotAllowed)
+	}
+}
+
+func TestReadPending(t *testing.T) {
+	kv := &kvFake{t: t, data: map[string]map[string]any{}}
+	f, c := newFakeBao(t, kv.handle)
+	fingerprint := wantFingerprint(testValue)
+	value := []byte(testValue + "\x00\xff<script>")
+	if err := c.PutPending(t.Context(), 7, fingerprint, value); err != nil {
+		t.Fatalf("PutPending(7, %q) error = %v", fingerprint, err)
+	}
+
+	got, err := c.ReadPending(t.Context(), 7, fingerprint)
+	if err != nil {
+		t.Fatalf("ReadPending(7, %q) error = %v", fingerprint, err)
+	}
+	if diff := cmp.Diff(value, got.Reveal()); diff != "" {
+		t.Errorf("ReadPending(7, %q) mismatch (-want +got):\n%s", fingerprint, diff)
+	}
+	f.mu.Lock()
+	last := f.paths[len(f.paths)-1]
+	f.mu.Unlock()
+	if want := "GET /v1/secret/data/pending/7/" + fingerprint; last != want {
+		t.Errorf("ReadPending sent %s, want %s", last, want)
+	}
+
+	other := wantFingerprint("dev-only-fake-other")
+	if _, err := c.ReadPending(t.Context(), 7, other); !errors.Is(err, bao.ErrNoOriginal) {
+		t.Errorf("ReadPending(7, %q) with nothing stored error = %v, want ErrNoOriginal", other, err)
+	}
+	if _, err := c.ReadPending(t.Context(), 8, fingerprint); !errors.Is(err, bao.ErrNoOriginal) {
+		t.Errorf("ReadPending(8, %q) of another project error = %v, want ErrNoOriginal", fingerprint, err)
+	}
+}
+
+func TestReadPending_Answers(t *testing.T) {
+	fingerprint := wantFingerprint(testValue)
+	tests := []struct {
+		name     string
+		status   int
+		body     map[string]any
+		wantNone bool
+	}{
+		{"deleted version", http.StatusNotFound, map[string]any{"data": map[string]any{
+			"data": nil, "metadata": map[string]any{"version": 2, "deletion_time": "2026-11-19T06:41:07Z"},
+		}}, true},
+		{"no value field", http.StatusOK, map[string]any{"data": map[string]any{"data": map[string]any{"other": "x"}}}, false},
+		{"value not base64", http.StatusOK, map[string]any{"data": map[string]any{"data": map[string]any{"value": testValue + "!"}}}, false},
+		{"server error", http.StatusInternalServerError, map[string]any{"errors": []string{testValue}}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, c := newFakeBao(t, func(w http.ResponseWriter, _ *http.Request, _ string) {
+				writeJSON(t, w, tt.status, tt.body)
+			})
+			got, err := c.ReadPending(t.Context(), 7, fingerprint)
+			if err == nil {
+				t.Fatalf("ReadPending() = %d bytes, nil; want an error", len(got.Reveal()))
+			}
+			if errors.Is(err, bao.ErrNoOriginal) != tt.wantNone {
+				t.Errorf("ReadPending() error = %v, matches ErrNoOriginal: %v, want %v", err, !tt.wantNone, tt.wantNone)
+			}
+			if strings.Contains(err.Error(), testValue) {
+				t.Errorf("ReadPending() error = %q, contains the value", err)
+			}
+		})
+	}
+}
+
+func TestValueRedacts(t *testing.T) {
+	v := bao.Value(testValue)
+	if got := string(v.Reveal()); got != testValue {
+		t.Fatalf("Value.Reveal() = %q, want %q", got, testValue)
+	}
+	hexValue := hex.EncodeToString([]byte(testValue))
+	var buf strings.Builder
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("value", "value", v, "nested", struct{ V bao.Value }{v})
+	slog.New(slog.NewTextHandler(&buf, nil)).Info("value", "value", v)
+	outputs := []string{buf.String()}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s", "%q", "%x", "%X", "%d"} {
+		outputs = append(outputs, fmt.Sprintf(verb, v), fmt.Sprintf(verb, struct{ V bao.Value }{v}), fmt.Sprintf(verb, []bao.Value{v}))
+	}
+	for _, x := range []any{v, struct{ V bao.Value }{v}, map[string]bao.Value{"v": v}} {
+		j, err := json.Marshal(x)
+		if err != nil {
+			t.Fatalf("json.Marshal(%T) error = %v", x, err)
+		}
+		outputs = append(outputs, string(j))
+	}
+	encoded := base64.StdEncoding.EncodeToString([]byte(testValue))
+	for _, out := range outputs {
+		for _, s := range []string{testValue, hexValue, strings.ToUpper(hexValue), encoded, "100 101 118"} {
+			if strings.Contains(out, s) {
+				t.Errorf("output %q contains %q", out, s)
+			}
 		}
 	}
 }

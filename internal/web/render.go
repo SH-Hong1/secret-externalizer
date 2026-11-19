@@ -53,8 +53,19 @@ func newRenderer(a *assets) *renderer {
 	return parseTemplates(templateFS, a)
 }
 
+// partialsOf returns the template files that the page name uses besides the
+// layout. The triage screen draws the slot of the original value, which the
+// reveal also renders on its own from original.html.
+func partialsOf(name string) []string {
+	if name == "triage.html" {
+		return []string{"templates/original.html"}
+	}
+	return nil
+}
+
 // parseTemplates parses every template under templates/ in fsys. Each page
-// template is parsed together with the layout. It panics when a template is
+// template is parsed together with the layout and the files partialsOf
+// names. It panics when a template is
 // broken or when the layout's "assets" template names a static file that a
 // does not hold, so a bad template or a missing file stops the program at
 // start-up.
@@ -78,7 +89,7 @@ func parseTemplates(fsys fs.FS, a *assets) *renderer {
 		t, err := template.New(name).Funcs(template.FuncMap{
 			"asset":   a.url,
 			"section": func() string { return "" },
-		}).ParseFS(fsys, "templates/"+layoutFile, file)
+		}).ParseFS(fsys, append([]string{"templates/" + layoutFile, file}, partialsOf(name)...)...)
 		if err != nil {
 			panic(fmt.Sprintf("parsing template %s: %v", name, err))
 		}

@@ -20,7 +20,7 @@ func newTestServer(t *testing.T, logOut io.Writer) *httptest.Server {
 	t.Helper()
 	logger := slog.New(slog.NewJSONHandler(logOut, nil))
 	tr := newFakeTriage()
-	srv := httptest.NewServer(web.NewServer(logger, &fakeAuthenticator{}, newFakeSessions(), newFakeAttempts(), newFakeProjects(), newFakeScans(), tr, web.NewHistorySuggester(tr), time.Minute))
+	srv := httptest.NewServer(web.NewServer(logger, &fakeAuthenticator{}, newFakeSessions(), newFakeAttempts(), newFakeProjects(), newFakeScans(), tr, web.NewHistorySuggester(tr), &fakeAudit{log: &callLog{}}, &fakeOriginals{log: &callLog{}}, time.Minute))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -162,6 +162,8 @@ func TestStoreCallsHaveTimeLimit(t *testing.T) {
 		{http.MethodPost, "/projects/1/bundles/1/verdict", "verdict=false-positive"},
 		{http.MethodPost, "/projects/1/customer-data/verdict", "kind=phone&file=a.log&verdict=redact"},
 		{http.MethodPost, "/projects/1/findings/1/move", "to=new"},
+		{http.MethodPost, "/projects/1/bundles/1/original", ""},
+		{http.MethodGet, "/audit", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.target, func(t *testing.T) {
@@ -171,12 +173,12 @@ func TestStoreCallsHaveTimeLimit(t *testing.T) {
 				var logs bytes.Buffer
 				logger := slog.New(slog.NewJSONHandler(&logs, nil))
 				sessions := newFakeSessions()
-				id, err := sessions.Create(t.Context(), auth.User{Subject: "fake-subject", Name: "Fake User", Roles: []auth.Role{auth.RoleUser}})
+				id, err := sessions.Create(t.Context(), auth.User{Subject: "fake-admin", Name: "Fake Admin", Roles: []auth.Role{auth.RoleAdmin}})
 				if err != nil {
 					t.Fatalf("fakeSessions.Create() error = %v", err)
 				}
 				store := &blockingStore{}
-				h := web.NewServer(logger, &fakeAuthenticator{}, sessions, newFakeAttempts(), store, store, store, web.NewHistorySuggester(store), limit)
+				h := web.NewServer(logger, &fakeAuthenticator{}, sessions, newFakeAttempts(), store, store, store, web.NewHistorySuggester(store), store, store, limit)
 
 				req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, strings.NewReader(tt.body))
 				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

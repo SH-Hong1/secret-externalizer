@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"strconv"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
@@ -202,6 +203,9 @@ func fillTriagePage(ctx context.Context, logger *slog.Logger, store TriageStore,
 			return http.StatusInternalServerError, fmt.Errorf("listing bundles of the same value: %w", err)
 		}
 		data.Bundle = newBundleDetail(pid, ret, b, s, same)
+		if data.User.Has(auth.RoleAdmin) && hasOriginal(b) {
+			data.Bundle.Original = newOriginalForm(pid, b.ID, ret)
+		}
 	default:
 		return fillCustomerDetail(ctx, store, data, sc.ID, sel.Group, ret)
 	}

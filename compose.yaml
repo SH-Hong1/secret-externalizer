@@ -13,7 +13,7 @@
 #   postgres  127.0.0.1:15432        (for integration tests)
 #   openbao-test 127.0.0.1:18200     (profile "test", for integration tests)
 #
-# openbao publishes no port: only the worker reaches it, on the compose
+# openbao publishes no port: only the worker and web reach it, on the compose
 # network.
 
 name: secret-externalizer
@@ -195,8 +195,21 @@ services:
       OIDC_DISCOVERY_URL: http://keycloak:8080/realms/secret-externalizer
       OIDC_CLIENT_ID: secret-externalizer-web
       OIDC_CLIENT_SECRET: dev-only-web-client-secret # local development only; matches realm.json
+      # Web reads an original only when an admin asks to reveal one.
+      BAO_ADDR: http://openbao:8200
+      BAO_ROLE_ID: se-web
+      BAO_SECRET_ID_FILE: /run/secrets/openbao/secret-id
     ports:
       - "127.0.0.1:8080:8080"
+    volumes:
+      # Only web's own directory of the openbao-secrets volume, so web cannot
+      # read the unseal key or the worker role's secret-id.
+      - type: volume
+        source: openbao-secrets
+        target: /run/secrets/openbao
+        read_only: true
+        volume:
+          subpath: web
     user: "65532:65532"
     read_only: true
     cap_drop:
@@ -211,6 +224,11 @@ services:
         condition: service_healthy
       keycloak:
         condition: service_healthy
+      # Started, not healthy: openbao starts only after openbao-secrets has
+      # written web's secret-id, and web starts and serves every other page
+      # while OpenBao is not ready.
+      openbao:
+        condition: service_started
 
   worker:
     build:

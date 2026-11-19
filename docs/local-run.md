@@ -61,7 +61,15 @@ docker compose up --build -d
 4. 프로젝트 화면의 스캔 목록에서 이전 스캔을 본다. 예제 파일에서 값을 지우고 다시 스캔하면 그 항목만 사라지고 나머지 항목은 같은 항목으로 이어진다.
 5. 끝나면 `$SE_WORKSPACE/legacy-shop`을 지운다. OpenBao에는 프로젝트의 마지막 스캔이 찾은 비밀 값의 원본이 남는다. 같은 프로젝트를 다시 스캔하면 그 스캔에 없는 값의 원본이 정리된다.
 
-스캔 결과 화면은 postgres에 저장된 가린 값만 보여 주므로 화면에서 원본 값을 볼 방법은 없다.
+스캔 결과 화면과 판정 화면은 postgres에 저장된 가린 값만 보여 준다. 원본 값은 `admin`이 판정 화면에서 "원본 보기"를 누를 때만 보인다(아래).
+
+## 원본 보기와 감사 로그
+
+1. `dev-admin`으로 로그인하고 위의 예제 프로젝트를 스캔한 뒤 판정 화면(`/projects/{id}/triage`)을 연다.
+2. 비밀 값 묶음의 상세 맨 위에 "원본 보기" 버튼이 있다. `admin`에게만, 마지막 스캔이 원본을 보관한 묶음에만 보인다. 고객정보에는 없다.
+3. 누르면 web이 먼저 감사 기록을 남기고, 그다음 OpenBao에서 원본을 읽어 그 응답에만 넣는다. 검은 테두리 상자에 값과 연 사람, 시각이 보이고 "닫기"를 누르면 값 없이 같은 상세로 돌아간다. 값은 저장하지 않고 캐시하지 않는다(`Cache-Control: no-store`). 텍스트가 아닌 값(UTF-8이 아니거나 NUL이 든 값)은 크기만 보인다.
+4. OpenBao에 원본이 없으면 "보관된 원본이 없습니다. 다시 스캔하면 보관됩니다.", OpenBao에 닿지 않으면 "비밀 저장소에 연결할 수 없습니다."가 보인다. 두 경우에도 열람 시도는 감사 기록에 남는다. web은 OpenBao가 없어도 기동하고 다른 화면은 그대로 쓸 수 있다.
+5. 머리 띠의 "감사 로그"(`/audit`)에서 판정, 묶음 옮기기, 원본 보기가 최신순으로 한 쪽에 100줄씩 보인다. 시각은 UTC이고, 내용에는 묶음과 항목 번호, 이름(`ext.…`), 보류 사유, 메모만 있고 값은 없다. "더 보기"가 다음 쪽(`/audit?before=<마지막 줄의 ID>`)을 연다.
 
 ## OpenBao
 
@@ -70,7 +78,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
 | 서비스 | 내용 |
 |---|---|
 | `openbao-secrets` | 한 번 실행되고 끝난다. `openbao-secrets` 볼륨에 봉인 해제 키(`unseal/key`)와 AppRole secret-id(`worker/secret-id`, `web/secret-id`)를 난수로 만든다. 이미 있는 파일은 그대로 둔다 |
-| `openbao` | 원본을 보관한다. 호스트에 포트를 열지 않는다. 데이터는 `openbao-data` 볼륨에 있다 |
+| `openbao` | 원본을 보관한다. 호스트에 포트를 열지 않고, compose 네트워크의 worker(쓰기)와 web(원본 보기의 읽기)만 쓴다. 데이터는 `openbao-data` 볼륨에 있다 |
 | `openbao-test` | `test` 프로필에서만 뜬다. 통합 테스트용 `-dev` 서버이며 `127.0.0.1:18200`에 열린다. 메모리에만 저장하고 루트 토큰은 `dev-only-openbao-test-root-token`이다 |
 
 - 처음 뜰 때 OpenBao가 스스로 초기화(self-init)한다. transit 키 `fingerprint`, KV v2 마운트 `secret`, AppRole `worker`와 `web`, 정책, 표준 출력 audit device를 만든다. 루트 토큰은 초기화가 끝나면 폐기되어 남지 않는다.
@@ -91,7 +99,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
 | 사용자 | 비밀번호 | 역할 | 볼 수 있는 화면 |
 |---|---|---|---|
 | `dev-user` | `dev-only-user-password` | `user` | 홈, 프로젝트와 스캔 |
-| `dev-admin` | `dev-only-admin-password` | `admin` | 홈, 프로젝트와 스캔, 감사 로그(`/audit`) |
+| `dev-admin` | `dev-only-admin-password` | `admin` | 홈, 프로젝트와 스캔, 판정 화면의 원본 보기, 감사 로그(`/audit`) |
 | `dev-norole` | `dev-only-norole-password` | 없음 | 로그인 뒤 403. 이 화면의 로그아웃 버튼으로 Keycloak 세션을 끝내고 다른 계정으로 로그인한다 |
 
 Keycloak 관리 콘솔(`http://localhost:8081/admin/`)의 계정은 `dev-only-admin` / `dev-only-admin-password`다. 이 계정은 `master` realm이 처음 만들어질 때만 생긴다.
@@ -130,6 +138,9 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 | `OIDC_DISCOVERY_URL` | | web이 발급자에 닿는 주소. 비우면 `OIDC_ISSUER_URL`을 쓴다. 여기서 읽은 discovery 문서의 `issuer`가 `OIDC_ISSUER_URL`과 다르면 web이 기동하지 않는다 |
 | `OIDC_CLIENT_ID` | 예 | `secret-externalizer-web` |
 | `OIDC_CLIENT_SECRET` | 예 | 로그와 오류 메시지에 남지 않는다 |
+| `BAO_ADDR` | 예 | OpenBao 주소. compose에서는 `http://openbao:8200`. web은 기동할 때 OpenBao에 닿지 않아도 되고, 원본 보기를 누를 때만 연결한다 |
+| `BAO_ROLE_ID` | 예 | AppRole role-id. compose에서는 `se-web`. 이 역할의 정책은 `secret/data/pending/*` 읽기만 허용한다 |
+| `BAO_SECRET_ID_FILE` | 예 | AppRole secret-id가 든 파일. 앞뒤 공백은 뗀다. compose에서는 `openbao-secrets` 볼륨의 `web` 폴더만 `/run/secrets/openbao`에 읽기 전용으로 마운트하고 `/run/secrets/openbao/secret-id`를 쓴다. secret-id는 로그와 오류 메시지에 남지 않는다 |
 
 ## worker 환경 변수
 

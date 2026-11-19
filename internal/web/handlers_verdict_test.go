@@ -24,15 +24,22 @@ var fakeActor = audit.Actor{Subject: "fake-subject", Name: "Fake User"}
 // the extra header.
 func (e *testEnv) post(t *testing.T, target string, form url.Values, header http.Header) result {
 	t.Helper()
+	return e.postAs(t, e.user(t), target, form, header)
+}
+
+// postAs sends form to target with the session cookie c from the same
+// origin, with the extra header, which can override the origin.
+func (e *testEnv) postAs(t *testing.T, c cookie, target string, form url.Values, header http.Header) result {
+	t.Helper()
 	req := httptest.NewRequestWithContext(t.Context(), http.MethodPost, target, strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Sec-Fetch-Site", "same-origin")
 	for k, vs := range header {
+		req.Header.Del(k)
 		for _, v := range vs {
 			req.Header.Add(k, v)
 		}
 	}
-	c := e.user(t)
 	req.Header.Add("Cookie", c.name+"="+c.value)
 	rec := httptest.NewRecorder()
 	e.handler.ServeHTTP(rec, req)

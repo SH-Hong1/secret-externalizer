@@ -1007,6 +1007,74 @@
     padding: 4px 8px;
     font-size: var(--text-sm);
   }
+  /* The original value an admin asked to see, in a black-bordered box. */
+  .original {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .reveal-form {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    margin: 0;
+  }
+  .reveal-box {
+    overflow: hidden;
+    border: 2px solid var(--color-ink);
+    border-radius: var(--radius-md);
+    background: var(--color-surface);
+  }
+  .reveal-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+    padding: 8px 12px;
+    background: var(--color-ink);
+    color: var(--color-header-ink);
+  }
+  .reveal-title {
+    font-weight: 600;
+  }
+  .reveal-lede {
+    color: var(--color-header-ink-muted);
+  }
+  .reveal-close {
+    border-color: var(--color-header-line);
+    background: transparent;
+    color: var(--color-header-ink);
+  }
+  .reveal-close:hover {
+    background: var(--color-ink-2);
+    color: var(--color-white);
+  }
+  .reveal-value {
+    margin: 0;
+    padding: 14px 12px;
+    font-family: var(--font-mono);
+    font-size: 15px;
+    line-height: 1.6;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .reveal-binary {
+    margin: 0;
+    padding: 14px 12px;
+    color: var(--color-ink-2);
+  }
+  .reveal-foot {
+    margin: 0;
+    padding: 8px 12px;
+    border-top: 1px solid var(--color-line);
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+  }
+  .audit-time {
+    font-size: var(--text-sm);
+    white-space: nowrap;
+  }
   .verdict-lead {
     margin: 0;
     font-weight: 600;

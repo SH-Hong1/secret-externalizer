@@ -10,6 +10,7 @@ import (
 
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
@@ -91,16 +92,34 @@ type Suggester interface {
 	Suggest(ctx context.Context, b triage.Bundle) (triage.Suggestion, error)
 }
 
+// AuditStore keeps the audit trail. RecordReveal records that a user asked
+// to see the original value of a bundle, and fails with an error matching
+// db.ErrNotFound when the project has no such bundle. AuditEvents returns at
+// most limit events, newest first, starting below the event ID before, or
+// from the newest when before is 0.
+type AuditStore interface {
+	RecordReveal(ctx context.Context, projectID project.ID, id triage.BundleID, by audit.Actor) error
+	AuditEvents(ctx context.Context, before int64, limit int) ([]audit.Event, error)
+}
+
+// Originals reads the original values that scans keep in the secret store.
+// ReadPending fails with an error matching bao.ErrNoOriginal when the store
+// holds no original for the fingerprint in the project.
+type Originals interface {
+	ReadPending(ctx context.Context, projectID int64, fingerprint string) (bao.Value, error)
+}
+
 // NewServer returns the complete handler, including middleware. From the
 // outside in, a request passes panic recovery, the request log, the security
 // headers, and cross-origin protection before it reaches its route. A route
-// that calls projects, scans or triage runs under a deadline storeLimit from
-// the moment it is reached; the session is read before that deadline starts.
-func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, triage TriageStore, suggester Suggester, storeLimit time.Duration) http.Handler {
+// that calls projects, scans, triage, the audit trail or the originals runs
+// under a deadline storeLimit from the moment it is reached; the session is
+// read before that deadline starts.
+func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, triage TriageStore, suggester Suggester, audits AuditStore, originals Originals, storeLimit time.Duration) http.Handler {
 	mux := http.NewServeMux()
 	a := loadAssets(staticFiles())
 	rd := newRenderer(a)
-	addRoutes(mux, logger, rd, a, authn, sessions, attempts, projects, scans, triage, suggester, storeLimit)
+	addRoutes(mux, logger, rd, a, authn, sessions, attempts, projects, scans, triage, suggester, audits, originals, storeLimit)
 
 	return chain(mux,
 		recoverPanic(logger, rd),

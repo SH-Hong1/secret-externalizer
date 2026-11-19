@@ -445,8 +445,8 @@
 - Produces (`*db.Store`): `RecordReveal(ctx, projectID project.ID, id triage.BundleID, by audit.Actor) error`, `AuditEvents(ctx, before int64, limit int) ([]audit.Event, error)`(최신순, `before`가 0이면 처음부터)
 - Produces (web): `POST /projects/{id}/bundles/{bundle}/original`(`admin`), `GET /audit?before=`(`admin`, 한 쪽 100줄). web 인터페이스 `Originals { ReadPending(ctx, projectID int64, fingerprint string) (bao.Value, error) }`. web 환경 변수 `BAO_ADDR`, `BAO_ROLE_ID`, `BAO_SECRET_ID_FILE`(필수).
 
-- [ ] **Step 1:** "구현 전에 확인할 사실"의 Task 8 항목을 실행 중인 OpenBao에서 확인한다.
-- [ ] **Step 2: 실패하는 테스트를 쓴다.**
+- [x] **Step 1:** "구현 전에 확인할 사실"의 Task 8 항목을 실행 중인 OpenBao에서 확인한다. 확인 결과: web 정책의 `secret/data/pending/*` 읽기로 worker가 `PutPending`으로 넣은 KV v2 값을 web AppRole이 읽고, 없는 경로는 404로 오며 `ReadPending`이 `ErrNoOriginal`로 돌려준다. web은 이 경로에 쓰지 못한다(403). `openbao-test`에서 `TestIntegration_WebReadsPending`으로 확인했다.
+- [x] **Step 2: 실패하는 테스트를 쓴다.**
   - `bao`: `TestReadPending`은 `PutPending`으로 넣은 값을 그대로 읽고, 없는 지문은 `ErrNoOriginal`, 형식이 틀린 지문은 OpenBao를 부르지 않고 오류다. `TestValueRedacts`는 `%v`, `%s`, `%x`, `%#v`, `slog`, `json.Marshal` 어디에도 값이 나오지 않음을 확인한다.
   - `TestOriginalAdminOnly`: `dev-user`는 403이고 `RecordReveal`도 `ReadPending`도 불리지 않는다.
   - `TestOriginalOrder`: `RecordReveal`이 `ReadPending`보다 먼저 불린다. `RecordReveal`이 실패하면 `ReadPending`이 불리지 않고 500이다.
@@ -455,9 +455,9 @@
   - `TestOriginalNotText`: UTF-8이 아니거나 NUL이 든 값은 "텍스트가 아닌 원본, N바이트"만 보인다.
   - `TestOriginalRefused`: 고객정보 묶음, 구성원 모두 `HasOriginal`이 false인 묶음, 마지막 스캔에 없는 묶음은 404이고 `RecordReveal`이 불리지 않는다.
   - `TestAuditPage`: `admin`에게 시각, 사용자, 동작, 프로젝트, 대상, 내용이 최신순으로 보이고 "더 보기" 링크의 `before`가 마지막 줄의 ID다. `dev-user`는 403이다.
-- [ ] **Step 3:** 실패를 확인하고 구현한다. `original.html`은 조각이고 상세의 원본 자리에 끼워진다(`hx-post`, `hx-target`). htmx가 없으면 판정 화면 전체를 값과 함께 그린다. 값은 `string(v.Reveal())`로 이 handler 안에서만 꺼낸다.
-- [ ] **Step 4:** `cmd/web`이 `bao.New`로 클라이언트를 만들어 넘긴다. `compose.yaml`의 web에 환경 변수 세 개와 `openbao-secrets` 볼륨의 web secret-id(읽기 전용)를 더하고, `depends_on`에 openbao를 넣는다. web이 기동할 때 OpenBao에 닿지 않아도 기동은 되고 원본 보기만 안내를 보인다.
-- [ ] **Step 5:** `AGENTS.md` Security 절 첫 항목에 문장을 더한다.
+- [x] **Step 3:** 실패를 확인하고 구현한다. `original.html`은 조각이고 상세의 원본 자리에 끼워진다(`hx-post`, `hx-target`). htmx가 없으면 판정 화면 전체를 값과 함께 그린다. 값은 `string(v.Reveal())`로 이 handler 안에서만 꺼낸다.
+- [x] **Step 4:** `cmd/web`이 `bao.New`로 클라이언트를 만들어 넘긴다. `compose.yaml`의 web에 환경 변수 세 개와 `openbao-secrets` 볼륨의 web secret-id(읽기 전용)를 더하고, `depends_on`에 openbao를 넣는다. web이 기동할 때 OpenBao에 닿지 않아도 기동은 되고 원본 보기만 안내를 보인다.
+- [x] **Step 5:** `AGENTS.md` Security 절 첫 항목에 문장을 더한다.
 
   ```
   The value itself is written in one place: the response to an `admin`'s
@@ -465,8 +465,8 @@
   keeps no copy, and records the request in the audit trail before reading.
   ```
 
-- [ ] **Step 6:** `make check`와 `make test-integration`이 통과하는지 확인한다.
-- [ ] **Step 7:** `CHANGELOG.md`, `docs/local-run.md`(web의 새 환경 변수), 결정 기록 0028(검토 항목 12, 13)을 쓰고 커밋한다. `feat(web): let an admin reveal an original and show the audit trail`
+- [x] **Step 6:** `make check`와 `make test-integration`이 통과하는지 확인한다.
+- [x] **Step 7:** `CHANGELOG.md`, `docs/local-run.md`(web의 새 환경 변수), 결정 기록 0028(검토 항목 12, 13)을 쓰고 커밋한다. `feat(web): let an admin reveal an original and show the audit trail`
 
 ### Task 9: 스캔 화면 정리와 건너뛴 파일
 
