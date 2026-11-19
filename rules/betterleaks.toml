@@ -19,7 +19,7 @@ id = "customer-phone"
 description = "Korean mobile or landline phone number"
 regex = '''\b(0(?:1[016789]|2|[3-6][1-5])-[0-9]{3,4}-[0-9]{4})\b'''
 secretGroup = 1
-path = '''(?i)(?:\.(?:log|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
+path = '''(?i)(?:\.(?:(?:log|out)(?:[.\-_][0-9][^/]*|\.old|\.bak)?|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
 tags = ["category:customer-data", "kind:phone"]
 
 [[rules]]
@@ -27,7 +27,7 @@ id = "customer-rrn"
 description = "Korean resident registration number"
 regex = '''\b([0-9]{6}-[1-4][0-9]{6})\b'''
 secretGroup = 1
-path = '''(?i)(?:\.(?:log|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
+path = '''(?i)(?:\.(?:(?:log|out)(?:[.\-_][0-9][^/]*|\.old|\.bak)?|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
 tags = ["category:customer-data", "kind:rrn"]
 
 [[rules]]
@@ -35,7 +35,7 @@ id = "customer-email"
 description = "E-mail address"
 regex = '''\b([A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,})\b'''
 secretGroup = 1
-path = '''(?i)(?:\.(?:log|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
+path = '''(?i)(?:\.(?:(?:log|out)(?:[.\-_][0-9][^/]*|\.old|\.bak)?|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
 tags = ["category:customer-data", "kind:email"]
 
 [[rules]]
@@ -43,7 +43,7 @@ id = "customer-card"
 description = "Card number written as four groups of four digits"
 regex = '''\b([0-9]{4}[- ][0-9]{4}[- ][0-9]{4}[- ][0-9]{4})\b'''
 secretGroup = 1
-path = '''(?i)(?:\.(?:log|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
+path = '''(?i)(?:\.(?:(?:log|out)(?:[.\-_][0-9][^/]*|\.old|\.bak)?|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
 tags = ["category:customer-data", "kind:card"]
 
 # A Korean address: a word ending in 시 or 도, then one ending in 구 or 군,
@@ -53,7 +53,7 @@ id = "customer-address"
 description = "Korean street address"
 regex = '''([가-힣]+(?:시|도)[ \t]+[가-힣]+(?:구|군)[ \t]+[가-힣0-9]+(?:동|읍|면|로|길)(?:[ \t]+[0-9]+(?:-[0-9]+)?)?)'''
 secretGroup = 1
-path = '''(?i)(?:\.(?:log|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
+path = '''(?i)(?:\.(?:(?:log|out)(?:[.\-_][0-9][^/]*|\.old|\.bak)?|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
 tags = ["category:customer-data", "kind:address"]
 
 # A partner's session: the value of a JSESSIONID cookie anywhere, and the

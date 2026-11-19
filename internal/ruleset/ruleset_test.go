@@ -334,6 +334,9 @@ func TestRules_CustomerDataPathMatchesGo(t *testing.T) {
 		"data/x.properties", "deep/er/dump/x", "LOGS/x", "src/main/java/A.java", "conf/db.properties",
 		"web.xml", "app.log.1", "catalina.out", "logs", "data", "logsx/a.java", "mydata/a.java",
 		"data.properties", "src/log.java", "a.jsonp", "a.LoG", "dumps/x.java", "x/datas/y.java",
+		"nohup.OUT", "app.log.2026-11-01", "app.log-20261101", "app.log_3", "catalina.out.2", "app.log.old",
+		"app.log.bak", "a/app.log.1/x.java", "log4j.log.properties", "report.out.xml", "x.log4j", "x.output",
+		"app.log.", "app.log.x1", "app.log.olds", "a.out.1/b",
 	}
 	for _, rule := range customer {
 		p, ok := patterns[rule]
