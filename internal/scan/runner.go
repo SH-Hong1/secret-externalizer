@@ -55,8 +55,9 @@ type Options struct {
 	Root string
 	// RulesVersion is the version of the rules the scanners run with.
 	RulesVersion string
-	// TempDir is the folder under which each scan gets a folder of UTF-8
-	// copies of its EUC-KR files. It should be on a temporary file system.
+	// TempDir is the absolute path of the folder under which each scan gets
+	// a folder of UTF-8 copies of its EUC-KR files. It should be on a
+	// temporary file system. A scan fails when it is not absolute.
 	TempDir string
 	// Git is the path of the git executable that reads a project's commit
 	// hash. Empty means the hash is not read.
@@ -168,6 +169,9 @@ func (r *Runner) Handle(ctx context.Context, j job.Job) error {
 // originals that the scan no longer found. copies is the folder for the
 // UTF-8 copies of EUC-KR files.
 func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error {
+	if !filepath.IsAbs(copies) {
+		return fmt.Errorf("the folder for copies %q is not an absolute path", copies)
+	}
 	if err := r.store.StartScan(ctx, id); err != nil {
 		return fmt.Errorf("starting scan: %w", err)
 	}
@@ -290,8 +294,11 @@ func (r *Runner) removeStalePending(ctx context.Context, id ID, projectID int64,
 }
 
 // removeCopies removes the folder of copies of the scan. It runs also after
-// ctx has ended.
+// ctx has ended. A relative path, which run refuses, is never removed.
 func (r *Runner) removeCopies(ctx context.Context, id ID, copies string) {
+	if !filepath.IsAbs(copies) {
+		return
+	}
 	if err := os.RemoveAll(copies); err != nil {
 		r.logger.ErrorContext(context.WithoutCancel(ctx), "removing the folder of copies failed", "scan_id", id, "error", err.Error())
 	}

@@ -808,3 +808,21 @@ func TestHandle_CountsListedFiles(t *testing.T) {
 		t.Errorf("Handle() wrote (-want +got):\n%s", diff)
 	}
 }
+
+func TestHandle_RelativeTempDirFails(t *testing.T) {
+	e := newEnv(t, map[string]string{"a.txt": "x"})
+	e.opts.TempDir = ""
+	t.Chdir(e.root)
+	// A folder a relative copies path would name: it must not be touched.
+	writeFile(t, filepath.Join(e.root, "5", "keep.txt"), "x")
+
+	if err := e.handle(t.Context()); err != nil {
+		t.Fatalf("Handle(no temporary folder) error = %v", err)
+	}
+	if got := e.failure(t); got != reasonOther {
+		t.Errorf("Handle(no temporary folder) failure reason = %q, want %q", got, reasonOther)
+	}
+	if _, err := os.Stat(filepath.Join(e.root, "5", "keep.txt")); err != nil {
+		t.Errorf("Handle(no temporary folder) removed a folder in the working directory: %v", err)
+	}
+}
