@@ -1,0 +1,62 @@
+# SSH credentials in shell scripts: the password given to sshpass -p (before
+# the command sshpass runs, so an ssh -p port is not taken for it), the
+# user and host of user@host on an ssh, scp, sftp, or rsync line, and the key
+# file given to -i. Comment lines and variables ($VAR) are not reported, and
+# quotes around a value are not part of it.
+#
+# Every rule starts with "  - id:" and has its category and kind under
+# metadata, which the rule tests read line by line.
+rules:
+  - id: shell-sshpass-password
+    message: A password is passed to sshpass on the command line.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.sh", "*.bash", "*.ksh"]
+    metadata:
+      category: ssh-credential
+      kind: password
+    patterns:
+      - pattern-regex: (?m)^[^#\r\n]*?\bsshpass\b(?:(?!\b(?:ssh|scp|sftp|rsync)\b)[^#\r\n])*?[ \t]-p[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)
+      - focus-metavariable: $VALUE
+
+  - id: shell-ssh-user
+    message: An ssh user name is written in a shell script.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.sh", "*.bash", "*.ksh"]
+    metadata:
+      category: ssh-credential
+      kind: account
+    patterns:
+      - pattern-regex: (?m)^[^#\r\n]*\b(?:ssh|scp|sftp|rsync)\b[^#\r\n]*
+      - pattern-regex: (?<![\w.@$-])(?P<USER>[A-Za-z_][\w.-]*)@(?P<HOST>[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)
+      - focus-metavariable: $USER
+
+  - id: shell-ssh-host
+    message: An ssh host is written in a shell script.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.sh", "*.bash", "*.ksh"]
+    metadata:
+      category: ssh-credential
+      kind: host
+    patterns:
+      - pattern-regex: (?m)^[^#\r\n]*\b(?:ssh|scp|sftp|rsync)\b[^#\r\n]*
+      - pattern-regex: (?<![\w.@$-])(?P<USER>[A-Za-z_][\w.-]*)@(?P<HOST>[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)
+      - focus-metavariable: $HOST
+
+  - id: shell-ssh-identity
+    message: An ssh key file is named in a shell script.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.sh", "*.bash", "*.ksh"]
+    metadata:
+      category: ssh-credential
+      kind: key-file
+    patterns:
+      - pattern-regex: (?m)^[^#\r\n]*?\b(?:ssh|scp|sftp)\b[^#\r\n]*?[ \t]-i[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)
+      - focus-metavariable: $VALUE

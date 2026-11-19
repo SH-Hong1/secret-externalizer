@@ -2,7 +2,7 @@
 # alpine image that has git, as a non-root user. Scans read the commit hash
 # and the git state of a project with git, and run the betterleaks and
 # opengrep executables pinned in scanners.lock. Both are statically linked,
-# so they run on alpine's musl.
+# so they run on alpine's musl. The rules they run with are in /rules.
 
 FROM golang:1.27.4-alpine3.24@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 
@@ -46,5 +46,6 @@ RUN apk add --no-cache git~=2.54
 
 COPY --from=build /out/worker /worker
 COPY --from=scanners /out/betterleaks /out/opengrep /usr/local/bin/
+COPY rules /rules
 USER 65532:65532
 ENTRYPOINT ["/worker"]

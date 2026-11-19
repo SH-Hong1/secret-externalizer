@@ -137,6 +137,26 @@ bin/opengrep --version
 - 버전을 올릴 때는 그 도구의 모든 줄을 바꾸고, 체크섬은 릴리스 페이지(betterleaks는 `checksums.txt`, opengrep은 자산의 digest)에서 가져온다.
 - opengrep 실행 파일은 플랫폼마다 160MB가 넘는다.
 
+## 탐지 규칙
+
+두 스캐너가 쓰는 규칙은 저장소 루트의 `rules/`에 있다. worker 이미지는 이 폴더를 `/rules`로 복사한다.
+
+- `rules/betterleaks.toml`: betterleaks 기본 규칙을 켜 두고(`useDefault = true`) 고객정보(전화번호, 주민등록번호, 이메일, 카드번호, 주소)와 제휴사 세션(쿠키, Bearer 토큰) 규칙을 더한다. 고객정보 규칙은 확장자가 `log`, `csv`, `tsv`, `txt`, `sql`, `dat`, `json`인 파일과 `log`, `logs`, `sample`, `samples`, `data`, `dump` 폴더 아래의 파일에만 적용한다.
+- `rules/opengrep/*.yml`: Spring XML의 dataSource, `.properties`와 `application*.yml`의 접속 정보, Java 문자열 리터럴, 셸 스크립트의 ssh 인자, Maven과 Ant 설정의 비밀번호를 찾는다.
+- 규칙마다 분류와 종류를 적는다(betterleaks는 `tags`의 `category:`, `kind:`, opengrep은 `metadata`의 `category`, `kind`). 규칙은 값만 잡는다. 따옴표, 키 이름, XML 태그는 잡은 범위에 넣지 않는다.
+- 규칙 버전(`internal/ruleset.Version`)은 `rules/` 아래 파일들의 이름과 내용으로 계산한다. 한 글자만 바꿔도 버전이 바뀐다.
+
+규칙을 고치면 예제 프로젝트 `internal/ruleset/testdata/legacy-shop`으로 확인한다. 이 프로젝트의 값은 모두 가짜다. 찾아야 하는 것은 `internal/ruleset/testdata/expected.json`에 `{file, line, category, kind}`로 적혀 있고, 규칙 테스트는 실제 스캐너로 예제를 스캔해 이 목록과 정확히 같은지 본다.
+
+```sh
+make scanners                                   # 처음 한 번
+go test -count=1 -v -run 'TestRules|TestVersion' ./internal/ruleset/
+```
+
+- 규칙 테스트는 `BETTERLEAKS_BIN`, `OPENGREP_BIN`이 가리키는 실행 파일을 쓰고, 없으면 저장소의 `bin/`에서 찾는다. 둘 다 없으면 "run make scanners" 안내와 함께 건너뛴다. `bin/`에 스캐너가 있으면 `make check`에서도 실행된다.
+- `make test-integration`은 두 변수를 `bin/`의 실행 파일로 넘긴다. 다른 실행 파일을 쓰려면 `make test-integration BETTERLEAKS_BIN=… OPENGREP_BIN=…`처럼 준다.
+- 예제의 `local/` 폴더는 예제 자신의 `.gitignore`에 적혀 있어 이 저장소에서도 무시된다. 이미 올라간 파일은 그대로 추적되지만, 이 폴더에 새 파일을 더할 때는 `git add -f`로 올린다.
+
 ## 통합 테스트
 
 valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이, OpenBao가 필요한 테스트는 `TEST_BAO_ADDR`가 없으면 건너뛴다. `make test-integration`은 셋 다 요구한다. OpenBao 테스트는 원본을 보관하는 `openbao`가 아니라 `test` 프로필의 `openbao-test`를 쓰고, 테스트가 개발용 루트 토큰으로 transit, KV, AppRole을 직접 만든다. compose의 서비스로 실행하려면 다음과 같이 한다. 새 셸에서는 compose 명령마다 `SE_WORKSPACE`가 설정되어 있어야 한다. 없으면 compose가 파일을 읽다가 멈춘다(worker를 띄우지 않는 명령도 같다).

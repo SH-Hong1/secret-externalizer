@@ -1,1 +1,2 @@
 internal/textfile/testdata/** -text
+internal/ruleset/testdata/** -text

@@ -1,0 +1,41 @@
+# String literals in Java sources that hold a secret. The reported value is
+# the literal's content without its quotes. Empty literals are not reported.
+#
+# Every rule starts with "  - id:" and has its category and kind under
+# metadata, which the rule tests read line by line.
+rules:
+  # A literal assigned to a variable or field whose name contains passw,
+  # secret, or token, in a declaration or an assignment.
+  - id: java-secret-variable
+    message: A string literal is assigned to a variable whose name says it holds a secret.
+    severity: WARNING
+    languages: [java]
+    metadata:
+      category: other-secret
+      kind: password
+    patterns:
+      - pattern-either:
+          - pattern: $TYPE $NAME = "$VALUE";
+          - pattern: $NAME = "$VALUE";
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i).*(passw|secret|token)
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: ^.
+      - focus-metavariable: $VALUE
+
+  # A literal passed to a setPassword method, as on a DataSource.
+  - id: java-set-password
+    message: A string literal is passed to setPassword.
+    severity: WARNING
+    languages: [java]
+    metadata:
+      category: other-secret
+      kind: password
+    patterns:
+      - pattern: $OBJ.setPassword("$VALUE")
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: ^.
+      - focus-metavariable: $VALUE

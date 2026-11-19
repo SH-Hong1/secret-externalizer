@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project name="legacy-shop" default="deploy">
+  <property name="deploy.password" value="dev-only-fake-ant-password"/>
+  <property name="deploy.passwordFile" location="conf/none.txt"/>
+  <property name="db.password" value="${env.DB_PASSWORD}"/>
+  <target name="deploy">
+    <scp file="target/shop.war" todir="deploy@was1.example.invalid:/opt/was" password="dev-only-fake-scp-password" trust="true"/>
+  </target>
+</project>

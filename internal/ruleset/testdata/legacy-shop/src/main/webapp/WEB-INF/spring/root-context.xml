@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="EUC-KR"?>
+<!-- 주문 시스템의 루트 컨텍스트. 데이터베이스 접속 정보를 여기에 둔다. -->
+<beans xmlns="http://www.springframework.org/schema/beans">
+  <!-- 주문 데이터베이스 -->
+  <bean id="orderDataSource" class="org.apache.commons.dbcp.BasicDataSource" destroy-method="close">
+    <property name="driverClassName" value="oracle.jdbc.OracleDriver"/>
+    <property name="url" value="jdbc:oracle:thin:@db.example.invalid:1521:SHOP"/>
+    <property name="username" value="shop_app"/>
+    <property name="password" value="dev-only-fake-xml-password"/>
+  </bean>
+  <!-- 통계 데이터베이스: 비밀번호는 환경 변수에서 온다 -->
+  <bean class="org.apache.commons.dbcp.BasicDataSource" id="statsDataSource">
+    <property name="username" value="stats_reader"/>
+    <property name="password" value="${stats.db.password}"/>
+  </bean>
+  <!-- 데이터베이스가 아닌 bean -->
+  <bean id="mailSender" class="org.springframework.mail.javamail.JavaMailSenderImpl">
+    <property name="username" value="mailer"/>
+    <property name="url" value="/mail"/>
+  </bean>
+</beans>
