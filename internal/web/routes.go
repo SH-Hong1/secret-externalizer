@@ -35,7 +35,7 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, authn Auth
 	mux.Handle("GET /projects", usesStore(handleProjectList(logger, rd, projects)))
 	mux.Handle("GET /projects/new", signedIn(handleProjectNew(logger, rd)))
 	mux.Handle("POST /projects", usesStore(handleProjectCreate(logger, rd, projects)))
-	mux.Handle("GET /projects/{id}", usesStore(handleProject(logger, rd, projects)))
+	mux.Handle("GET /projects/{id}", usesStore(handleProject(logger, rd, projects, scans)))
 	mux.Handle("POST /projects/{id}/scans", usesStore(handleScanCreate(logger, rd, scans)))
 	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, scans)))
 	mux.Handle("/", handleNotFound(logger, rd))

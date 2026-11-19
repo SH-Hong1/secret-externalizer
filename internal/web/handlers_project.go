@@ -125,8 +125,8 @@ func parseExcludes(text string) ([]string, error) {
 	return out, nil
 }
 
-// handleProject shows one project.
-func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore) http.Handler {
+// handleProject shows one project and its scans, newest first.
+func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil || n < 1 {
@@ -142,6 +142,14 @@ func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore) htt
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading project: %w", err))
 			return
 		}
-		rd.page(w, r, logger, http.StatusOK, "project.html", p)
+		list, err := scans.ScansByProject(r.Context(), p.ID)
+		if err != nil {
+			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("listing scans: %w", err))
+			return
+		}
+		rd.page(w, r, logger, http.StatusOK, "project.html", struct {
+			Project project.Project
+			Scans   []scanRow
+		}{p, newScanRows(list)})
 	})
 }

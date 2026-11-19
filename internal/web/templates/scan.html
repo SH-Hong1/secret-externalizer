@@ -1,12 +1,40 @@
-{{define "title"}}스캔 {{.ID}}{{end}}
-{{define "head"}}{{if .Status.Active}}<meta http-equiv="refresh" content="3">
+{{define "title"}}스캔 {{.Scan.ID}}{{end}}
+{{define "head"}}{{if .Scan.Status.Active}}<meta http-equiv="refresh" content="3">
 {{end}}{{end}}
 {{define "body"}}<main>
-<h1>스캔 {{.ID}}</h1>
-<p>상태: {{if eq .Status "queued"}}대기 중{{else if eq .Status "running"}}실행 중{{else if eq .Status "succeeded"}}완료{{else if eq .Status "failed"}}실패{{else}}{{.Status}}{{end}}</p>
-{{if .Status.Active}}<p>이 화면은 3초마다 새로 고쳐집니다.</p>
-{{end}}{{if eq .Status "failed"}}<p>실패 사유: {{.FailureReason}}</p>
-{{end}}<p>요청 시각: {{.RequestedAt.Format "2006-01-02 15:04:05"}}</p>
-{{if eq .Status "succeeded"}}<p>검사한 파일 {{.Files}}개, 건너뛴 파일 {{.Skipped}}개</p>
-{{end}}<p><a href="/projects/{{.ProjectID}}">프로젝트</a></p>
+<h1>스캔 {{.Scan.ID}}</h1>
+<p>상태: {{.StatusLabel}}</p>
+{{if .Scan.Status.Active}}<p>이 화면은 3초마다 새로 고쳐집니다.</p>
+{{end}}{{if eq .Scan.Status "failed"}}<p>실패 사유: {{.Scan.FailureReason}}</p>
+{{end}}<p>요청: {{.Scan.RequestedBy}}, {{.RequestedAt}}</p>
+{{if .FinishedAt}}<p>끝난 시각: {{.FinishedAt}}</p>
+{{end}}{{if .Findings}}<p>커밋 해시: {{if .Scan.CommitHash}}{{.Scan.CommitHash}}{{else}}없음{{end}}</p>
+<p>규칙 버전: {{.Scan.RulesVersion}}</p>
+{{if .Tools}}<p>도구 버전:{{range .Tools}} {{.Name}} {{.Version}}{{end}}</p>
+{{end}}<p>검사한 파일 {{.Scan.Files}}개</p>
+{{if .Scan.Skipped}}<p>건너뛴 파일 {{.Scan.Skipped}}개: 20MiB를 넘거나, 바이너리이거나, UTF-8과 EUC-KR이 아니거나, 읽을 수 없는 파일입니다.</p>
+{{end}}{{if .Scan.Dropped}}<p>위치가 맞지 않아 버린 건수 {{.Scan.Dropped}}건: 스캐너가 보고한 값을 그 위치에서 확인하지 못해 항목으로 남기지 않았습니다.</p>
+{{end}}<h2>발견 {{.FindingsTotal}}건</h2>
+{{if .Counts}}<ul>
+{{range .Counts}}<li title="{{.Category}}">{{.Label}}: {{.N}}건</li>
+{{end}}</ul>
+{{else}}<p>탐지된 항목이 없습니다.</p>
+{{end}}{{if .Secrets}}<h2>비밀 값</h2>
+<table>
+<thead><tr><th>분류</th><th>종류</th><th>파일과 줄</th><th>미리보기</th><th>탐지</th></tr></thead>
+<tbody>
+{{range .Secrets}}<tr><td title="{{.Category}}">{{.CategoryLabel}}</td><td title="{{.Kind}}">{{.KindLabel}}</td><td>{{.File}}:{{.Lines}}</td><td><code>{{.Preview}}</code></td><td>{{range .Detections}}{{.Tool}} {{.Rule}}<br>
+{{end}}</td></tr>
+<tr><td colspan="5">{{if .Context}}<pre>{{range .Context}}{{.Number}}{{if .Hit}}>{{else}} {{end}} {{.Text}}
+{{end}}</pre>{{else}}주변 줄을 저장하지 않았습니다.{{end}}</td></tr>
+{{end}}</tbody>
+</table>
+{{end}}{{if .CustomerData}}<h2>고객정보</h2>
+<table>
+<thead><tr><th>파일</th><th>종류</th><th>건수</th><th>첫 줄</th><th>형식</th></tr></thead>
+<tbody>
+{{range .CustomerData}}<tr><td>{{.File}}</td><td title="{{.Kind}}">{{.KindLabel}}</td><td>{{.Count}}건</td><td>첫 줄 {{.FirstLine}}</td><td><code>{{.Preview}}</code></td></tr>
+{{end}}</tbody>
+</table>
+{{end}}{{end}}<p><a href="/projects/{{.Scan.ProjectID}}">프로젝트</a></p>
 </main>{{end}}
