@@ -127,17 +127,17 @@
 **Interfaces:**
 - Produces: `GET /static/{file}`; 템플릿 함수 `asset(name string) string`(`/static/app.css?v=<SHA-256의 앞 8자리>`); 템플릿 블록 `layout`이 머리와 내비게이션을 그리고, 쪽 템플릿은 지금처럼 `title`, `head`, `body`를 정의한다. 로그인한 쪽의 데이터는 `User auth.User` 필드를 갖는다.
 
-- [ ] **Step 1:** "구현 전에 확인할 사실"의 Task 2 항목 두 개를 확인한다. `Makefile`에 `TAILWIND_VERSION`, `HTMX_VERSION`과 체크섬을 고정하고, `make tools`가 `bin/tailwindcss`를 받아 체크섬을 확인하게 한다. `make css`(만들기), `make css-check`(다시 만들어 저장소의 파일과 비교)를 더하고 `check`에 `css-check`를 넣는다.
-- [ ] **Step 2: 실패하는 테스트를 쓴다.** `static_test.go`:
+- [x] **Step 1:** "구현 전에 확인할 사실"의 Task 2 항목 두 개를 확인한다. `Makefile`에 `TAILWIND_VERSION`, `HTMX_VERSION`과 체크섬을 고정하고, `make tools`가 `bin/tailwindcss`를 받아 체크섬을 확인하게 한다. `make css`(만들기), `make css-check`(다시 만들어 저장소의 파일과 비교)를 더하고 `check`에 `css-check`를 넣는다.
+- [x] **Step 2: 실패하는 테스트를 쓴다.** `static_test.go`:
   - `TestStatic`: `GET /static/app.css`는 200, `Content-Type: text/css; charset=utf-8`, `Cache-Control: public, max-age=31536000, immutable`. `GET /static/nope.css`와 `GET /static/../render.go`는 404. 로그인 없이 받는다.
   - `TestAsset`: `asset("app.css")`의 결과가 `/static/app.css?v=`로 시작하고 뒤가 16진수 8자리다. 없는 이름은 템플릿 실행 오류다.
   - `TestLayoutNavigation`: 로그인한 `dev-user`의 `/projects` 응답에 사용자 이름, "프로젝트" 링크, 로그아웃 양식이 있고 "감사 로그" 링크가 없다. `dev-admin`의 응답에는 있다.
   - `TestNoInlineScriptOrStyle`: 모든 템플릿 파일에 `<script>` 본문, `style=`, `<style`, `on[a-z]+=` 속성이 없다.
-- [ ] **Step 3:** 테스트가 실패하는지 확인한다. `go test ./internal/web/ -run 'TestStatic|TestAsset|TestLayout|TestNoInline'`
-- [ ] **Step 4:** `static.go`를 쓴다. `//go:embed static`으로 넣고, `handleStatic() http.Handler`가 파일 이름 하나만 받는다. `securityHeaders`의 `no-store`는 이 handler가 덮어쓴다. `parseTemplates`는 `template.New(...).Funcs`로 `asset`을 넣는다.
-- [ ] **Step 5:** `layout.html`에 `<link rel="stylesheet">`, `<script src defer>`, `<meta name="htmx-config">`, 머리와 내비게이션을 넣고, 모든 쪽 템플릿을 시안대로 다시 쓴다(frontend-design 스킬). `assets/app.css`에 `docs/design/README.md`의 값을 테마로 옮긴다. IBM Plex Sans KR(400, 600, 700)과 D2Coding(400, 700)의 woff2 파일과 라이선스 전문을 `internal/web/static/fonts/`에 넣고 `@font-face`로 불러온다(결정 기록 0029). 글꼴 파일은 배포처의 공식 릴리스에서 받아 체크섬을 `Makefile`에 적는다. `make css`로 `static/app.css`를 만든다.
+- [x] **Step 3:** 테스트가 실패하는지 확인한다. `go test ./internal/web/ -run 'TestStatic|TestAsset|TestLayout|TestNoInline'`
+- [x] **Step 4:** `static.go`를 쓴다. `//go:embed static`으로 넣고, `handleStatic() http.Handler`가 파일 이름 하나만 받는다. `securityHeaders`의 `no-store`는 이 handler가 덮어쓴다. `parseTemplates`는 `template.New(...).Funcs`로 `asset`을 넣는다.
+- [x] **Step 5:** `layout.html`에 `<link rel="stylesheet">`, `<script src defer>`, `<meta name="htmx-config">`, 머리와 내비게이션을 넣고, 모든 쪽 템플릿을 시안대로 다시 쓴다(frontend-design 스킬). `assets/app.css`에 `docs/design/README.md`의 값을 테마로 옮긴다. IBM Plex Sans KR(400, 600, 700)과 D2Coding(400, 700)의 woff2 파일과 라이선스 전문을 `internal/web/static/fonts/`에 넣고 `@font-face`로 불러온다(결정 기록 0029). 글꼴 파일은 배포처의 공식 릴리스에서 받아 체크섬을 `Makefile`에 적는다. `make css`로 `static/app.css`를 만든다.
 - [ ] **Step 6:** `make check`가 통과하는지 확인한다. `docker compose up --build`로 띄워 Chromium에서 로그인, 프로젝트 목록, 등록, 스캔 화면이 시안과 같은지 보고, 콘솔에 CSP 위반이 없는지 확인한다.
-- [ ] **Step 7:** `CHANGELOG.md`와 결정 기록 0025(standalone CLI, 만든 CSS를 저장소에 두는 이유, htmx를 쓰는 범위)를 쓰고 커밋한다. `feat(web): add the stylesheet, htmx and the shared page frame`
+- [x] **Step 7:** `CHANGELOG.md`와 결정 기록 0025(standalone CLI, 만든 CSS를 저장소에 두는 이유, htmx를 쓰는 범위)를 쓰고 커밋한다. `feat(web): add the stylesheet, htmx and the shared page frame`
 
 ### Task 3: 접속 정보를 구성 요소로 나누기
 

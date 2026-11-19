@@ -18,7 +18,7 @@ func TestRenderer_FailHidesError(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := newTestRequest(t)
 
-	newRenderer().fail(rec, req, logger, http.StatusInternalServerError, errors.New("dial tcp 10.0.0.5"))
+	newRenderer(loadAssets(staticFiles())).fail(rec, req, logger, http.StatusInternalServerError, errors.New("dial tcp 10.0.0.5"))
 
 	body := rec.Body.String()
 	if strings.Contains(body, "10.0.0.5") {
@@ -42,7 +42,7 @@ func TestRenderer_FailClientErrorNotLogged(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := newTestRequest(t)
 
-	newRenderer().fail(rec, req, logger, http.StatusNotFound, errors.New("missing"))
+	newRenderer(loadAssets(staticFiles())).fail(rec, req, logger, http.StatusNotFound, errors.New("missing"))
 
 	if logBuf.Len() != 0 {
 		t.Errorf("fail(404) log = %q, want no log line", logBuf.String())
@@ -58,7 +58,7 @@ func TestRenderer_UnknownTemplate(t *testing.T) {
 	rec := httptest.NewRecorder()
 	req := newTestRequest(t)
 
-	newRenderer().page(rec, req, logger, http.StatusOK, "nope.html", nil)
+	newRenderer(loadAssets(staticFiles())).page(rec, req, logger, http.StatusOK, "nope.html", nil)
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Errorf("page(unknown) status = %d, want 500", rec.Code)
@@ -75,7 +75,7 @@ func TestRenderer_UnknownTemplate(t *testing.T) {
 func TestRecoverPanic(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
-	h := recoverPanic(logger, newRenderer())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	h := recoverPanic(logger, newRenderer(loadAssets(staticFiles())))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic("fake-secret-value")
 	}))
 	rec := httptest.NewRecorder()
@@ -116,7 +116,7 @@ func TestRecoverPanic(t *testing.T) {
 func TestRecoverPanic_AfterPartialWrite(t *testing.T) {
 	var logBuf bytes.Buffer
 	logger := slog.New(slog.NewJSONHandler(&logBuf, nil))
-	h := recoverPanic(logger, newRenderer())(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	h := recoverPanic(logger, newRenderer(loadAssets(staticFiles())))(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte("partial")) // the recorder never fails a write
 		panic("fake-secret-value")
 	}))
@@ -142,7 +142,7 @@ func TestParseTemplates_MissingErrorPage(t *testing.T) {
 			t.Errorf("parseTemplates(no error.html) did not panic, want a start-up panic")
 		}
 	}()
-	parseTemplates(fsys)
+	parseTemplates(fsys, loadAssets(staticFiles()))
 }
 
 // panicType returns the panic_type attribute of the first log line that has one.
@@ -163,7 +163,7 @@ func panicType(t *testing.T, log string) string {
 }
 
 func TestRecoverPanic_AbortHandler(t *testing.T) {
-	h := recoverPanic(slog.New(slog.DiscardHandler), newRenderer())(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+	h := recoverPanic(slog.New(slog.DiscardHandler), newRenderer(loadAssets(staticFiles())))(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
 		panic(http.ErrAbortHandler)
 	}))
 	defer func() {

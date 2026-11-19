@@ -10,6 +10,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 )
@@ -25,6 +26,7 @@ const (
 // projectForm is what the registration form shows. It carries the values the
 // user typed, so a rejected form can be shown again.
 type projectForm struct {
+	User     auth.User
 	Name     string
 	Path     string
 	Excludes string
@@ -34,19 +36,24 @@ type projectForm struct {
 // handleProjectList lists every project.
 func handleProjectList(logger *slog.Logger, rd *renderer, projects ProjectStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
 		list, err := projects.Projects(r.Context())
 		if err != nil {
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("listing projects: %w", err))
 			return
 		}
-		rd.page(w, r, logger, http.StatusOK, "projects.html", list)
+		rd.page(w, r, logger, http.StatusOK, "projects.html", struct {
+			User     auth.User
+			Projects []project.Project
+		}{u, list})
 	})
 }
 
 // handleProjectNew shows the empty registration form.
 func handleProjectNew(logger *slog.Logger, rd *renderer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rd.page(w, r, logger, http.StatusOK, "project_new.html", projectForm{})
+		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
+		rd.page(w, r, logger, http.StatusOK, "project_new.html", projectForm{User: u})
 	})
 }
 
@@ -62,6 +69,7 @@ func handleProjectCreate(logger *slog.Logger, rd *renderer, projects ProjectStor
 			return
 		}
 		form := projectForm{
+			User:     u,
 			Name:     strings.TrimSpace(r.PostFormValue("name")),
 			Path:     strings.TrimSpace(r.PostFormValue("path")),
 			Excludes: r.PostFormValue("excludes"),
@@ -128,6 +136,7 @@ func parseExcludes(text string) ([]string, error) {
 // handleProject shows one project and its scans, newest first.
 func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
 		n, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil || n < 1 {
 			rd.fail(w, r, logger, http.StatusNotFound, errors.New("project id is not a number"))
@@ -148,8 +157,9 @@ func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, sca
 			return
 		}
 		rd.page(w, r, logger, http.StatusOK, "project.html", struct {
+			User    auth.User
 			Project project.Project
 			Scans   []scanRow
-		}{p, newScanRows(list)})
+		}{u, p, newScanRows(list)})
 	})
 }

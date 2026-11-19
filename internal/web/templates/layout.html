@@ -3,10 +3,24 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{{template "title" .}}</title>
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"allowEval":false,"allowScriptTags":false,"historyCacheSize":0,"refreshOnHistoryMiss":true}'>
+<title>{{template "title" .}} · secret-externalizer</title>
+<link rel="stylesheet" href="{{asset "app.css"}}">
+<script src="{{asset "htmx.min.js"}}" defer></script>
 {{block "head" .}}{{end}}
 </head>
 <body>
+<header class="site-header">
+<a class="brand" href="/projects">secret-externalizer</a>
+{{with .User}}{{if .Subject}}<nav class="site-nav" aria-label="주 메뉴">
+<a class="nav-link" href="/projects"{{if eq section "projects"}} aria-current="page"{{end}}>프로젝트</a>
+{{if .Has "admin"}}<a class="nav-link" href="/audit"{{if eq section "audit"}} aria-current="page"{{end}}>감사 로그</a>
+{{end}}</nav>
+<span class="site-user">{{.Name}}{{range .Roles}} <span class="role">{{.}}</span>{{end}}</span>
+<form method="post" action="/logout">
+<button class="btn-header" type="submit">로그아웃</button>
+</form>
+{{end}}{{end}}</header>
 {{template "body" .}}
 </body>
 </html>

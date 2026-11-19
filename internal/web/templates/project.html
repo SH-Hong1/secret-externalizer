@@ -1,22 +1,33 @@
 {{define "title"}}{{.Project.Name}}{{end}}
-{{define "body"}}<main>
-<h1>{{.Project.Name}}</h1>
-<p>경로: {{.Project.Path}}</p>
-<p>제외할 경로:</p>
-{{if .Project.Excludes}}<ul>
-{{range .Project.Excludes}}<li>{{.}}</li>
-{{end}}</ul>
-{{else}}<p>없음</p>
-{{end}}<form method="post" action="/projects/{{.Project.ID}}/scans">
-<button type="submit">스캔 시작</button>
+{{define "section"}}projects{{end}}
+{{define "body"}}<main class="page">
+<div>
+<nav class="crumbs" aria-label="위치"><a href="/projects">프로젝트</a> /</nav>
+<div class="page-head">
+<h1 class="page-title">{{.Project.Name}}</h1>
+<span class="mono text-2 grow">{{.Project.Path}}</span>
+<form method="post" action="/projects/{{.Project.ID}}/scans">
+<button class="btn btn-secondary btn-lg" type="submit">스캔 시작</button>
 </form>
-<h2>스캔</h2>
-{{if .Scans}}<table>
-<thead><tr><th>요청 시각</th><th>상태</th><th>발견 항목</th><th></th></tr></thead>
+</div>
+<p class="lede mt-1.5">제외 경로: {{if .Project.Excludes}}{{range $i, $e := .Project.Excludes}}{{if $i}}, {{end}}<span class="mono text-2">{{$e}}</span>{{end}}{{else}}없음{{end}}</p>
+</div>
+<section>
+<h2 class="section-title">스캔</h2>
+{{if .Scans}}<div class="table-wrap">
+<table class="table min-w-[680px]">
+<thead><tr><th>번호</th><th>요청</th><th>상태</th><th>커밋</th><th class="num">항목</th></tr></thead>
 <tbody>
-{{range .Scans}}<tr><td>{{.RequestedAt}}</td><td>{{.StatusLabel}}</td><td>{{if .Succeeded}}{{.Findings}}건{{end}}</td><td><a href="/scans/{{.ID}}">보기</a></td></tr>
+{{range .Scans}}<tr>
+<td><a class="row-link" href="/scans/{{.ID}}">#{{.ID}}</a></td>
+<td>{{.RequestedAt}} · <span class="text-2">{{.RequestedBy}}</span></td>
+<td><span class="badge badge-{{.Status}}">{{.StatusLabel}}</span></td>
+<td class="code-cell">{{if .Commit}}{{.Commit}}{{else}}<span class="muted">—</span>{{end}}</td>
+<td class="num">{{if .Succeeded}}{{.Findings}}건{{else}}<span class="muted">—</span>{{end}}</td>
+</tr>
 {{end}}</tbody>
 </table>
-{{else}}<p>스캔한 적이 없습니다.</p>
-{{end}}<p><a href="/projects">목록</a></p>
+</div>
+{{else}}<p class="notice">스캔한 적이 없습니다. 스캔 시작을 누르면 이 프로젝트의 파일을 검사합니다.</p>
+{{end}}</section>
 </main>{{end}}

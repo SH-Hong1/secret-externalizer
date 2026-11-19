@@ -9,6 +9,9 @@ import (
 	"log/slog"
 	"net/http"
 	"path"
+	"strings"
+
+	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 )
 
 //go:embed templates/*.html
@@ -45,14 +48,20 @@ type renderer struct {
 }
 
 // newRenderer parses the embedded templates with parseTemplates.
-func newRenderer() *renderer {
-	return parseTemplates(templateFS)
+func newRenderer(a *assets) *renderer {
+	return parseTemplates(templateFS, a)
 }
 
 // parseTemplates parses every template under templates/ in fsys. Each page
 // template is parsed together with the layout. It panics when a template is
 // broken, so a bad template stops the program at start-up.
-func parseTemplates(fsys fs.FS) *renderer {
+//
+// Templates may call two functions. asset returns the versioned address of
+// a static file in a. section returns the text of the page's "section"
+// template, which names the menu entry the page belongs to ("projects" or
+// "audit"), or "" when the page defines none; the layout marks that entry
+// as the current one.
+func parseTemplates(fsys fs.FS, a *assets) *renderer {
 	files, err := fs.Glob(fsys, "templates/*.html")
 	if err != nil {
 		panic(fmt.Sprintf("listing templates: %v", err))
@@ -63,16 +72,31 @@ func parseTemplates(fsys fs.FS) *renderer {
 		if name == layoutFile {
 			continue
 		}
-		t, err := template.ParseFS(fsys, "templates/"+layoutFile, file)
+		t, err := template.New(name).Funcs(template.FuncMap{
+			"asset":   a.url,
+			"section": func() string { return "" },
+		}).ParseFS(fsys, "templates/"+layoutFile, file)
 		if err != nil {
 			panic(fmt.Sprintf("parsing template %s: %v", name, err))
 		}
+		section := sectionOf(t)
+		t.Funcs(template.FuncMap{"section": func() string { return section }})
 		rd.pages[name] = t
 	}
 	if _, ok := rd.pages[errorFile]; !ok {
 		panic("missing template " + errorFile)
 	}
 	return rd
+}
+
+// sectionOf returns the trimmed text of t's "section" template, or "" when t
+// has none.
+func sectionOf(t *template.Template) string {
+	s := t.Lookup("section")
+	if s == nil || s.Tree == nil {
+		return ""
+	}
+	return strings.TrimSpace(s.Tree.Root.String())
 }
 
 // page renders the named template with data and writes it with status. The
@@ -93,17 +117,20 @@ func (rd *renderer) page(w http.ResponseWriter, r *http.Request, logger *slog.Lo
 }
 
 // fail renders the error page for status. It logs err once when the status is
-// 500 or higher and never shows err on the page.
+// 500 or higher and never shows err on the page. The page shows the menu when
+// the request has a signed-in user.
 func (rd *renderer) fail(w http.ResponseWriter, r *http.Request, logger *slog.Logger, status int, err error) {
 	if status >= http.StatusInternalServerError {
 		logger.ErrorContext(r.Context(), "request failed", "path", r.URL.Path, "status", status, "error", err)
 	}
 	var buf bytes.Buffer
+	u, _ := userFrom(r.Context()) // the zero User leaves out the menu
 	data := struct {
+		User      auth.User
 		Status    int
 		Message   string
 		LoginLink bool
-	}{status, errorMessage(status), status == http.StatusBadRequest || status == http.StatusUnauthorized}
+	}{u, status, errorMessage(status), status == http.StatusBadRequest || status == http.StatusUnauthorized}
 	if execErr := rd.pages[errorFile].ExecuteTemplate(&buf, "layout", data); execErr != nil {
 		logger.ErrorContext(r.Context(), "rendering error page", "error", execErr)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

@@ -1,8 +1,11 @@
 {{define "title"}}권한 없음{{end}}
-{{define "body"}}<main>
-<h1>403</h1>
-<p>이 계정에는 이 애플리케이션을 쓸 역할이 없습니다. 관리자에게 역할을 요청하거나, 로그아웃한 뒤 다른 계정으로 로그인해 주세요.</p>
+{{define "body"}}<main class="page page-narrow">
+<div class="card message">
+<span class="message-code">역할 없음</span>
+<h1 class="message-title">이 도구를 쓸 역할이 없습니다.</h1>
+<p class="text-2">이 계정에는 이 애플리케이션을 쓸 역할이 없습니다. 관리자에게 <span class="mono">user</span> 또는 <span class="mono">admin</span> 역할을 요청하거나, 로그아웃한 뒤 다른 계정으로 로그인해 주세요.</p>
 <form method="post" action="/logout">
-<button type="submit">로그아웃</button>
+<button class="btn btn-secondary" type="submit">로그아웃</button>
 </form>
+</div>
 </main>{{end}}

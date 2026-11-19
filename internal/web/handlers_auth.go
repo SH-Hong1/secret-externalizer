@@ -124,7 +124,7 @@ func handleCallback(logger *slog.Logger, rd *renderer, authn Authenticator, sess
 				attrs = append(attrs, "subject", nr.Subject)
 			}
 			logger.InfoContext(r.Context(), "login refused", attrs...)
-			rd.page(w, r, logger, http.StatusForbidden, "norole.html", nil)
+			rd.page(w, r, logger, http.StatusForbidden, "norole.html", struct{ User auth.User }{})
 			return
 		}
 		if err != nil {

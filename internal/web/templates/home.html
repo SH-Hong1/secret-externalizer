@@ -1,9 +1,8 @@
 {{define "title"}}홈{{end}}
-{{define "body"}}<main>
-<h1>{{.Name}}</h1>
-<p>역할: {{range $i, $r := .Roles}}{{if $i}}, {{end}}{{$r}}{{end}}</p>
-<p><a href="/projects">프로젝트</a></p>
-<form method="post" action="/logout">
-<button type="submit">로그아웃</button>
-</form>
+{{define "body"}}<main class="page page-narrow">
+<div class="card message">
+<h1 class="message-title">{{.User.Name}}</h1>
+<p class="text-2">역할: {{range $i, $r := .User.Roles}}{{if $i}}, {{end}}{{$r}}{{end}}</p>
+<div><a class="btn btn-primary" href="/projects">프로젝트</a></div>
+</div>
 </main>{{end}}
