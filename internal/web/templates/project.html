@@ -1,0 +1,14 @@
+{{define "title"}}{{.Name}}{{end}}
+{{define "body"}}<main>
+<h1>{{.Name}}</h1>
+<p>경로: {{.Path}}</p>
+<p>제외할 경로:</p>
+{{if .Excludes}}<ul>
+{{range .Excludes}}<li>{{.}}</li>
+{{end}}</ul>
+{{else}}<p>없음</p>
+{{end}}<form method="post" action="/projects/{{.ID}}/scans">
+<button type="submit">스캔 시작</button>
+</form>
+<p><a href="/projects">목록</a></p>
+</main>{{end}}

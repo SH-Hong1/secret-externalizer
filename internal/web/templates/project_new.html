@@ -1,0 +1,12 @@
+{{define "title"}}프로젝트 등록{{end}}
+{{define "body"}}<main>
+<h1>프로젝트 등록</h1>
+{{if .Error}}<p role="alert">{{.Error}}</p>
+{{end}}<form method="post" action="/projects">
+<p><label>이름 <input type="text" name="name" value="{{.Name}}" maxlength="100" required></label></p>
+<p><label>경로 (작업 공간 루트 기준) <input type="text" name="path" value="{{.Path}}" required></label></p>
+<p><label>제외할 경로 (한 줄에 하나) <textarea name="excludes" rows="4">{{.Excludes}}</textarea></label></p>
+<button type="submit">등록</button>
+</form>
+<p><a href="/projects">목록</a></p>
+</main>{{end}}

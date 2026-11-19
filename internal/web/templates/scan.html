@@ -1,0 +1,12 @@
+{{define "title"}}스캔 {{.ID}}{{end}}
+{{define "head"}}{{if .Status.Active}}<meta http-equiv="refresh" content="3">
+{{end}}{{end}}
+{{define "body"}}<main>
+<h1>스캔 {{.ID}}</h1>
+<p>상태: {{if eq .Status "queued"}}대기 중{{else if eq .Status "running"}}실행 중{{else if eq .Status "succeeded"}}완료{{else if eq .Status "failed"}}실패{{else}}{{.Status}}{{end}}</p>
+{{if .Status.Active}}<p>이 화면은 3초마다 새로 고쳐집니다.</p>
+{{end}}{{if eq .Status "failed"}}<p>실패 사유: {{.FailureReason}}</p>
+{{end}}<p>요청 시각: {{.RequestedAt.Format "2006-01-02 15:04:05"}}</p>
+{{if eq .Status "succeeded"}}<p>검사한 파일 {{.Files}}개, 건너뛴 파일 {{.Skipped}}개</p>
+{{end}}<p><a href="/projects/{{.ProjectID}}">프로젝트</a></p>
+</main>{{end}}

@@ -1,5 +1,5 @@
-# The web image needs only the Go module; everything else stays out of the
-# build context.
+# The web and worker images need only the Go module and the source they
+# copy in; everything else stays out of the build context.
 *
 !go.mod
 !go.sum

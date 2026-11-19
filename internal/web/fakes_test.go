@@ -1,12 +1,17 @@
 package web_test
 
 import (
+	"cmp"
 	"context"
 	"fmt"
 	"net/url"
+	"slices"
 	"sync"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
 )
 
@@ -150,3 +155,134 @@ func (f *fakeAuthenticator) Exchange(_ context.Context, code, verifier, nonce st
 }
 
 func (f *fakeAuthenticator) LogoutURL() string { return fakeLogoutURL }
+
+// fakeProjects keeps projects in memory. A non-nil error field makes the
+// matching method return that error.
+type fakeProjects struct {
+	createErr error
+	getErr    error
+	listErr   error
+
+	mu       sync.Mutex
+	projects map[project.ID]project.Project
+	next     project.ID
+}
+
+func newFakeProjects() *fakeProjects {
+	return &fakeProjects{projects: make(map[project.ID]project.Project)}
+}
+
+func (f *fakeProjects) CreateProject(_ context.Context, p project.Project) (project.ID, error) {
+	if f.createErr != nil {
+		return 0, f.createErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.next++
+	p.ID = f.next
+	f.projects[p.ID] = p
+	return p.ID, nil
+}
+
+func (f *fakeProjects) Project(_ context.Context, id project.ID) (project.Project, error) {
+	if f.getErr != nil {
+		return project.Project{}, f.getErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	p, ok := f.projects[id]
+	if !ok {
+		return project.Project{}, db.ErrNotFound
+	}
+	return p, nil
+}
+
+func (f *fakeProjects) Projects(context.Context) ([]project.Project, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]project.Project, 0, len(f.projects))
+	for _, p := range f.projects {
+		out = append(out, p)
+	}
+	slices.SortFunc(out, func(a, b project.Project) int { return cmp.Compare(a.Name, b.Name) })
+	return out, nil
+}
+
+// all returns every stored project ordered by ID.
+func (f *fakeProjects) all() []project.Project {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]project.Project, 0, len(f.projects))
+	for _, p := range f.projects {
+		out = append(out, p)
+	}
+	slices.SortFunc(out, func(a, b project.Project) int { return cmp.Compare(a.ID, b.ID) })
+	return out
+}
+
+// fakeScans keeps scans in memory and allows one active scan per project, as
+// the database does. A non-nil error field makes the matching method return
+// that error.
+type fakeScans struct {
+	requestErr error
+	getErr     error
+
+	mu    sync.Mutex
+	scans map[scan.ID]scan.Scan
+	next  scan.ID
+}
+
+func newFakeScans() *fakeScans {
+	return &fakeScans{scans: make(map[scan.ID]scan.Scan)}
+}
+
+func (f *fakeScans) RequestScan(_ context.Context, projectID project.ID, requestedBy string) (scan.ID, error) {
+	if f.requestErr != nil {
+		return 0, f.requestErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, sc := range f.scans {
+		if sc.ProjectID == projectID && sc.Status.Active() {
+			return sc.ID, db.ErrScanActive
+		}
+	}
+	f.next++
+	f.scans[f.next] = scan.Scan{ID: f.next, ProjectID: projectID, Status: scan.StatusQueued, RequestedBy: requestedBy}
+	return f.next, nil
+}
+
+func (f *fakeScans) Scan(_ context.Context, id scan.ID) (scan.Scan, error) {
+	if f.getErr != nil {
+		return scan.Scan{}, f.getErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sc, ok := f.scans[id]
+	if !ok {
+		return scan.Scan{}, db.ErrNotFound
+	}
+	return sc, nil
+}
+
+// put stores sc under its ID.
+func (f *fakeScans) put(sc scan.Scan) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.scans[sc.ID] = sc
+}
+
+// all returns every stored scan ordered by ID.
+func (f *fakeScans) all() []scan.Scan {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]scan.Scan, 0, len(f.scans))
+	for _, sc := range f.scans {
+		out = append(out, sc)
+	}
+	slices.SortFunc(out, func(a, b scan.Scan) int { return cmp.Compare(a.ID, b.ID) })
+	return out
+}

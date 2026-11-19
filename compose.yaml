@@ -1,4 +1,4 @@
-# Local development stack: postgres, valkey, keycloak, and web.
+# Local development stack: postgres, valkey, keycloak, web, and worker.
 #
 # Every password and secret in this file, in deploy/postgres/init.sql, and in
 # deploy/keycloak/realm.json is a fake value for local development only. Do
@@ -9,7 +9,7 @@
 #   keycloak  http://localhost:8081  (admin console user: dev-only-admin)
 #   valkey    127.0.0.1:16379        (for integration tests; 6379 is often taken
 #                                     by a locally installed redis)
-# postgres publishes no port.
+#   postgres  127.0.0.1:15432        (for integration tests)
 
 name: secret-externalizer
 
@@ -19,12 +19,14 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: dev-only-postgres-password # local development only
-      # The application database is created empty; keycloak gets its own
-      # database and role from init.sql.
+      # The application database is created empty; init.sql gives it to the
+      # se_app role and adds the keycloak and test databases.
       POSTGRES_DB: secret_externalizer
     volumes:
       - postgres-data:/var/lib/postgresql
       - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/10-keycloak.sql:ro
+    ports:
+      - "127.0.0.1:15432:5432"
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "keycloak"]
       interval: 2s
@@ -108,6 +110,7 @@ services:
       WEB_ADDR: ":8080"
       WEB_BASE_URL: http://localhost:8080
       VALKEY_ADDR: valkey:6379
+      DATABASE_URL: postgres://se_app:dev-only-se-app-password@postgres:5432/secret_externalizer # local development only
       OIDC_ISSUER_URL: http://localhost:8081/realms/secret-externalizer
       OIDC_DISCOVERY_URL: http://keycloak:8080/realms/secret-externalizer
       OIDC_CLIENT_ID: secret-externalizer-web
@@ -122,9 +125,36 @@ services:
       - no-new-privileges:true
     stop_grace_period: 15s
     depends_on:
+      postgres:
+        condition: service_healthy
       valkey:
         condition: service_healthy
       keycloak:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: .
+      dockerfile: deploy/worker/Dockerfile
+      args:
+        VERSION: compose-dev
+    environment:
+      DATABASE_URL: postgres://se_app:dev-only-se-app-password@postgres:5432/secret_externalizer # local development only
+      WORKSPACE_ROOT: /workspace
+    volumes:
+      # The workspace is read-only: scans read it and never change it.
+      - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace:ro
+    user: "65532:65532"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    stop_grace_period: 15s
+    depends_on:
+      postgres:
         condition: service_healthy
 
 volumes:

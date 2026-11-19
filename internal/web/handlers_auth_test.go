@@ -26,6 +26,8 @@ type testEnv struct {
 	authn    *fakeAuthenticator
 	sessions *fakeSessions
 	attempts *fakeAttempts
+	projects *fakeProjects
+	scans    *fakeScans
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -35,9 +37,11 @@ func newTestEnv(t *testing.T) *testEnv {
 		authn:    &fakeAuthenticator{user: auth.User{Subject: "fake-subject", Name: "Fake User", Roles: []auth.Role{auth.RoleUser}}},
 		sessions: newFakeSessions(),
 		attempts: newFakeAttempts(),
+		projects: newFakeProjects(),
+		scans:    newFakeScans(),
 	}
 	logger := slog.New(slog.NewJSONHandler(e.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts)
+	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts, e.projects, e.scans)
 	return e
 }
 
