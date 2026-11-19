@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
@@ -61,7 +62,11 @@ var errBadQuery = errors.New("bad triage query")
 // parseTriageQuery reads the filter, page and selection of a triage screen
 // request. The status defaults to undecided and the page to 1.
 func parseTriageQuery(r *http.Request) (triageQuery, selection, error) {
-	v := r.URL.Query()
+	return parseTriageValues(r.URL.Query())
+}
+
+// parseTriageValues reads a filter, page and selection from v.
+func parseTriageValues(v url.Values) (triageQuery, selection, error) {
 	q := triageQuery{Category: finding.Category(v.Get("category")), Status: triage.StatusUndecided, Page: 1, Sel: v.Get("sel")}
 	if q.Category != "" && !validCategory(q.Category) {
 		return q, selection{}, fmt.Errorf("%w: category %q", errBadQuery, q.Category)
@@ -192,7 +197,11 @@ func fillTriagePage(ctx context.Context, logger *slog.Logger, store TriageStore,
 				s = triage.Suggestion{}
 			}
 		}
-		data.Bundle = newBundleDetail(pid, ret, b, s)
+		same, err := store.SameValueBundles(ctx, pid, sc.ID, b.ID)
+		if err != nil {
+			return http.StatusInternalServerError, fmt.Errorf("listing bundles of the same value: %w", err)
+		}
+		data.Bundle = newBundleDetail(pid, ret, b, s, same)
 	default:
 		return fillCustomerDetail(ctx, store, data, sc.ID, sel.Group, ret)
 	}

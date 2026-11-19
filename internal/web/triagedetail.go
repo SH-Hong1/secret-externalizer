@@ -22,7 +22,7 @@ type reasonOption struct {
 }
 
 // verdictForm is the form that records a verdict. The hold button submits
-// the reason select with it.
+// the reason select with it. Cancel offers to clear the current verdict.
 type verdictForm struct {
 	Action  string
 	Return  string
@@ -31,19 +31,57 @@ type verdictForm struct {
 	Reasons []reasonOption
 	Note    string
 	Text    string
+	Cancel  bool
 }
 
-// nameField is the placeholder name input of a secret bundle.
+// keep shows the note and hold reason a rejected form submitted again. A
+// reason the form does not offer leaves the selection as it is.
+func (f *verdictForm) keep(in verdictInput) {
+	f.Note = in.Note
+	if !knownReason(triage.HoldReason(in.Reason)) {
+		return
+	}
+	for i := range f.Reasons {
+		f.Reasons[i].Selected = f.Reasons[i].Value == in.Reason
+	}
+}
+
+// nameField is the placeholder name input of a secret bundle. Config and
+// Shell are the rendered forms of Value in the files of the bundle, set
+// only when Value is a valid name.
 type nameField struct {
 	Value     string
 	Prefix    string
 	Config    string
 	Shell     string
 	Suggested bool
+
+	inConfig bool
+	inShell  bool
 }
 
-// bundleDetail is the detail of a secret bundle.
+// setValue puts value in the input and renders the forms the bundle's files
+// take.
+func (f *nameField) setValue(value string) {
+	f.Value, f.Config, f.Shell = value, "", ""
+	n, err := triage.ParseName(value)
+	if err != nil {
+		return
+	}
+	if f.inConfig {
+		f.Config = "${" + n.Config() + "}"
+	}
+	if f.inShell {
+		f.Shell = "${" + n.Shell() + "}"
+	}
+}
+
+// bundleDetail is the detail of a secret bundle. From is its ID, which the
+// move forms send so the screen can return to it; Targets are the other
+// bundles of the same value a member can move to.
 type bundleDetail struct {
+	From          string
+	Targets       []moveTarget
 	KindLabel     string
 	CategoryLabel string
 	Preview       string
@@ -55,11 +93,19 @@ type bundleDetail struct {
 	Form          verdictForm
 }
 
-// memberView is one member of a bundle. MoveAction is set for every member
-// after the first, which can be split off into a bundle of its own.
+// memberView is one member of a bundle. MoveAction is where its move forms
+// post; Split is set for every member after the first, which can be split
+// off into a bundle of its own.
 type memberView struct {
 	MoveAction string
+	Split      bool
 	Locations  []locationView
+}
+
+// moveTarget is a bundle a member can move to.
+type moveTarget struct {
+	Value string
+	Label string
 }
 
 type locationView struct {
@@ -84,6 +130,20 @@ type customerDetail struct {
 	Form       verdictForm
 }
 
+// holdReasons returns the hold reasons in the order the form offers them.
+func holdReasons() []triage.HoldReason {
+	return []triage.HoldReason{triage.HoldStructure, triage.HoldConfirm, triage.HoldLater}
+}
+
+func knownReason(r triage.HoldReason) bool {
+	for _, known := range holdReasons() {
+		if r == known {
+			return true
+		}
+	}
+	return false
+}
+
 func reasonLabel(r triage.HoldReason) string {
 	switch r {
 	case triage.HoldStructure:
@@ -100,7 +160,7 @@ func reasonLabel(r triage.HoldReason) string {
 // button apart, marking the suggested verdict and choosing the reason of the
 // current decision, or of the suggestion when there is none.
 func newVerdictForm(action, ret string, allowed []triage.Verdict, current triage.Decision, s triage.Suggestion) verdictForm {
-	f := verdictForm{Action: action, Return: ret, Note: current.Note}
+	f := verdictForm{Action: action, Return: ret, Note: current.Note, Cancel: current.Verdict != ""}
 	for _, v := range allowed {
 		b := verdictButton{verdictView: verdictOf(v), Suggested: s.Decision.Verdict == v}
 		if b.Suggested {
@@ -119,7 +179,7 @@ func newVerdictForm(action, ret string, allowed []triage.Verdict, current triage
 	if reason == "" {
 		reason = triage.HoldConfirm
 	}
-	for _, r := range []triage.HoldReason{triage.HoldStructure, triage.HoldConfirm, triage.HoldLater} {
+	for _, r := range holdReasons() {
 		f.Reasons = append(f.Reasons, reasonOption{Value: string(r), Label: reasonLabel(r), Selected: r == reason})
 	}
 	return f
@@ -153,7 +213,6 @@ func newNameField(b triage.Bundle, s triage.Suggestion) *nameField {
 		n = s.Decision.Name
 		f.Suggested = n != ""
 	}
-	f.Value = string(n)
 	shells := 0
 	for _, m := range b.Members {
 		if shellFile(m.File) {
@@ -163,21 +222,17 @@ func newNameField(b triage.Bundle, s triage.Suggestion) *nameField {
 	if shells > 0 && shells == len(b.Members) {
 		f.Prefix = "EXT_"
 	}
-	if n == "" {
-		return f
-	}
-	if shells < len(b.Members) {
-		f.Config = "${" + n.Config() + "}"
-	}
-	if shells > 0 {
-		f.Shell = "${" + n.Shell() + "}"
-	}
+	f.inConfig, f.inShell = shells < len(b.Members), shells > 0
+	f.setValue(string(n))
 	return f
 }
 
-// newBundleDetail shapes a secret bundle and its suggestion for the detail.
-func newBundleDetail(id project.ID, ret string, b triage.Bundle, s triage.Suggestion) *bundleDetail {
+// newBundleDetail shapes a secret bundle, its suggestion and the other
+// bundles of its value for the detail.
+func newBundleDetail(id project.ID, ret string, b triage.Bundle, s triage.Suggestion, same []triage.Entry) *bundleDetail {
 	d := &bundleDetail{
+		From:          strconv.FormatInt(int64(b.ID), 10),
+		Targets:       newMoveTargets(same),
 		KindLabel:     kindLabel(b.Kind),
 		CategoryLabel: categoryLabel(b.Category),
 		Preview:       b.Preview,
@@ -194,9 +249,9 @@ func newBundleDetail(id project.ID, ret string, b triage.Bundle, s triage.Sugges
 	}
 	pid := strconv.FormatInt(int64(id), 10)
 	for i, m := range b.Members {
-		mv := memberView{}
-		if i > 0 {
-			mv.MoveAction = "/projects/" + pid + "/findings/" + strconv.FormatInt(int64(m.FindingID), 10) + "/move"
+		mv := memberView{
+			MoveAction: "/projects/" + pid + "/findings/" + strconv.FormatInt(int64(m.FindingID), 10) + "/move",
+			Split:      i > 0,
 		}
 		for _, l := range m.Locations {
 			mv.Locations = append(mv.Locations, locationView{
@@ -211,6 +266,21 @@ func newBundleDetail(id project.ID, ret string, b triage.Bundle, s triage.Sugges
 	action := "/projects/" + pid + "/bundles/" + strconv.FormatInt(int64(b.ID), 10) + "/verdict"
 	d.Form = newVerdictForm(action, ret, allowed, b.Decision, s)
 	return d
+}
+
+// newMoveTargets labels the bundles a member can move to with their number
+// and verdict, and their name or first place.
+func newMoveTargets(same []triage.Entry) []moveTarget {
+	out := make([]moveTarget, 0, len(same))
+	for _, e := range same {
+		where := e.File + ":" + strconv.Itoa(e.FirstLine)
+		if e.Name != "" {
+			where = e.Name.Config()
+		}
+		id := strconv.FormatInt(int64(e.Bundle), 10)
+		out = append(out, moveTarget{Value: id, Label: "묶음 #" + id + " · " + verdictOf(e.Verdict).Label + " · " + where})
+	}
+	return out
 }
 
 // newCustomerDetail shapes a customer data group for the detail. first is

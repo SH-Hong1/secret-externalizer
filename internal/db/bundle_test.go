@@ -700,3 +700,61 @@ func TestProjectSummaries(t *testing.T) {
 		t.Errorf("ProjectSummaries() (-want +got):\n%s", diff)
 	}
 }
+
+func TestSameValueBundles(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	other := newProject(t, s, "other")
+	sid := save(t, s, pid, mixed()...)
+	shared := bundleOf(t, s, pid, fpA, "conf/a.yml")
+	jsp := bundleOf(t, s, pid, fpA, "web/c.jsp")
+	hostA := bundleOf(t, s, pid, fpB, "conf/a.yml")
+	hostB := bundleOf(t, s, pid, fpB, "conf/b.xml")
+	phoneX := bundleOf(t, s, pid, fpC, "logs/x.log")
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"}, hostB)
+
+	tests := []struct {
+		name string
+		in   project.ID
+		id   triage.BundleID
+		want []triage.Entry
+	}{
+		{"shared password", pid, shared, []triage.Entry{{
+			Bundle: jsp, Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "****",
+			File: "web/c.jsp", FirstLine: 3, Count: 1, Bundles: 1,
+		}}},
+		{"jsp password", pid, jsp, []triage.Entry{{
+			Bundle: shared, Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "****",
+			File: "conf/a.yml", FirstLine: 3, Count: 2, Bundles: 1,
+		}}},
+		{"host", pid, hostA, []triage.Entry{{
+			Bundle: hostB, Name: "db.main.host", Verdict: triage.VerdictExternalize,
+			Category: finding.CategoryStorage, Kind: finding.KindHost, Preview: "****",
+			File: "conf/b.xml", FirstLine: 2, Count: 1, Bundles: 1,
+		}}},
+		{"customer data", pid, phoneX, nil},
+		{"bundle of another project", other, shared, nil},
+		{"unknown bundle", pid, 999999, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := s.SameValueBundles(ctx, tt.in, sid, tt.id)
+			if err != nil {
+				t.Fatalf("SameValueBundles(%d, %d, %d) error = %v", tt.in, sid, tt.id, err)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("SameValueBundles(%d, %d, %d) (-want +got):\n%s", tt.in, sid, tt.id, diff)
+			}
+		})
+	}
+
+	later := save(t, s, pid, password("conf/a.yml"), password("conf/b.xml"))
+	got, err := s.SameValueBundles(ctx, pid, later, shared)
+	if err != nil {
+		t.Fatalf("SameValueBundles(%d, %d, %d) error = %v", pid, later, shared, err)
+	}
+	if len(got) != 0 {
+		t.Errorf("SameValueBundles(%d, %d, %d) = %+v, want none: the scan did not find the JSP", pid, later, shared, got)
+	}
+}

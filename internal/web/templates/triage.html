@@ -53,7 +53,8 @@
 </nav>{{end}}
 
 {{define "detail"}}<section class="triage-detail" id="detail" aria-label="상세">
-{{with .Empty}}<div class="empty-state">
+{{with .Error}}<p class="alert-error" role="alert">{{.}}</p>
+{{end}}{{with .Empty}}<div class="empty-state">
 <h2 class="empty-title">{{.Title}}</h2>
 <p class="text-2">{{.Text}}</p>
 <div><a class="btn" href="{{.LinkHref}}">{{.LinkText}}</a></div>
@@ -76,12 +77,21 @@
 <span class="code-file">{{$l.Where}}</span>
 <span class="grow"></span>
 {{range $l.Detections}}<span class="code-rule">{{.Tool}} {{.Rule}}</span>
-{{end}}{{if and $m.MoveAction (eq $i 0)}}<form method="post" action="{{$m.MoveAction}}">
+{{end}}{{if eq $i 0}}{{if $m.Split}}<form class="move-form" method="post" action="{{$m.MoveAction}}">
 <input type="hidden" name="to" value="new">
+<input type="hidden" name="from" value="{{$.From}}">
 <input type="hidden" name="return" value="{{$.Form.Return}}">
 <button class="btn btn-sm" type="submit">따로 떼기</button>
 </form>
-{{end}}</div>
+{{end}}{{if $.Targets}}<form class="move-form" method="post" action="{{$m.MoveAction}}">
+<input type="hidden" name="from" value="{{$.From}}">
+<input type="hidden" name="return" value="{{$.Form.Return}}">
+<select class="input move-target" name="to" aria-label="옮길 묶음">
+{{range $.Targets}}<option value="{{.Value}}">{{.Label}}</option>
+{{end}}</select>
+<button class="btn btn-sm" type="submit">다른 묶음으로</button>
+</form>
+{{end}}{{end}}</div>
 {{if $l.Context}}<pre class="code">{{range $l.Context}}{{if .Hit}}<mark class="code-line code-line-hit"><span class="sr-only">탐지된 줄 </span><span class="line-no">{{.Number}}</span>{{.Text}}</mark>{{else}}<span class="code-line"><span class="line-no">{{.Number}}</span>{{.Text}}</span>{{end}}{{end}}</pre>
 {{else}}<p class="code-empty">주변 줄을 저장하지 않았습니다.</p>
 {{end}}</div>
@@ -124,7 +134,9 @@
 <input type="hidden" name="file" value="{{.File}}">
 <input type="hidden" name="from" value="{{.From}}">
 <p class="verdict-lead">이 파일의 {{.KindLabel}} {{.Count}}건을 한 번에 판정합니다.</p>
+<div class="verdict-fields">
 {{template "note" .Form}}
+</div>
 {{template "verdict-buttons" .Form}}
 </form>{{end}}
 
@@ -141,4 +153,6 @@
 {{range .Reasons}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
 {{end}}</select>
 {{with .Hold}}<button class="btn btn-lg btn-{{.Class}}{{if .Suggested}} btn-suggested{{end}}" type="submit" name="verdict" value="{{.Value}}">{{.Label}}{{if .Suggested}} · 제안{{end}}</button>
+{{end}}{{if .Cancel}}<span class="verdict-divider" aria-hidden="true"></span>
+<button class="btn btn-lg" type="submit" name="verdict" value="">판정 취소</button>
 {{end}}</div>{{end}}

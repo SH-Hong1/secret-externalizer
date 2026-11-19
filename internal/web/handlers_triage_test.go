@@ -178,7 +178,7 @@ func TestTriagePage(t *testing.T) {
 		`name="verdict" value="externalize"`, `name="verdict" value="false-positive"`, `name="verdict" value="hold"`,
 		`name="hold_reason"`, `value="structure-change"`, `value="needs-confirmation"`, `value="later"`,
 		`name="return" value="status=undecided"`,
-		`<form method="post" action="/projects/1/findings/1002/move"`, `name="to" value="new"`, "따로 떼기",
+		`<form class="move-form" method="post" action="/projects/1/findings/1002/move"`, `name="to" value="new"`, "따로 떼기",
 	)
 	wantNotIn(t, "password detail", detail,
 		`value="redact"`, "/findings/1001/move", "원본 보기", "btn-suggested", "notice-suggest",

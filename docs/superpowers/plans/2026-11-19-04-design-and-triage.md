@@ -410,16 +410,16 @@
   - `POST /projects/{id}/findings/{finding}/move` — 양식 값 `to`(`new` 또는 묶음 ID), `return`
   - 성공하면 303으로 판정 화면에 돌아간다. 판정한 뒤에는 같은 필터의 다음 줄이 골라지고, 옮긴 뒤에는 원래 묶음(없어졌으면 옮겨 간 묶음)이 골라진다. 실패(400)는 판정 화면을 다시 그리고 상세 위에 사유를 보인다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다.**
+- [x] **Step 1: 실패하는 테스트를 쓴다.**
   - `TestVerdictSaves`: 외부화와 이름을 보내면 `Decide`가 그 묶음 ID, `Decision`, 로그인한 사용자의 `audit.Actor`로 한 번 불리고 303이다.
   - `TestVerdictRejected`: 표 형태. 형식이 틀린 이름, 모르는 `verdict`, 모르는 `hold_reason`은 `Decide`를 부르지 않고 400이다. `Decide`가 `triage.ErrNotAllowed`를 주면 400과 "이 항목에는 고를 수 없는 판정입니다", `db.ErrDuplicate`면 400과 "이미 쓰는 이름입니다"와 보낸 이름이 입력란에 남고, `db.ErrNotFound`면 404다.
   - `TestCustomerDataVerdict`: `CustomerGroup`이 준 묶음 ID 전부로 `Decide`를 한 번 부른다. 무리가 비어 있으면 404다.
   - `TestMove`: `to=new`는 `MoveFinding(…, 0, …)`, `to=17`은 17로 부른다. `ErrNotAllowed`는 400이다.
   - `TestReturnIsLocal`: `return`에 `https://evil.invalid`나 `//evil.invalid`를 넣어도 303의 `Location`이 `/projects/{id}/triage`로 시작한다.
   - `TestWritesNeedPost`: 세 주소의 `GET`은 405다. 다른 출처의 `POST`는 지금의 cross-origin 보호가 막는다.
-- [ ] **Step 2:** 실패를 확인하고 handler를 쓴다. 양식 본문은 `http.MaxBytesReader`로 64KiB에 묶는다.
-- [ ] **Step 3:** 상세 템플릿에 판정 양식, 판정 취소, 구성원마다 "따로 떼기"와 "다른 묶음으로"(같은 지문의 다른 묶음이 있을 때만)를 넣는다. 한 묶음이 설정 파일과 shell에 걸쳐 있으면 이름의 두 표기를 함께 보인다.
-- [ ] **Step 4:** `make check`가 통과하는지 확인하고 커밋한다. `feat(web): record verdicts and move findings between bundles`
+- [x] **Step 2:** 실패를 확인하고 handler를 쓴다. 양식 본문은 `http.MaxBytesReader`로 64KiB에 묶는다.
+- [x] **Step 3:** 상세 템플릿에 판정 양식, 판정 취소, 구성원마다 "따로 떼기"와 "다른 묶음으로"(같은 지문의 다른 묶음이 있을 때만)를 넣는다. 한 묶음이 설정 파일과 shell에 걸쳐 있으면 이름의 두 표기를 함께 보인다.
+- [x] **Step 4:** `make check`가 통과하는지 확인하고 커밋한다. `feat(web): record verdicts and move findings between bundles`
 
 ### Task 8: 원본 보기와 감사 로그
 

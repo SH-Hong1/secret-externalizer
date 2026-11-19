@@ -69,12 +69,18 @@ type ScanStore interface {
 // scan; a page past the last gives the last. Bundle returns a bundle with
 // the members the scan found, or an error matching db.ErrNotFound.
 // CustomerGroup returns the customer data a key names, with no bundles when
-// it names nothing. Decide and MoveFinding record a user's choice.
+// it names nothing. SameValueBundles returns the other bundles of a bundle's
+// value that the scan found. Decide and MoveFinding record a user's choice;
+// Decide fails with an error matching triage.ErrNotAllowed or db.ErrDuplicate
+// when it stores nothing because of the decision, MoveFinding with one
+// matching triage.ErrNotAllowed when the finding may not move there, and both
+// with one matching db.ErrNotFound when something they name is unknown.
 type TriageStore interface {
 	LatestScan(ctx context.Context, projectID project.ID) (scan.Scan, error)
 	Entries(ctx context.Context, projectID project.ID, scanID scan.ID, f triage.Filter) (triage.Page, error)
 	Bundle(ctx context.Context, projectID project.ID, scanID scan.ID, id triage.BundleID) (triage.Bundle, error)
 	CustomerGroup(ctx context.Context, projectID project.ID, scanID scan.ID, key triage.GroupKey) (triage.Group, error)
+	SameValueBundles(ctx context.Context, projectID project.ID, scanID scan.ID, id triage.BundleID) ([]triage.Entry, error)
 	Decide(ctx context.Context, projectID project.ID, ids []triage.BundleID, d triage.Decision, by audit.Actor) error
 	MoveFinding(ctx context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (triage.BundleID, error)
 }

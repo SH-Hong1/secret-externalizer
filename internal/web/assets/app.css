@@ -995,6 +995,18 @@
     flex: 1 1 280px;
     min-width: 0;
   }
+  .move-form {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+  }
+  .move-target {
+    min-height: 32px;
+    max-width: 260px;
+    padding: 4px 8px;
+    font-size: var(--text-sm);
+  }
   .verdict-lead {
     margin: 0;
     font-weight: 600;

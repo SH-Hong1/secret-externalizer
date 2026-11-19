@@ -21,11 +21,11 @@ func handleNotFound(logger *slog.Logger, rd *renderer) http.Handler {
 	})
 }
 
-// handleMethodNotAllowed answers a path that exists only for other methods.
-// allow lists those methods.
-func handleMethodNotAllowed(logger *slog.Logger, rd *renderer, allow string) http.Handler {
+// handlePostOnly answers a request with any other method to a path that
+// takes only POST.
+func handlePostOnly(logger *slog.Logger, rd *renderer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Allow", allow)
+		w.Header().Set("Allow", http.MethodPost)
 		rd.fail(w, r, logger, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 	})
 }

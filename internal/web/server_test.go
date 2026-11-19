@@ -159,6 +159,9 @@ func TestStoreCallsHaveTimeLimit(t *testing.T) {
 		{http.MethodPost, "/projects/1/scans", ""},
 		{http.MethodGet, "/scans/1", ""},
 		{http.MethodGet, "/projects/1/triage", ""},
+		{http.MethodPost, "/projects/1/bundles/1/verdict", "verdict=false-positive"},
+		{http.MethodPost, "/projects/1/customer-data/verdict", "kind=phone&file=a.log&verdict=redact"},
+		{http.MethodPost, "/projects/1/findings/1/move", "to=new"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.target, func(t *testing.T) {

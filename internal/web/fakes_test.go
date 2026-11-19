@@ -3,7 +3,6 @@ package web_test
 import (
 	"cmp"
 	"context"
-	"errors"
 	"fmt"
 	"net/url"
 	"slices"
@@ -435,6 +434,10 @@ func (b *blockingStore) MoveFinding(ctx context.Context, _ project.ID, _ finding
 	return 0, b.wait(ctx)
 }
 
+func (b *blockingStore) SameValueBundles(ctx context.Context, _ project.ID, _ scan.ID, _ triage.BundleID) ([]triage.Entry, error) {
+	return nil, b.wait(ctx)
+}
+
 func (b *blockingStore) UsedNames(ctx context.Context, _ project.ID) ([]triage.Name, error) {
 	return nil, b.wait(ctx)
 }
@@ -450,6 +453,10 @@ type fakeTriage struct {
 	entriesErr error
 	bundleErr  error
 	pastErr    error
+	decideErr  error
+	moveErr    error
+	// moveNew is the bundle MoveFinding returns for a move to a new bundle.
+	moveNew triage.BundleID
 
 	mu      sync.Mutex
 	latest  map[project.ID]scan.Scan
@@ -460,6 +467,25 @@ type fakeTriage struct {
 	past    map[string]triage.Decision
 	used    []triage.Name
 	filters []triage.Filter
+	same    map[triage.BundleID][]triage.Entry
+	decides []decideCall
+	moves   []moveCall
+}
+
+// decideCall is the arguments of one Decide call.
+type decideCall struct {
+	Project  project.ID
+	Bundles  []triage.BundleID
+	Decision triage.Decision
+	By       audit.Actor
+}
+
+// moveCall is the arguments of one MoveFinding call.
+type moveCall struct {
+	Project project.ID
+	Finding finding.ID
+	To      triage.BundleID
+	By      audit.Actor
 }
 
 func newFakeTriage() *fakeTriage {
@@ -470,6 +496,7 @@ func newFakeTriage() *fakeTriage {
 		bundles: make(map[triage.BundleID]triage.Bundle),
 		groups:  make(map[triage.GroupKey]triage.Group),
 		past:    make(map[string]triage.Decision),
+		same:    make(map[triage.BundleID][]triage.Entry),
 	}
 }
 
@@ -542,12 +569,90 @@ func (f *fakeTriage) CustomerGroup(_ context.Context, _ project.ID, _ scan.ID, k
 	return g, nil
 }
 
-func (f *fakeTriage) Decide(context.Context, project.ID, []triage.BundleID, triage.Decision, audit.Actor) error {
-	return errors.New("fakeTriage.Decide is not used by these tests")
+// Decide records the call. Unless decideErr is set, it gives the bundles the
+// decision and the verdict to the list entries of those bundles, and of the
+// customer data groups whose bundles are all among them.
+func (f *fakeTriage) Decide(_ context.Context, projectID project.ID, ids []triage.BundleID, d triage.Decision, by audit.Actor) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.decides = append(f.decides, decideCall{projectID, slices.Clone(ids), d, by})
+	if f.decideErr != nil {
+		return f.decideErr
+	}
+	for _, id := range ids {
+		if b, ok := f.bundles[id]; ok {
+			b.Decision = d
+			f.bundles[id] = b
+		}
+	}
+	entries := f.entries[projectID]
+	for i, e := range entries {
+		switch {
+		case e.Bundle != 0 && slices.Contains(ids, e.Bundle):
+			entries[i].Verdict = d.Verdict
+		case e.Bundle == 0:
+			g, ok := f.groups[e.Group]
+			if !ok || !containsAll(ids, g.Bundles) {
+				continue
+			}
+			delete(f.groups, e.Group)
+			g.Key.Verdict = d.Verdict
+			f.groups[g.Key] = g
+			entries[i].Group, entries[i].Verdict = g.Key, d.Verdict
+		}
+	}
+	return nil
 }
 
-func (f *fakeTriage) MoveFinding(context.Context, project.ID, finding.ID, triage.BundleID, audit.Actor) (triage.BundleID, error) {
-	return 0, errors.New("fakeTriage.MoveFinding is not used by these tests")
+func containsAll(set, sub []triage.BundleID) bool {
+	for _, id := range sub {
+		if !slices.Contains(set, id) {
+			return false
+		}
+	}
+	return true
+}
+
+// MoveFinding records the call and returns moveErr, or the bundle to, or
+// moveNew for a move to a new bundle.
+func (f *fakeTriage) MoveFinding(_ context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (triage.BundleID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.moves = append(f.moves, moveCall{projectID, id, to, by})
+	if f.moveErr != nil {
+		return 0, f.moveErr
+	}
+	if to == 0 {
+		return f.moveNew, nil
+	}
+	return to, nil
+}
+
+func (f *fakeTriage) SameValueBundles(_ context.Context, _ project.ID, _ scan.ID, id triage.BundleID) ([]triage.Entry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.same[id]), nil
+}
+
+// removeBundle forgets bundle id, as when its last member moved away.
+func (f *fakeTriage) removeBundle(id triage.BundleID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.bundles, id)
+}
+
+// decideCalls returns the Decide calls so far.
+func (f *fakeTriage) decideCalls() []decideCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.decides)
+}
+
+// moveCalls returns the MoveFinding calls so far.
+func (f *fakeTriage) moveCalls() []moveCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.moves)
 }
 
 func (f *fakeTriage) UsedNames(context.Context, project.ID) ([]triage.Name, error) {

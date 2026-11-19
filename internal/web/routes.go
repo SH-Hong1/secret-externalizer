@@ -30,7 +30,7 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	mux.Handle("GET /auth/callback", handleCallback(logger, rd, authn, sessions, attempts))
 	// Logout needs no live session; see handleLogout.
 	mux.Handle("POST /logout", handleLogout(logger, authn, sessions))
-	mux.Handle("/logout", handleMethodNotAllowed(logger, rd, http.MethodPost))
+	mux.Handle("/logout", handlePostOnly(logger, rd))
 	mux.Handle("GET /{$}", signedIn(handleHome(logger, rd)))
 	mux.Handle("GET /audit", withRole(auth.RoleAdmin, handleAudit(logger, rd)))
 	mux.Handle("GET /projects", usesStore(handleProjectList(logger, rd, projects)))
@@ -38,6 +38,13 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	mux.Handle("POST /projects", usesStore(handleProjectCreate(logger, rd, projects)))
 	mux.Handle("GET /projects/{id}", usesStore(handleProject(logger, rd, projects, scans, triage)))
 	mux.Handle("GET /projects/{id}/triage", usesStore(handleTriage(logger, rd, projects, triage, suggester)))
+	tw := triageWriter{logger: logger, rd: rd, projects: projects, store: triage, suggester: suggester}
+	mux.Handle("POST /projects/{id}/bundles/{bundle}/verdict", usesStore(handleBundleVerdict(tw)))
+	mux.Handle("/projects/{id}/bundles/{bundle}/verdict", handlePostOnly(logger, rd))
+	mux.Handle("POST /projects/{id}/customer-data/verdict", usesStore(handleCustomerDataVerdict(tw)))
+	mux.Handle("/projects/{id}/customer-data/verdict", handlePostOnly(logger, rd))
+	mux.Handle("POST /projects/{id}/findings/{finding}/move", usesStore(handleMove(tw)))
+	mux.Handle("/projects/{id}/findings/{finding}/move", handlePostOnly(logger, rd))
 	mux.Handle("POST /projects/{id}/scans", usesStore(handleScanCreate(logger, rd, scans)))
 	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, projects, scans)))
 	mux.Handle("/", handleNotFound(logger, rd))

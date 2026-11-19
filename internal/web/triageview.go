@@ -52,8 +52,10 @@ func triagePath(id project.ID) string {
 }
 
 // triagePage is what the triage screen shows. Exactly one of NoScan, Empty,
-// Bundle and Customer describes the detail.
+// Bundle and Customer describes the detail. Error is the reason a verdict or
+// a move was refused, shown above the detail.
 type triagePage struct {
+	Error     string
 	User      auth.User
 	Project   project.Project
 	NoScan    bool
