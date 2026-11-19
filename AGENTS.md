@@ -133,8 +133,11 @@ Sources: Go Code Review Comments; Google Go Style Guide; Uber Go Style Guide; Pr
 
 ## Context and concurrency
 
-- `ctx context.Context` is the first parameter of any function that does I/O
-  or can block. Do not store a context in a struct.
+- `ctx context.Context` is the first parameter of any function that uses the
+  network, runs an external command, or can block for an unbounded time. A
+  function that only reads local files of bounded size does not take one,
+  because the read cannot be interrupted through a context. Do not store a
+  context in a struct.
 - Use context values only for request-scoped data that crosses API
   boundaries, with an unexported key type.
 - Every goroutine has an owner. The owner knows how the goroutine stops and
@@ -181,11 +184,24 @@ Sources: Let's Go; Practical Go.
 ## Security
 
 - A secret value never appears in a log line, an error message, a template, a
-  database column, a report, the manifest, or a session.
+  database column, a report, the manifest, or a session. Two derived forms
+  are allowed in the database and on a page, and nowhere else:
+  - the fingerprint, an HMAC of the value computed by OpenBao;
+  - the preview built by `finding.Preview`: the first four characters of a
+    secret that is at least eight characters long, followed by a mask. A
+    shorter secret, a private key, and a key file show only the mask.
 - A type that holds a secret value implements `LogValue() slog.Value` and
   `String() string`, and both return a redacted form.
 - Customer data found in scanned files is never copied anywhere. Store only
-  its kind, its location, and a count.
+  its kind, its location, a count, its fingerprint, and the preview built by
+  `finding.Preview`, which for customer data is a fixed format string, except
+  that a phone number keeps at most the first three digits of its leading
+  group. Its original value is not stored in OpenBao, and no context lines
+  are stored for a file that holds it.
+- The one copy of scanned file content the tool makes is the UTF-8 copy of an
+  EUC-KR file, which the scanners cannot read otherwise. It is written under
+  the worker's temporary folder for one scan and removed when that scan
+  ends.
 - Do not commit a real secret as a test fixture. Fixtures use values that are
   obviously fake.
 - Resolve every file path that comes from input, including symbolic links,

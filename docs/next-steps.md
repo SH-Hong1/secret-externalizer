@@ -21,12 +21,13 @@
 |---|---|---|
 | 1 | 개발 규칙과 검증 hook | 완료 |
 | 2 | 골격과 로그인 | 완료 (`docs/superpowers/plans/2026-11-18-02-skeleton-and-login.md`) |
-| 3 | 프로젝트 등록과 스캔 | 구현 완료, PR 2 검토 대기 (`docs/superpowers/plans/2026-11-19-03-project-and-scan.md`) |
+| 3 | 프로젝트 등록과 스캔 | 완료 (`docs/superpowers/plans/2026-11-19-03-project-and-scan.md`) |
 | 4 | 화면 디자인 시안과 판정 화면 | |
 | 5 | 적용 | |
 | 6 | 리포트와 PDF | |
 | 7 | 대시보드 | |
 
+- [ ] **지금 상태(2026-11-19): 계획 3은 PR #6과 PR #7로 `main`에 병합되었다.** 병합 뒤의 정리(규칙 문장 수정, 회전된 로그, 이 문서)는 브랜치 `docs/plan-3-handoff`의 PR로 올라가 검토를 기다린다. 새 세션은 `gh pr list --head docs/plan-3-handoff --state all`로 그 PR이 병합되었는지 확인하고, 병합되었으면 `main`을 받아 온 뒤 이 항목을 지우고 계획 4로 넘어간다. 병합 전이면 사용자에게 알리고 기다린다.
 - [ ] **다음 작업: 계획 4(화면 디자인 시안과 판정 화면)의 계획 문서를 `docs/superpowers/plans/`에 한글로 쓰고 사용자의 검토를 받은 뒤 구현한다.** 계획 3이 병합된 뒤 새 브랜치에서 시작한다. 계획 4가 알아야 할 계획 3의 남은 일은 아래 항목에 있다.
 - [x] 계획 3을 Subagent 방식으로 구현한다면, 새 종료 hook(`stop-review.sh`)이 하위 에이전트의 결과를 기다리는 동안 턴 종료를 막지 않는지 첫 Task에서 확인한다. 막으면 구현을 멈추고 hook부터 고친다. 2026-11-19에 계획 3 Task 1에서 확인했다. 하위 에이전트가 도는 동안 턴이 막히지 않고 끝났다.
 - [x] 계획 2 전 정리(PR #2)가 병합되었는지 확인한다. 2026-11-18에 병합되었다.
@@ -63,7 +64,7 @@
 
 계획 3의 검토에서 나온 것 가운데 아직 고치지 않은 것이다. 해당하는 계획을 쓸 때 함께 정한다.
 
-- [ ] 규칙의 알려진 누락: `.properties`의 `jdbc.pass=`와 공백으로 구분한 형태, YAML 블록 스칼라(`password: >`), `sshpass -e`와 `SSHPASS=`, `setRequestProperty("Cookie", …)`, `settings.xml`의 `<username>`, `<constructor-arg name="password">`, `dbPassword` 같은 속성 이름, 회전된 로그(`app.log.1`, `catalina.out`)의 고객정보(`logs` 같은 폴더 밖에 있으면 고객정보 경로에 들지 않아 주변 줄도 막히지 않는다), 외국인등록번호(7번째 자리 5~8), 하이픈 없는 전화번호.
+- [ ] 규칙의 알려진 누락: `.properties`의 `jdbc.pass=`와 공백으로 구분한 형태, YAML 블록 스칼라(`password: >`), `sshpass -e`와 `SSHPASS=`, `setRequestProperty("Cookie", …)`, `settings.xml`의 `<username>`, `<constructor-arg name="password">`, `dbPassword` 같은 속성 이름, 외국인등록번호(7번째 자리 5~8), 하이픈 없는 전화번호.
 - [ ] 규칙의 알려진 오탐: `TOKEN_HEADER = "X-Auth-Token"` 같은 상수, `MSG_PWD` 같은 메시지 상수, SpEL `#{…}` 값, DB가 아닌 pool bean의 `url`/`user`, 원격 명령의 `sed -i`.
 - [ ] worker가 둘 이상일 때: 오래된 임시 원본 정리가 다음 스캔의 `PutPending`과 겹치면 `has_original = true`인데 원본이 없는 항목이 생길 수 있다. worker를 늘리기 전에 삭제 직전에 최신 스캔을 다시 확인하게 한다.
 - [ ] compose의 worker에 `restart:` 정책이 없다. 하나뿐인 worker가 죽으면 스캔이 "실행 중"으로 남고 그 프로젝트의 새 스캔을 막는다.

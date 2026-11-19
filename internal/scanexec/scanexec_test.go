@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -56,10 +57,8 @@ func TestHelperProcess(*testing.T) {
 		}
 	case "block":
 		writePID(args[0])
-		// Stand in for a scanner that never finishes. An empty select would
-		// end the process as a deadlock.
-		time.Sleep(time.Hour)
-		os.Exit(0)
+		// Stand in for a scanner that never finishes.
+		blockUntilKilled()
 	case "orphan":
 		// orphan <fifo> <code> <stdout|none>: start a child that outlives
 		// this process, holding standard output open or not, print
@@ -104,8 +103,7 @@ func TestHelperProcess(*testing.T) {
 			os.Exit(2)
 		}
 		_ = ready.Close() // the parent has read the byte
-		time.Sleep(time.Hour)
-		os.Exit(0)
+		blockUntilKilled()
 	}
 	os.Exit(2)
 }
@@ -127,6 +125,16 @@ func command(t *testing.T, bin string, args ...string) scanexec.Command {
 		Args: args,
 		Env:  scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()},
 	}
+}
+
+// blockUntilKilled keeps a helper process alive until something kills it. It
+// waits on a signal channel that nothing sends to: unlike an empty select,
+// the runtime does not end a process that waits for a signal as a deadlock.
+func blockUntilKilled() {
+	never := make(chan os.Signal, 1)
+	signal.Notify(never, syscall.SIGUSR1)
+	<-never
+	os.Exit(0)
 }
 
 // helper returns a Command that runs this test binary in the given mode.
