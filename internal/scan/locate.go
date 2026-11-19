@@ -43,7 +43,10 @@ type placedFile struct {
 	unplaced []finding.Span
 	// noContext is true when no surrounding lines may be shown for any
 	// finding in the file: the file is text and a scanner reported the whole
-	// file as a key, so every line of it is part of a value.
+	// file as a key, so every line of it is part of a value, or a result
+	// could not be placed and where its value is cannot be told (betterleaks
+	// reports a value it decoded from base64, for example, which the text
+	// holds only in encoded form).
 	noContext bool
 }
 
@@ -104,7 +107,13 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 		}
 		span, ok := place(pf.file, bom, raw)
 		if !ok {
-			pf.unplaced = append(pf.unplaced, unplacedSpans(pf.file.Text, bom, raw)...)
+			masks := unplacedSpans(pf.file.Text, bom, raw)
+			if len(masks) == 0 {
+				// Where the value is cannot be told, so no line of the file
+				// is known to be free of it.
+				pf.noContext = true
+			}
+			pf.unplaced = append(pf.unplaced, masks...)
 			dropped++
 			continue
 		}
@@ -146,11 +155,16 @@ func place(f textfile.File, bom int, raw Raw) (_ finding.Span, ok bool) {
 // unplacedSpans returns where the value of raw, which could not be placed,
 // may be in text. For a value the scanner gave (betterleaks), that is every
 // place the value appears. For a byte range (opengrep), it is the range
-// itself; finding.Context clamps it to the text and widens it to whole
-// characters.
+// itself clamped to the text; finding.Context widens it to whole
+// characters. It returns nil when no such place is in the text.
 func unplacedSpans(text []byte, bom int, raw Raw) []finding.Span {
 	if raw.Offset >= 0 {
-		return []finding.Span{{Start: raw.Offset - bom, End: raw.EndOffset - bom}}
+		start := max(0, raw.Offset-bom)
+		end := min(len(text), raw.EndOffset-bom)
+		if end <= start {
+			return nil
+		}
+		return []finding.Span{{Start: start, End: end}}
 	}
 	if len(raw.Value) == 0 {
 		return nil

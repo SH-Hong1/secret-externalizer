@@ -639,7 +639,7 @@ func TestHandle_NoRawValueInLogs(t *testing.T) {
 		"logs/app.log":           "call " + phone + "\n",
 		"deploy/id_rsa":          key,
 	}
-	values := []string{password, account, phone, hostURL, "dev-only-fake-rsa-material", "dev-only-other-value"}
+	values := []string{password, account, phone, hostURL, "dev-only-fake-rsa-material", "dev-only-other-value", encodedBlob}
 	scanners := func() []scan.Scanner {
 		mismatch := passwordBL()
 		mismatch.extra = []scan.Raw{{
@@ -671,6 +671,9 @@ func TestHandle_NoRawValueInLogs(t *testing.T) {
 		{name: "lease lost", setup: func(e *env) { e.store.saveErr = job.ErrLeaseLost }},
 		{name: "scanner fails", extra: &needleScanner{tool: "opengrep", needle: "x", err: fmt.Errorf("scanning: opengrep exited with code 2: %w", scan.ErrScannerFailed)}},
 		{name: "time limit", setup: func(e *env) { e.opts.TimeLimit = time.Nanosecond }, extra: &blockingScanner{}},
+		{name: "value that cannot be located", setup: func(e *env) {
+			writeFile(t, filepath.Join(e.dir, "conf", "encoded.properties"), "a.user=dev\nblob="+encodedBlob+"\njdbc.password="+password+"\n")
+		}, extra: unlocatable("conf/encoded.properties")},
 	}
 	saved := 0
 	for _, c := range cases {
@@ -923,4 +926,37 @@ func TestHandle_ContextMasksUnplacedValues(t *testing.T) {
 			}
 		}
 	})
+}
+
+// encodedBlob stands for text that encodes a value a scanner reported in
+// decoded form: the value itself appears nowhere in the file.
+const encodedBlob = "dev-only-encoded-blob-text"
+
+// unlocatable reports, for file, a betterleaks-style value at line 2,
+// column 6 that does not occur anywhere in the file.
+func unlocatable(file string) *needleScanner {
+	return &needleScanner{
+		tool: "betterleaks", rule: "generic-password", category: finding.CategoryOther, kind: finding.KindOther, needle: "no such value",
+		extra: []scan.Raw{{
+			Tool: "betterleaks", Rule: "generic-password", Category: finding.CategoryOther, Kind: finding.KindOther,
+			File: file, Offset: -1, EndOffset: -1, Line: 2, ByteCol: 6, Value: scan.Value("dev-only-decoded-value"),
+		}},
+	}
+}
+
+func TestHandle_UnlocatableValueDropsContext(t *testing.T) {
+	e := newEnv(t, map[string]string{propsFile: "a.user=dev\nblob=" + encodedBlob + "\njdbc.password=" + password + "\n"})
+	if err := e.handle(t.Context(), passwordOG(), unlocatable(propsFile)); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t)
+	if got.Dropped != 1 || len(got.Findings) != 1 {
+		t.Fatalf("Handle() = %+v, want the password found and the unlocatable value dropped", got)
+	}
+	if l := got.Findings[0].Locations[0]; l.Context != nil || l.ContextFirstLine != 0 {
+		t.Errorf("Handle() password location = %+v, want no surrounding lines", l)
+	}
+	if dump := fmt.Sprintf("%+v", got); strings.Contains(dump, encodedBlob) {
+		t.Errorf("Handle() saved a result that holds the encoded text:\n%s", dump)
+	}
 }

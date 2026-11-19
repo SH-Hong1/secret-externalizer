@@ -1,6 +1,9 @@
 package scan_test
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -96,5 +99,49 @@ func TestHandle_RealScanners(t *testing.T) {
 	}
 	if len(e.tempEntries(t)) != 0 {
 		t.Errorf("temporary folder holds %v after the scan, want it empty", e.tempEntries(t))
+	}
+}
+
+// TestHandle_RealScannersEncodedValue checks a value betterleaks finds only
+// after decoding base64: its decoded form appears nowhere in the file, so it
+// cannot be located, and the encoded text must not be stored in a
+// neighbour's surrounding lines.
+func TestHandle_RealScannersEncodedValue(t *testing.T) {
+	blBin := realBin(t, "BETTERLEAKS_BIN", "betterleaks")
+	ogBin := realBin(t, "OPENGREP_BIN", "opengrep")
+	rules, err := filepath.Abs(filepath.Join("..", "..", "rules"))
+	if err != nil {
+		t.Fatalf("Abs(rules) error = %v", err)
+	}
+	blob := base64.StdEncoding.EncodeToString([]byte(`password = "dev-only-fake-encoded-pw-7"`))
+	e := newEnv(t, map[string]string{
+		"conf/app.properties": "a.user=dev\nblob=" + blob + "\njdbc.password=" + password + "\n",
+	})
+	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
+	bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
+	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env)
+
+	if err := e.handle(t.Context(), bl, og); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t)
+	if got.Dropped != 1 || len(got.Findings) == 0 {
+		t.Fatalf("Handle() = %+v, want the password found and the decoded value dropped", got)
+	}
+	for _, f := range got.Findings {
+		for _, l := range f.Locations {
+			if l.Context != nil {
+				t.Errorf("%s location = %+v, want no surrounding lines in a file with a value that cannot be located", f.Kind, l)
+			}
+		}
+	}
+	encoded, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("json.Marshal(result) error = %v", err)
+	}
+	for _, dump := range []string{fmt.Sprintf("%+v", got), string(encoded)} {
+		if v := containsAny(dump, blob, "dev-only-fake-encoded-pw-7"); v != "" {
+			t.Errorf("Handle() saved a result that holds %q:\n%s", v, dump)
+		}
 	}
 }

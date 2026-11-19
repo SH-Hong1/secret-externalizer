@@ -29,7 +29,8 @@ type mergedLocation struct {
 // It also returns the originals to keep, by fingerprint: the value of every
 // finding that is not customer data. A customer data finding gets no
 // surrounding lines, and neither does any finding in a text file that a
-// scanner reported as a whole-file key. Surrounding lines mask every placed
+// scanner reported as a whole-file key or that has a result whose value
+// cannot be located. Surrounding lines mask every placed
 // value of the file and every place an unplaced result's value may be.
 //
 // A location's end is the line and column of the value's last character.
