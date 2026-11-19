@@ -255,6 +255,9 @@ func TestVerdictRefusesCustomerData(t *testing.T) {
 	if res.status != http.StatusNotFound {
 		t.Errorf("POST verdict for a bundle the latest scan does not have status = %d, want 404", res.status)
 	}
+	if n := len(e.triage.decideCalls()); n != 0 {
+		t.Errorf("POST verdict for a bundle the latest scan does not have called Decide %d times, want 0", n)
+	}
 }
 
 func TestVerdictRejectedFragment(t *testing.T) {

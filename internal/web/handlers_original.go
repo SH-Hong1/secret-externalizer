@@ -2,6 +2,7 @@ package web
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -18,13 +19,16 @@ import (
 const (
 	msgNoOriginal = "보관된 원본이 없습니다. 다시 스캔하면 보관됩니다."
 	msgStoreDown  = "비밀 저장소에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요."
+	msgReadFailed = "비밀 저장소에서 원본을 읽지 못했습니다. 잠시 뒤 다시 시도하고, 계속되면 관리자에게 알려 주세요."
 )
 
 // originalView is the slot of a bundle's original value in the detail.
 // Before a reveal it holds the form that asks for the value. After one,
 // Shown is set and it holds the value read for that request, or its size
 // when it is not text, or Notice when there is none to show. It lives only
-// for the response that draws it.
+// for the response that draws it. The value stays a bao.Value, which fmt,
+// slog and encoding/json print redacted, so neither the view nor the page
+// that carries it can print it; only the template gets it, through Text.
 type originalView struct {
 	Action    string
 	Return    string
@@ -32,10 +36,19 @@ type originalView struct {
 	CloseHref string
 	Notice    string
 	IsText    bool
-	Text      string
+	Value     bao.Value
 	Size      string
 	By        string
 	At        string
+}
+
+// Text returns the value as text for the template. It is empty unless the
+// value is text.
+func (o *originalView) Text() string {
+	if !o.IsText {
+		return ""
+	}
+	return string(o.Value.Reveal())
 }
 
 // newOriginalForm returns the slot of bundle id of project pid that offers
@@ -62,7 +75,7 @@ func hasOriginal(b triage.Bundle) bool {
 func (o *originalView) show(v bao.Value) {
 	raw := v.Reveal()
 	if utf8.Valid(raw) && bytes.IndexByte(raw, 0) < 0 {
-		o.IsText, o.Text = true, string(raw)
+		o.IsText, o.Value = true, v
 		return
 	}
 	o.Size = groupDigits(len(raw))
@@ -148,7 +161,10 @@ func handleOriginal(tw triageWriter, audits AuditStore, originals Originals) htt
 			view.Notice = msgNoOriginal
 		case err != nil:
 			tw.logger.ErrorContext(ctx, "reading original", "project_id", pid, "bundle_id", id, "error", err)
-			view.Notice = msgStoreDown
+			view.Notice = msgReadFailed
+			if errors.Is(err, bao.ErrUnreachable) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+				view.Notice = msgStoreDown
+			}
 		default:
 			view.show(v)
 		}

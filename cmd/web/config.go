@@ -6,7 +6,6 @@ import (
 	"log/slog"
 	"net"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
@@ -84,7 +83,7 @@ func loadConfig(_ []string, getenv func(string) string) (config, error) {
 	if len(missing) > 0 {
 		return config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
-	secretID, err := readSecretID(secretIDFile)
+	secretID, err := bao.ReadSecretIDFile(secretIDFile)
 	if err != nil {
 		return config{}, fmt.Errorf("reading BAO_SECRET_ID_FILE: %w", err)
 	}
@@ -140,19 +139,4 @@ func parseBaseURL(raw string) (string, error) {
 		return "", errors.New("must not have a path other than /")
 	}
 	return strings.TrimSuffix(u.String(), "/"), nil
-}
-
-// readSecretID reads an AppRole secret-id from the file at path, without
-// surrounding white space. The errors of os.ReadFile name the path and never
-// the content.
-func readSecretID(path string) (bao.SecretID, error) {
-	b, err := os.ReadFile(path) //nolint:gosec // G304: the path is the operator's own BAO_SECRET_ID_FILE setting
-	if err != nil {
-		return "", fmt.Errorf("reading the secret-id file: %w", err)
-	}
-	s := bao.SecretID(strings.TrimSpace(string(b)))
-	if s == "" {
-		return "", fmt.Errorf("%q is empty", path)
-	}
-	return s, nil
 }

@@ -688,3 +688,23 @@ func TestValueRedacts(t *testing.T) {
 		}
 	}
 }
+
+func TestClient_Unreachable(t *testing.T) {
+	srv := httptest.NewServer(http.NotFoundHandler())
+	addr := srv.URL
+	srv.Close()
+	c, err := bao.New(addr, bao.Credentials{RoleID: testRoleID, SecretID: testSecretID}, &http.Client{Timeout: 2 * time.Second})
+	if err != nil {
+		t.Fatalf("New(%q) error = %v", addr, err)
+	}
+	if _, err := c.ReadPending(t.Context(), 7, wantFingerprint(testValue)); !errors.Is(err, bao.ErrUnreachable) {
+		t.Errorf("ReadPending() against a closed server error = %v, want ErrUnreachable", err)
+	}
+
+	_, c = newFakeBao(t, func(w http.ResponseWriter, _ *http.Request, _ string) {
+		writeJSON(t, w, http.StatusForbidden, map[string]any{"errors": []string{"permission denied"}})
+	})
+	if _, err := c.ReadPending(t.Context(), 7, wantFingerprint(testValue)); err == nil || errors.Is(err, bao.ErrUnreachable) {
+		t.Errorf("ReadPending() refused with 403 error = %v, want an error other than ErrUnreachable", err)
+	}
+}

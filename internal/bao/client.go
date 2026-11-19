@@ -63,6 +63,11 @@ func (SecretID) MarshalText() ([]byte, error) { return []byte(redacted), nil }
 // ErrNoOriginal means OpenBao holds no pending original at that path.
 var ErrNoOriginal = errors.New("no pending original")
 
+// ErrUnreachable means a request got no answer from OpenBao: the connection
+// failed or the HTTP client timed out. An error that names a status means
+// OpenBao answered and refused or failed the request.
+var ErrUnreachable = errors.New("openbao could not be reached")
+
 // Value holds an original read from OpenBao. fmt, slog and encoding/json
 // print a redacted form. Only Reveal gives the bytes. fmt cannot call the
 // methods of a value in an unexported struct field, so a Value is never kept
@@ -389,8 +394,9 @@ func statusOf(err error) int {
 
 // describe returns a new error that says why a request failed without
 // wrapping err, which may hold the response body or the request URL. A
-// cancelled or expired ctx is returned as it is, so callers can test for it
-// with errors.Is.
+// cancelled or expired ctx is returned as it is, and a request that got no
+// answer matches ErrUnreachable, so callers can tell them apart with
+// errors.Is.
 func describe(ctx context.Context, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
@@ -399,8 +405,11 @@ func describe(ctx context.Context, err error) error {
 		return fmt.Errorf("openbao answered status %d", code)
 	}
 	var netErr net.Error
-	if errors.As(err, &netErr) && netErr.Timeout() {
-		return errors.New("openbao did not answer in time")
+	if errors.As(err, &netErr) {
+		if netErr.Timeout() {
+			return fmt.Errorf("%w: it did not answer in time", ErrUnreachable)
+		}
+		return ErrUnreachable
 	}
 	return errors.New("openbao gave no usable answer")
 }

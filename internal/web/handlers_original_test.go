@@ -1,6 +1,7 @@
 package web_test
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -195,7 +196,9 @@ func TestOriginalUnavailable(t *testing.T) {
 		errors int
 	}{
 		{"no original", nil, "보관된 원본이 없습니다. 다시 스캔하면 보관됩니다", 0},
-		{"store down", errors.New("reading a pending value: openbao answered status 503"), "비밀 저장소에 연결할 수 없습니다", 1},
+		{"store unreachable", fmt.Errorf("reading a pending value: %w", bao.ErrUnreachable), "비밀 저장소에 연결할 수 없습니다", 1},
+		{"store timed out", fmt.Errorf("reading a pending value: %w", context.DeadlineExceeded), "비밀 저장소에 연결할 수 없습니다", 1},
+		{"read refused", errors.New("reading a pending value: openbao answered status 403"), "비밀 저장소에서 원본을 읽지 못했습니다", 1},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			e := triageEnv(t)
@@ -205,7 +208,7 @@ func TestOriginalUnavailable(t *testing.T) {
 				t.Fatalf("POST %s status = %d, want 200", originalPath, res.status)
 			}
 			wantIn(t, "reveal notice", slot(res.body), tt.want)
-			wantNotIn(t, "reveal notice", res.body, "dev-only-fake", "원본 값", "openbao answered")
+			wantNotIn(t, "reveal notice", res.body, "dev-only-fake", "원본 값", "openbao", "deadline")
 			if n := len(e.audits.revealCalls()); n != 1 {
 				t.Errorf("POST %s recorded %d reveals, want 1", originalPath, n)
 			}
