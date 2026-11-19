@@ -42,7 +42,8 @@ func main() {
 // A flag error is returned and not printed, so the caller reports it once.
 // Asking for help prints the usage to stdout and is not an error. Otherwise it
 // reads the configuration, waits for the identity provider, connects to
-// valkey, opens and migrates the database, and serves HTTP until SIGINT, SIGTERM or cancellation of ctx.
+// valkey, opens and migrates the database, and serves HTTP until SIGINT,
+// SIGTERM or cancellation of ctx.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
 	return runWith(ctx, args, getenv, stdout, stderr, discoveryRetry{interval: 2 * time.Second, limit: 60 * time.Second})
 }

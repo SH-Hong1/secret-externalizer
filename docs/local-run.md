@@ -8,7 +8,7 @@ Docker와 Compose v2 이상이 필요하다. 아래의 `docker compose`는 따�
 
 ```sh
 docker compose up --build -d   # 처음에는 Keycloak이 realm을 가져오느라 30초쯤 걸린다
-docker compose ps              # postgres, valkey, keycloak은 healthy, web은 running
+docker compose ps              # postgres, valkey, keycloak은 healthy, web과 worker는 running
 docker compose logs -f web
 docker compose down            # 데이터(postgres 볼륨)는 남긴다
 docker compose down -v         # 볼륨까지 지운다. 다음 기동 때 realm을 새로 가져온다
@@ -37,8 +37,8 @@ docker compose up --build -d
 
 | 사용자 | 비밀번호 | 역할 | 볼 수 있는 화면 |
 |---|---|---|---|
-| `dev-user` | `dev-only-user-password` | `user` | 홈 |
-| `dev-admin` | `dev-only-admin-password` | `admin` | 홈, 감사 로그(`/audit`) |
+| `dev-user` | `dev-only-user-password` | `user` | 홈, 프로젝트와 스캔 |
+| `dev-admin` | `dev-only-admin-password` | `admin` | 홈, 프로젝트와 스캔, 감사 로그(`/audit`) |
 | `dev-norole` | `dev-only-norole-password` | 없음 | 로그인 뒤 403. 이 화면의 로그아웃 버튼으로 Keycloak 세션을 끝내고 다른 계정으로 로그인한다 |
 
 Keycloak 관리 콘솔(`http://localhost:8081/admin/`)의 계정은 `dev-only-admin` / `dev-only-admin-password`다. 이 계정은 `master` realm이 처음 만들어질 때만 생긴다.
@@ -92,9 +92,10 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 
 ## 통합 테스트
 
-valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이 없으면 건너뛴다. `make test-integration`은 둘 다 요구한다. compose의 valkey와 postgres로 실행하려면:
+valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이 없으면 건너뛴다. `make test-integration`은 둘 다 요구한다. compose의 valkey와 postgres로 실행하려면 다음과 같이 한다. 새 셸에서는 compose 명령마다 `SE_WORKSPACE`가 설정되어 있어야 한다. 없으면 compose가 파일을 읽다가 멈춘다(worker를 띄우지 않는 명령도 같다).
 
 ```sh
+export SE_WORKSPACE=$HOME/work     # 값은 존재하는 폴더면 된다
 docker compose up -d valkey postgres
 TEST_VALKEY_ADDR=127.0.0.1:16379 \
 TEST_DATABASE_URL=postgres://se_app:dev-only-se-app-password@127.0.0.1:15432/secret_externalizer_test \

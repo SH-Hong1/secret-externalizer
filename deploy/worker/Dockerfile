@@ -15,7 +15,9 @@ RUN CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -X main.version=${VERSION}"
 
 FROM alpine:3.24.4@sha256:f59abe656b692d901e184be3445e084786602108599d2a51d229c0f5a48c71bf
 
-RUN apk add --no-cache git=2.54.1-r0
+# Pinned to the minor version: an Alpine branch keeps only the latest package
+# revision, so an exact "-rN" pin stops building at the next security update.
+RUN apk add --no-cache git~=2.54
 
 COPY --from=build /out/worker /worker
 USER 65532:65532

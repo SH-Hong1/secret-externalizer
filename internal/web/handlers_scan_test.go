@@ -155,6 +155,24 @@ func TestScan_RefreshesWhileActive(t *testing.T) {
 	}
 }
 
+func TestScan_SucceededShowsCountsWithoutFindings(t *testing.T) {
+	e := newTestEnv(t)
+	pid := e.newProject(t)
+	e.scans.put(scan.Scan{ID: 4, ProjectID: pid, Status: scan.StatusSucceeded, Files: 12, Skipped: 2})
+
+	res := e.do(t, http.MethodGet, "/scans/4", nil, e.user(t))
+
+	if res.status != http.StatusOK {
+		t.Fatalf("GET /scans/4 status = %d, want 200", res.status)
+	}
+	if want := "검사한 파일 12개, 건너뛴 파일 2개"; !strings.Contains(res.body, want) {
+		t.Errorf("GET /scans/4 body lacks %q", want)
+	}
+	if strings.Contains(res.body, "발견") {
+		t.Errorf("GET /scans/4 body reports findings, want no findings count until a scanner runs")
+	}
+}
+
 func TestScan_ShowsFailureReason(t *testing.T) {
 	e := newTestEnv(t)
 	pid := e.newProject(t)

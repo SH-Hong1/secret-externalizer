@@ -62,7 +62,7 @@ func handleProjectCreate(logger *slog.Logger, rd *renderer, projects ProjectStor
 		}
 		form := projectForm{
 			Name:     strings.TrimSpace(r.PostFormValue("name")),
-			Path:     r.PostFormValue("path"),
+			Path:     strings.TrimSpace(r.PostFormValue("path")),
 			Excludes: r.PostFormValue("excludes"),
 		}
 		p := project.Project{Name: form.Name, CreatedBy: u.Subject}

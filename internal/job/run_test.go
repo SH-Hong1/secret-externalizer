@@ -217,8 +217,7 @@ func TestRun_OneJobAtATime(t *testing.T) {
 		t.Fatalf("first handled job = %d, want 1", id)
 	}
 	select {
-	case id := <-q.extended: // wait for a heartbeat so the loop has had time to misbehave
-		_ = id
+	case <-q.extended: // wait for a heartbeat so the loop has had time to misbehave
 	case id := <-started:
 		t.Fatalf("job %d started while job 1 was still running", id)
 	}

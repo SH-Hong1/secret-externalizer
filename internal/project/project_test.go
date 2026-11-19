@@ -118,6 +118,14 @@ func TestResolve(t *testing.T) {
 	}
 }
 
+func TestResolve_ThroughFileMessage(t *testing.T) {
+	f := newResolveFixture(t)
+	_, err := project.Resolve(f.root, "file.txt/sub")
+	if err == nil || !strings.Contains(err.Error(), "goes through a file") {
+		t.Errorf("Resolve(root, %q) error = %v, want one saying it goes through a file", "file.txt/sub", err)
+	}
+}
+
 func TestResolve_RootIsSymlink(t *testing.T) {
 	f := newResolveFixture(t)
 	link := filepath.Join(filepath.Dir(f.root), "rootlink")

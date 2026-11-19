@@ -123,6 +123,21 @@ func TestProjectCreate_Valid(t *testing.T) {
 	}
 }
 
+func TestProjectCreate_TrimsPath(t *testing.T) {
+	e := newTestEnv(t)
+	form := url.Values{"name": {"shop"}, "path": {"  shop \r\n"}}
+
+	res := e.postForm(t, form, sameOrigin(), e.user(t))
+
+	if res.status != http.StatusSeeOther {
+		t.Fatalf("POST /projects with padded path status = %d, want 303", res.status)
+	}
+	got := e.projects.all()
+	if len(got) != 1 || got[0].Path != "shop" {
+		t.Errorf("POST /projects with path %q stored %+v, want one project with path %q", form.Get("path"), got, "shop")
+	}
+}
+
 func TestProjectCreate_InvalidInput(t *testing.T) {
 	tests := []struct {
 		name string

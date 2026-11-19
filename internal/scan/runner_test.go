@@ -170,10 +170,11 @@ func TestHandle_OutsideRootReadsNothing(t *testing.T) {
 	if err := newRunner(store, root, &logs).Handle(t.Context(), job.Job{ID: 1, ScanID: 5}); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
-	for _, o := range store.got {
-		if o.status == scan.StatusSucceeded || o.files != 0 {
-			t.Errorf("Handle(project through a link to outside) wrote %+v, want only a failure with no files counted", o)
-		}
+	if len(store.got) != 1 {
+		t.Fatalf("Handle(project through a link to outside) recorded %d outcomes, want 1: %+v", len(store.got), store.got)
+	}
+	if o := store.got[0]; o.status == scan.StatusSucceeded || o.files != 0 {
+		t.Errorf("Handle(project through a link to outside) wrote %+v, want only a failure with no files counted", o)
 	}
 }
 

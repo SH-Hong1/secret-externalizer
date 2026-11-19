@@ -66,8 +66,8 @@ func ParsePath(raw string) (string, error) {
 
 // Resolve returns the absolute path of the directory rel under root with
 // every symbolic link resolved. It fails with ErrOutsideRoot when the result
-// is not inside root and with ErrNotDirectory when it is not a directory, does not exist, or lies
-// beyond a file.
+// is not inside root and with ErrNotDirectory when it is not a directory,
+// does not exist, or lies beyond a file.
 func Resolve(root, rel string) (string, error) {
 	rel, err := ParsePath(rel)
 	if err != nil {
@@ -78,8 +78,11 @@ func Resolve(root, rel string) (string, error) {
 		return "", fmt.Errorf("resolving workspace root: %w", err)
 	}
 	full, err := filepath.EvalSymlinks(filepath.Join(realRoot, filepath.FromSlash(rel)))
-	if errors.Is(err, os.ErrNotExist) || errors.Is(err, syscall.ENOTDIR) {
+	if errors.Is(err, os.ErrNotExist) {
 		return "", fmt.Errorf("%w: %q does not exist", ErrNotDirectory, rel)
+	}
+	if errors.Is(err, syscall.ENOTDIR) {
+		return "", fmt.Errorf("%w: %q goes through a file", ErrNotDirectory, rel)
 	}
 	if err != nil {
 		return "", fmt.Errorf("resolving %q: %w", rel, err)
