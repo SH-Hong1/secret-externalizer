@@ -233,9 +233,10 @@ func decisionDetail(d triage.Decision) map[string]string {
 // bundle to a new one, changes nothing and returns the bundle it is in.
 //
 // It returns ErrNotFound when the project has no such finding or bundle, and
-// triage.ErrNotAllowed, moving nothing, when the bundle has another
-// fingerprint, holds customer data and the finding does not or the other way
-// round, or has a decision it would no longer allow with the finding in it.
+// triage.ErrNotAllowed, moving nothing, when the finding is customer data,
+// which keeps one bundle per finding, or when the bundle has another
+// fingerprint, holds customer data while the finding does not, or has a
+// decision it would no longer allow with the finding in it.
 // The decision is checked against the finding and the bundle's members that
 // the project's latest succeeded scan found.
 func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (_ triage.BundleID, err error) {
@@ -262,6 +263,11 @@ func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id findin
 		return 0, fmt.Errorf("reading finding %d: %w", id, err)
 	}
 	moving.FindingID = id
+	// Each customer data finding keeps a bundle of its own, so it never
+	// moves.
+	if category == finding.CategoryCustomerData {
+		return 0, fmt.Errorf("moving customer data finding %d: %w", id, triage.ErrNotAllowed)
+	}
 	if to == from {
 		return from, nil
 	}
@@ -297,8 +303,8 @@ func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id findin
 	switch {
 	case dest.Fingerprint != fp:
 		return 0, fmt.Errorf("moving finding %d to bundle %d of another value: %w", id, to, triage.ErrNotAllowed)
-	case len(dest.Members) > 0 && (dest.Category == finding.CategoryCustomerData) != (category == finding.CategoryCustomerData):
-		return 0, fmt.Errorf("moving finding %d between customer data and secrets: %w", id, triage.ErrNotAllowed)
+	case len(dest.Members) > 0 && dest.Category == finding.CategoryCustomerData:
+		return 0, fmt.Errorf("moving finding %d into customer data: %w", id, triage.ErrNotAllowed)
 	}
 	dest.Members = append(dest.Members, moving)
 	if err := dest.Check(dest.Decision); err != nil {

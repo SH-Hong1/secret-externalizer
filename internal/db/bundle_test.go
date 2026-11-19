@@ -372,6 +372,9 @@ func TestMoveFinding(t *testing.T) {
 		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}, shared)
 		refused(t, pid, fpA, "web/c.jsp", shared, triage.ErrNotAllowed)
 	})
+	t.Run("customer data into customer data of the same value", func(t *testing.T) {
+		refused(t, pid, fpC, "logs/x.log", bundleOf(t, s, pid, fpC, "logs/y.log"), triage.ErrNotAllowed)
+	})
 }
 
 func TestDecideUsesLatestScan(t *testing.T) {

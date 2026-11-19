@@ -300,7 +300,7 @@ func auditEvents(n int) []audit.Event {
 func TestAuditPage(t *testing.T) {
 	e := newTestEnv(t)
 	e.audits.events = []audit.Event{
-		{ID: 40, At: time.Date(2026, 11, 19, 6, 41, 7, 0, time.UTC), Actor: adminActor, Action: audit.ActionReveal, ProjectID: 1, ProjectName: "shop", BundleID: 311, Detail: map[string]string{}},
+		{ID: 40, At: time.Date(2026, 11, 19, 6, 41, 7, 0, time.UTC), Actor: adminActor, Action: audit.ActionReveal, ProjectID: 1, ProjectName: "shop", BundleID: 311, Kind: finding.KindPassword, Detail: map[string]string{}},
 		{
 			ID: 30, At: time.Date(2026, 11, 19, 6, 38, 52, 0, time.UTC), Actor: fakeActor, Action: audit.ActionVerdict, ProjectID: 1, ProjectName: "shop", BundleID: 311,
 			Kind: finding.KindPassword, Detail: map[string]string{audit.DetailVerdict: "externalize", audit.DetailName: "db.main.password"},

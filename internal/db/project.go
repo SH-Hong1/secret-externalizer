@@ -60,27 +60,6 @@ func (s *Store) Project(ctx context.Context, id project.ID) (project.Project, er
 	return p, nil
 }
 
-// Projects returns every project ordered by name.
-func (s *Store) Projects(ctx context.Context) ([]project.Project, error) {
-	rows, err := s.pool.Query(ctx, "SELECT "+projectColumns+" FROM project ORDER BY name")
-	if err != nil {
-		return nil, fmt.Errorf("listing projects: %w", err)
-	}
-	defer rows.Close()
-	var out []project.Project
-	for rows.Next() {
-		p, err := scanProject(rows)
-		if err != nil {
-			return nil, fmt.Errorf("reading project row: %w", err)
-		}
-		out = append(out, p)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing projects: %w", err)
-	}
-	return out, nil
-}
-
 // ProjectSummaries returns every project ordered by name, each with its
 // newest scan and the bundle counts of its newest succeeded scan. A bundle
 // counts when that scan found one of its members, as in Entries.

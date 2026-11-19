@@ -434,6 +434,10 @@ func TestTriageBadInput(t *testing.T) {
 			if res.status != tt.want {
 				t.Errorf("GET %s status = %d, want %d", tt.target, res.status, tt.want)
 			}
+			if tt.want == http.StatusBadRequest {
+				wantIn(t, "GET "+tt.target, res.body, "요청을 처리할 수 없습니다. 주소나 입력을 확인해 주세요.")
+				wantNotIn(t, "GET "+tt.target, res.body, "다시 로그인", `href="/login"`)
+			}
 		})
 	}
 }

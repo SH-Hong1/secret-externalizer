@@ -94,17 +94,17 @@ func handleCallback(logger *slog.Logger, rd *renderer, authn Authenticator, sess
 				// error page whether or not this removal succeeds.
 				_, _ = attempts.TakeAttempt(r.Context(), session.ID(c.Value))
 			}
-			rd.fail(w, r, logger, http.StatusBadRequest, errors.New("identity provider returned an error"))
+			rd.failLogin(w, r, logger, errors.New("identity provider returned an error"))
 			return
 		}
 		if cookieErr != nil {
-			rd.fail(w, r, logger, http.StatusBadRequest, errors.New("no login attempt cookie"))
+			rd.failLogin(w, r, logger, errors.New("no login attempt cookie"))
 			return
 		}
 
 		a, err := attempts.TakeAttempt(r.Context(), session.ID(c.Value))
 		if errors.Is(err, session.ErrNotFound) {
-			rd.fail(w, r, logger, http.StatusBadRequest, errors.New("unknown login attempt"))
+			rd.failLogin(w, r, logger, errors.New("unknown login attempt"))
 			return
 		}
 		if err != nil {
@@ -112,7 +112,7 @@ func handleCallback(logger *slog.Logger, rd *renderer, authn Authenticator, sess
 			return
 		}
 		if a.State == "" || subtle.ConstantTimeCompare([]byte(q.Get("state")), []byte(a.State)) != 1 {
-			rd.fail(w, r, logger, http.StatusBadRequest, errors.New("state mismatch"))
+			rd.failLogin(w, r, logger, errors.New("state mismatch"))
 			return
 		}
 
@@ -129,7 +129,7 @@ func handleCallback(logger *slog.Logger, rd *renderer, authn Authenticator, sess
 		}
 		if err != nil {
 			logger.WarnContext(r.Context(), "login exchange failed", "error", err)
-			rd.fail(w, r, logger, http.StatusBadRequest, err)
+			rd.failLogin(w, r, logger, err)
 			return
 		}
 

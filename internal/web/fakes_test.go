@@ -202,20 +202,6 @@ func (f *fakeProjects) Project(_ context.Context, id project.ID) (project.Projec
 	return p, nil
 }
 
-func (f *fakeProjects) Projects(context.Context) ([]project.Project, error) {
-	if f.listErr != nil {
-		return nil, f.listErr
-	}
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	out := make([]project.Project, 0, len(f.projects))
-	for _, p := range f.projects {
-		out = append(out, p)
-	}
-	slices.SortFunc(out, func(a, b project.Project) int { return cmp.Compare(a.Name, b.Name) })
-	return out, nil
-}
-
 // ProjectSummaries returns every project ordered by name, with the summary
 // that putSummary stored for it, or an empty one.
 func (f *fakeProjects) ProjectSummaries(context.Context) ([]project.Summary, error) {

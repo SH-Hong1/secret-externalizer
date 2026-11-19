@@ -124,9 +124,14 @@ func detectedLine(b Bundle) string {
 }
 
 // targetOf returns the first word of the key on line that is not a stop
-// word, or "main" when there is none.
+// word, or "main" when there is none. A key that holds "*" is the masked
+// preview of a detected value, such as the account in "curl -u user:pass",
+// and gives "main" too, so no part of a detected value reaches a name.
 func targetOf(line string) string {
 	key := lineKey(line)
+	if strings.Contains(key, "*") {
+		return mainTarget
+	}
 	for _, w := range splitWords(key) {
 		if stopWords[w] {
 			continue

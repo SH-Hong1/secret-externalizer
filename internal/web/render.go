@@ -23,11 +23,14 @@ const (
 	errorFile  = "error.html"
 )
 
+// msgLoginAgain is the error page text for a login that cannot go on.
+const msgLoginAgain = "요청을 처리할 수 없습니다. 처음부터 다시 로그인해 주세요."
+
 // errorMessage returns the text shown on the error page for status.
 func errorMessage(status int) string {
 	switch status {
 	case http.StatusBadRequest:
-		return "요청을 처리할 수 없습니다. 처음부터 다시 로그인해 주세요."
+		return "요청을 처리할 수 없습니다. 주소나 입력을 확인해 주세요."
 	case http.StatusUnauthorized:
 		return "로그인이 필요합니다."
 	case http.StatusForbidden:
@@ -150,10 +153,23 @@ func (rd *renderer) fragment(w http.ResponseWriter, r *http.Request, logger *slo
 	rd.write(w, r, logger, status, &buf)
 }
 
-// fail renders the error page for status. It logs err once when the status is
-// 500 or higher and never shows err on the page. The page shows the menu when
-// the request has a signed-in user.
+// fail renders the error page for status with the text errorMessage gives
+// it. A 401 page links to the login.
 func (rd *renderer) fail(w http.ResponseWriter, r *http.Request, logger *slog.Logger, status int, err error) {
+	rd.errorPage(w, r, logger, status, errorMessage(status), status == http.StatusUnauthorized, err)
+}
+
+// failLogin renders the error page with status 400 for a login that cannot
+// go on, asking the user to log in again from the start.
+func (rd *renderer) failLogin(w http.ResponseWriter, r *http.Request, logger *slog.Logger, err error) {
+	rd.errorPage(w, r, logger, http.StatusBadRequest, msgLoginAgain, true, err)
+}
+
+// errorPage renders the error page for status with msg, and a link to the
+// login when loginLink is true. It logs err once when the status is 500 or
+// higher and never shows err on the page. The page shows the menu when the
+// request has a signed-in user.
+func (rd *renderer) errorPage(w http.ResponseWriter, r *http.Request, logger *slog.Logger, status int, msg string, loginLink bool, err error) {
 	if status >= http.StatusInternalServerError {
 		logger.ErrorContext(r.Context(), "request failed", "path", r.URL.Path, "status", status, "error", err)
 	}
@@ -164,7 +180,7 @@ func (rd *renderer) fail(w http.ResponseWriter, r *http.Request, logger *slog.Lo
 		Status    int
 		Message   string
 		LoginLink bool
-	}{u, status, errorMessage(status), status == http.StatusBadRequest || status == http.StatusUnauthorized}
+	}{u, status, msg, loginLink}
 	if execErr := rd.pages[errorFile].ExecuteTemplate(&buf, "layout", data); execErr != nil {
 		logger.ErrorContext(r.Context(), "rendering error page", "error", execErr)
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)

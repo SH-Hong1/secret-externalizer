@@ -242,6 +242,9 @@ func TestCallback_StateMismatch(t *testing.T) {
 	if res.status != http.StatusBadRequest {
 		t.Errorf("callback with another state status = %d, want 400", res.status)
 	}
+	if !strings.Contains(res.body, "처음부터 다시 로그인해 주세요") || !strings.Contains(res.body, `href="/login"`) {
+		t.Errorf("callback with another state body = %q, want the request to log in again and a link to /login", res.body)
+	}
 	if n := e.sessions.count(); n != 0 {
 		t.Errorf("sessions = %d, want 0", n)
 	}
