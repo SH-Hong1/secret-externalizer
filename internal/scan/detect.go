@@ -19,7 +19,8 @@ func (r Raw) wholeFile() bool { return r.Offset == 0 && r.EndOffset == -1 }
 // detect runs every scanner over the project folder dir and, when there are
 // EUC-KR files, over the folder of copies. It returns the results that refer
 // to files the scan can place them in, the version of each scanner, and how
-// many results were dropped. A scanner that fails is a *toolError.
+// many results the scanners themselves dropped. A scanner that fails is a
+// *toolError.
 func (r *Runner) detect(ctx context.Context, dir, copies string, files fileList) ([]Raw, map[string]string, int, error) {
 	versions := make(map[string]string, len(r.scanners))
 	var kept []Raw
@@ -40,9 +41,8 @@ func (r *Runner) detect(ctx context.Context, dir, copies string, files fileList)
 			if err != nil {
 				return nil, nil, 0, &toolError{tool: s.Name(), err: err}
 			}
-			k, d := files.keep(raws, i == 1)
-			kept = append(kept, k...)
-			dropped += counts.Dropped + d
+			kept = append(kept, files.keep(raws, i == 1)...)
+			dropped += counts.Dropped
 		}
 	}
 	return kept, versions, dropped, nil
@@ -57,33 +57,30 @@ func scanFolder(ctx context.Context, s Scanner, dir string) ([]Raw, Counts, erro
 	return raws, Counts{}, err
 }
 
-// keep returns the results that the scan uses and the number it drops.
-// fromCopy tells whether the results come from the folder of copies.
+// keep returns the results that the scan uses. fromCopy tells whether the
+// results come from the folder of copies. Results it leaves out are not
+// counted as dropped: they are about files the scan does not report on, or
+// they repeat a result from the other folder.
 //
 // A result for a file the scan did not list (excluded, a symbolic link,
-// outside the folder) is dropped. A whole-file result needs only a listed
+// outside the folder) is left out. A whole-file result needs only a listed
 // file; it is taken from the project folder, where the file has its original
 // bytes. Any other result needs a file read as text: for an EUC-KR file it
-// is taken from its UTF-8 copy and the project folder's result, at EUC-KR
-// offsets, is left out without counting it.
-func (l fileList) keep(raws []Raw, fromCopy bool) (kept []Raw, dropped int) {
+// is taken from its UTF-8 copy, and the project folder's result, at EUC-KR
+// offsets, is left out.
+func (l fileList) keep(raws []Raw, fromCopy bool) []Raw {
+	var kept []Raw
 	for _, raw := range raws {
 		f, listed := l.files[raw.File]
 		switch {
 		case !listed:
-			dropped++
 		case raw.wholeFile():
 			if !fromCopy {
 				kept = append(kept, raw)
 			}
-		case !f.text:
-			dropped++
-		case (f.encoding == textfile.EUCKR) == fromCopy:
+		case f.text && (f.encoding == textfile.EUCKR) == fromCopy:
 			kept = append(kept, raw)
-		case fromCopy:
-			// The folder of copies holds only EUC-KR files.
-			dropped++
 		}
 	}
-	return kept, dropped
+	return kept
 }

@@ -528,9 +528,9 @@ func TestHandle_ResultOutsideFileListIgnored(t *testing.T) {
 	}
 	got := e.result(t)
 	// vendor/lib.properties, build/out.properties, link.properties, and the
-	// key file under vendor.
-	if len(got.Findings) != 0 || got.Dropped != 4 || got.Files != 0 {
-		t.Errorf("Handle() = %+v, want no findings, 4 dropped, no files listed", got)
+	// key file under vendor are left out without counting them as dropped.
+	if len(got.Findings) != 0 || got.Dropped != 0 || got.Files != 0 {
+		t.Errorf("Handle() = %+v, want no findings, none dropped, no files listed", got)
 	}
 }
 
