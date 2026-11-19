@@ -6,29 +6,29 @@
 
 **Architecture:** web은 프로젝트와 스캔 요청을 postgres에 쓰고, `cmd/worker`가 postgres의 작업 큐에서 스캔을 가져와 실행한다. worker는 파일을 직접 읽어 인코딩을 판별하고, 스캐너를 `exec.CommandContext`로 실행해 표준 출력의 JSON을 메모리에서만 읽는다. 값의 지문은 OpenBao transit의 HMAC으로 계산하고, 비밀 값의 원본은 OpenBao KV의 임시 경로에 두며, postgres에는 지문, 가린 미리보기, 위치, 가린 주변 줄만 저장한다. web은 소스와 OpenBao에 접근하지 않는다.
 
-**Tech Stack:** Go 1.27, `github.com/jackc/pgx/v5`, `golang.org/x/text`, postgres 18, OpenBao 2.7(transit, KV v2, AppRole), betterleaks 1.10, opengrep 2.0, docker compose
+**Tech Stack:** Go 1.27, `github.com/jackc/pgx/v5`, `github.com/openbao/openbao/api/v2`, `golang.org/x/text`, postgres 18, OpenBao 2.7(transit, KV v2, AppRole), betterleaks 1.10, opengrep 2.0, docker compose
 
 **Spec:** `docs/superpowers/specs/2026-11-18-secret-externalizer-design.md` (3절 "대상", 5절 "구성", 6절의 "프로젝트 등록"부터 "스캔 간 항목 식별"까지와 "OpenBao 사용 범위", 10절 3단계). 결정 기록 0001, 0002, 0003.
 
 ## 검토 때 정해 주실 것
 
-설계 문서가 정하지 않았거나 만드는 사람에게 맡긴 내용이다. 각 항목의 첫 번째가 이 계획이 따르는 안이다.
+설계 문서가 정하지 않았거나 만드는 사람에게 맡긴 내용이다. 각 항목의 첫 번째가 이 계획이 따르는 안이다. **[확정]** 은 2026-11-19에 사용자가 정한 항목이고, 표시가 없는 항목은 작성자의 제안이다.
 
-1. **계획은 하나로 두고 PR을 둘로 나눈다.** Task 1~4(postgres, 프로젝트, 작업 큐, worker)가 끝나면 "스캔을 요청하면 worker가 파일 수만 세고 끝내는" 상태로 한 번 PR을 올린다. Task 5~11(OpenBao, 스캐너, 규칙, 탐지 항목)이 두 번째 PR이다. 다른 안: 계획 문서를 3a, 3b로 나눈다.
-2. **postgres 드라이버는 pgx v5, 마이그레이션 실행기와 작업 큐는 직접 만든다.** 마이그레이션은 `embed`한 SQL 파일을 번호순으로 실행하는 작은 코드이고, 작업 큐는 `FOR UPDATE SKIP LOCKED`와 임대 시간(lease)으로 만든다. 다른 안: tern(sprig, cobra가 딸려 온다), River(모듈 8개와 자체 스키마가 추가되고 아직 1.0 전이다).
+1. **[확정] 계획은 하나로 두고 PR을 둘로 나눈다.** Task 1~4(postgres, 프로젝트, 작업 큐, worker)가 끝나면 "스캔을 요청하면 worker가 파일 수만 세고 끝내는" 상태로 한 번 PR을 올린다. Task 5~11(OpenBao, 스캐너, 규칙, 탐지 항목)이 두 번째 PR이다. 다른 안: 계획 문서를 3a, 3b로 나눈다.
+2. **[확정] postgres 드라이버는 pgx v5, DB 스키마 버전 관리(마이그레이션)와 작업 큐는 직접 만든다.** 마이그레이션은 `embed`한 SQL 파일을 번호순으로 한 번씩 실행하는 작은 코드이고, 작업 큐는 `FOR UPDATE SKIP LOCKED`와 임대 시간(lease)으로 만든다. 도구가 없어서가 아니라 쓰는 범위가 작아 의존성을 더하는 비용이 더 크다고 보았다. 쓰지 않는 도구: tern(sprig, cobra가 딸려 온다), goose, golang-migrate, River(모듈 8개와 자체 스키마가 추가되고 아직 1.0 전이다).
 3. **web과 worker는 postgres 계정 하나(`se_app`)를 같이 쓰고, 둘 다 시작할 때 마이그레이션을 실행한다.** advisory lock으로 한쪽만 실행된다. 다른 안: 계정을 둘로 나누고 worker만 마이그레이션한다.
-4. **web은 등록할 때 경로의 모양만 검사하고, 실제 폴더 확인은 worker가 스캔할 때 한다.** web에는 소스가 마운트되지 않기 때문이다. 없는 폴더나 작업 루트 밖을 가리키는 심볼릭 링크는 스캔이 실패로 끝나면서 사유가 화면에 보인다. 다른 안: 등록할 때 worker에 확인 작업을 보내고 결과를 기다린다.
+4. **[확정] web은 등록할 때 경로의 모양만 검사하고, 실제 폴더 확인은 worker가 스캔할 때 한다.** web에는 소스가 마운트되지 않기 때문이다. 없는 폴더나 작업 루트 밖을 가리키는 심볼릭 링크는 스캔이 실패로 끝나면서 사유가 화면에 보인다. 다른 안: 등록할 때 worker에 확인 작업을 보내고 결과를 기다린다.
 5. **이 계획에서 소스는 worker에 읽기 전용으로 마운트한다.** 쓰기는 계획 5(적용)에서 연다.
-6. **OpenBao는 static seal과 self-init으로 자동화한다.** 봉인 해제 키와 AppRole의 secret-id는 처음 띄울 때 `openbao-secrets` 컨테이너가 난수로 만들어 볼륨에 둔다. 저장소에는 넣지 않는다. 저장소(storage)는 pebbledb다(2.7에서 `file`이 없어졌다). self-init은 처음 한 번만 실행되므로, 계획 4와 5에서 쓸 web 읽기 권한과 외부화 값 경로(`projects/`)의 정책도 설계 문서의 "OpenBao 사용 범위" 표대로 지금 만든다. 다른 안: 다른 개발용 값처럼 `dev-only-...` 고정 값을 compose에 적는다. 이 도구는 개발자 PC에서 실제 원본 값을 보관하므로 따르지 않았다.
-7. **OpenBao 클라이언트는 `net/http`로 직접 만든다.** 쓰는 API가 로그인, HMAC, KV 쓰기·목록·삭제뿐이다. 다른 안: `github.com/openbao/openbao/api/v2`(직접 의존 13개).
+6. **[확정] OpenBao는 static seal과 self-init으로 자동화한다.** 목표는 `docker compose up` 한 번으로 쓸 수 있고, 재시작해도 원본과 지문 키가 남으며, 루트 토큰이 남지 않고, 키가 저장소에 들어가지 않는 것이다. 봉인 해제 키와 AppRole의 secret-id는 처음 띄울 때 `openbao-secrets` 컨테이너가 난수로 만들어 볼륨에 둔다. 저장소(storage)는 pebbledb다(2.7에서 `file`이 없어졌다). self-init은 처음 한 번만 실행되므로, 계획 4와 5에서 쓸 web 읽기 권한과 외부화 값 경로(`projects/`)의 정책도 설계 문서의 "OpenBao 사용 범위" 표대로 지금 만든다. 한계: 봉인 해제 키가 데이터 옆 볼륨에 있어, PC의 docker 볼륨에 접근할 수 있는 사람에게는 저장 시 암호화가 보호가 되지 않는다. 공유하거나 배포하는 환경에는 이 구성을 쓰지 않는다.
+7. **[확정] OpenBao 클라이언트는 공식 Go 모듈을 쓴다.** `github.com/openbao/openbao/api/v2`와 AppRole 로그인 모듈 `github.com/openbao/openbao/api/auth/approle/v2`다. `internal/bao`가 이를 감싸고, 다른 패키지는 공식 모듈의 타입을 보지 않는다.
 8. **지문은 OpenBao transit 키 하나(`fingerprint`)의 버전 1로 고정해 계산한다.** 키를 회전하면 HMAC이 달라져 스캔 간 식별이 끊기므로 회전하지 않는다. 키는 모든 프로젝트가 같이 쓴다. 다른 프로젝트의 과거 판정을 제안에 쓰려면(설계 6절 "판정") 같은 값의 지문이 같아야 한다.
-9. **고객정보도 지문을 저장한다.** 오탐으로 판정한 고객정보가 다음 스캔에서 다시 올라오지 않으려면 스캔 간 식별이 필요하다. 지문은 OpenBao의 키 없이는 계산할 수 없는 HMAC이고, 원본과 주변 줄은 어디에도 저장하지 않는다. 다른 안: 고객정보는 "파일, 종류, 건수"로만 식별한다. 줄이 바뀌면 판정이 유지되지 않는다.
-10. **EUC-KR 파일은 worker가 UTF-8로 바꾼 사본을 tmpfs에 만들어 스캔한다.** 스캐너 둘 다 인코딩을 바꿔 읽지 않아, 그대로 두면 EUC-KR 파일의 한글(주소 키워드)을 찾지 못한다. 사본은 메모리에만 있고 스캔이 끝나면 지운다. 다른 안: 원본 그대로만 스캔하고, EUC-KR 파일에서는 ASCII로 된 값만 찾는다.
+9. **[확정] 고객정보도 지문을 저장한다.** 오탐으로 판정한 고객정보가 다음 스캔에서 다시 올라오지 않으려면 스캔 간 식별이 필요하다. 값은 저장하지 않는다. 원본과 주변 줄은 postgres에도 OpenBao에도 두지 않고, 종류, 파일, 위치, 형식만 남긴 미리보기, 지문만 저장한다. 알고 받아들인 위험: 전화번호처럼 경우의 수가 적은 값은 OpenBao에 HMAC을 요청할 수 있고 postgres도 읽을 수 있는 쪽(worker)이 번호를 하나씩 넣어 보면 맞힐 수 있다. web에는 HMAC 권한이 없다.
+10. **[확정] EUC-KR 파일은 worker가 UTF-8로 바꾼 사본을 tmpfs에 만들어 스캔한다.** 스캐너 둘 다 인코딩을 바꿔 읽지 않아, 그대로 두면 EUC-KR 파일의 한글(주소 키워드)을 찾지 못한다. 사본은 메모리에만 있고 스캔이 끝나면 지운다. 다른 안: 원본 그대로만 스캔하고, EUC-KR 파일에서는 ASCII로 된 값만 찾는다.
 11. **고객정보 규칙은 로그와 샘플 데이터에만 적용한다.** 확장자 `log, csv, tsv, txt, sql, dat, json`과 폴더 `log(s), sample(s), data, dump` 아래다. `.java`나 `pom.xml`의 이메일 주소까지 잡으면 오탐이 대부분이 된다. 프로젝트별로 고객정보 경로를 더하는 기능은 넣지 않는다.
 12. **개인키와 인증서 파일은 worker 안의 Go 검출기가 찾는다.** betterleaks는 바이너리 파일(`.jks`, `.p12`)을 건너뛴다. PEM 머리말과 확장자로 찾고, 파일 하나가 항목 하나다.
 13. **접속 정보 묶음(JDBC URL, `user@host`)은 이 계획에서 값 하나로 저장한다.** 구성 요소별로 나누는 일은 placeholder를 정하는 계획 4, 5에서 한다.
 14. **화면은 계획 2처럼 스타일 없는 최소 HTML이다.** 스캔이 진행 중인 화면은 3초마다 새로 고친다(`<meta http-equiv="refresh">`). htmx는 계획 4에서 넣는다.
-15. **스캐너 버전과 체크섬은 `deploy/worker/scanners.lock`에 고정한다.** worker 이미지와 `make scanners`가 같은 파일을 읽는다. `AGENTS.md`의 "Tool versions are pinned in `Makefile`" 문장에 이 파일을 더한다. 다른 안: Makefile에 두고 compose에 build arg로 넘긴다.
+15. **[확정] 스캐너 버전과 체크섬은 `deploy/worker/scanners.lock`에 고정한다.** worker 이미지와 `make scanners`가 같은 파일을 읽는다. `AGENTS.md`의 "Tool versions are pinned in `Makefile`" 문장에 이 파일을 더하고, "Project layout"의 진입점 문장에 `cmd/worker`를 더한다.
 16. **스캔이 실패하면 자동으로 다시 하지 않는다.** 사유를 보고 사용자가 다시 시작한다. worker가 스캔 중에 죽은 경우만 임대 시간이 지난 뒤 다시 실행하고, 세 번째에도 끝나지 않으면 실패로 표시한다.
 
 ## 구현 전에 확인할 사실
@@ -85,7 +85,7 @@
 | `internal/scan/scan.go` | `ID`, `Status`, `Scan`, `Raw`, `Scanner` 인터페이스 |
 | `internal/scan/runner.go` | 스캔 한 건의 실행: 순회, 스캐너 실행, 위치 확인, 병합, 지문, 원본 보관, 저장 |
 | `internal/job/job.go` | `Job` 타입, 작업을 가져와 실행하는 루프, 임대 연장. 다른 내부 패키지를 가져오지 않는다 |
-| `internal/bao/client.go` | OpenBao 클라이언트: AppRole 로그인, 지문 계산, 임시 원본 쓰기·목록·삭제 |
+| `internal/bao/client.go` | 공식 OpenBao 클라이언트를 감싼다: AppRole 로그인, 지문 계산, 임시 원본 쓰기·목록·삭제 |
 | `internal/textfile/textfile.go`, `walk.go` | 인코딩 판별, UTF-8 변환, 위치 변환, 줄 읽기, 트리 순회 |
 | `internal/finding/finding.go`, `mask.go` | `Category`, `Kind`, `Finding`, `Location`, 미리보기, 주변 줄 가리기 |
 | `internal/betterleaks`, `internal/opengrep`, `internal/keyfile` | `scan.Scanner` 구현 셋 |
@@ -95,7 +95,7 @@
 | `internal/ruleset/ruleset.go`, `testdata/legacy-shop/`, `testdata/expected.json` | 규칙 버전 계산, 규칙 테스트와 그 예제 소스, 기대 결과 |
 | `deploy/worker/Dockerfile`, `scanners.lock`, `fetch-scanners.sh` | worker 이미지, 스캐너 버전과 체크섬, 내려받기 |
 | `deploy/openbao/config.hcl`, `deploy/openbao/make-secrets.sh` | OpenBao 설정(static seal, self-init), 키와 secret-id 생성 |
-| `docs/decisions/0015`~ | pgx, 마이그레이션과 작업 큐, OpenBao 구성과 클라이언트, x/text와 인코딩 처리, 스캐너 실행 방식 |
+| `docs/decisions/0015`~`0020` | pgx, 마이그레이션과 작업 큐, OpenBao 구성, OpenBao Go 클라이언트, x/text와 인코딩 처리, 스캐너 실행 방식 |
 
 ---
 
@@ -310,13 +310,13 @@ compose의 `worker`: 포트 없음, `user: "65532:65532"`, `read_only: true`, `c
 ### Task 5: OpenBao 구성과 클라이언트
 
 **Files:**
-- Create: `deploy/openbao/config.hcl`, `deploy/openbao/make-secrets.sh`, `internal/bao/client.go`, `client_test.go`, `integration_test.go`, `docs/decisions/0017-openbao-setup-and-client.md`
-- Modify: `compose.yaml`, `cmd/worker/config.go`, `main.go`, `Makefile`, `docs/local-run.md`
+- Create: `deploy/openbao/config.hcl`, `deploy/openbao/make-secrets.sh`, `internal/bao/client.go`, `client_test.go`, `integration_test.go`, `docs/decisions/0017-openbao-setup.md`, `docs/decisions/0018-openbao-go-client.md`
+- Modify: `compose.yaml`, `cmd/worker/config.go`, `main.go`, `Makefile`, `go.mod`, `docs/local-run.md`, `docs/next-steps.md`("공유하거나 배포하는 환경에 올리기 전에 OpenBao의 봉인 방식을 바꾼다" 항목 추가)
 
 **Interfaces:**
 - Produces (`internal/bao`):
   - `type SecretID string`(가린다), `type Credentials struct { RoleID string; SecretID SecretID }`
-  - `func New(addr string, creds Credentials, hc *http.Client) (*Client, error)`. `hc`에 제한 시간이 없으면 거부한다.
+  - `func New(addr string, creds Credentials, hc *http.Client) (*Client, error)`. `hc`에 제한 시간이 없으면 거부한다. 공식 클라이언트(`api.Client`)를 `hc`로 만들고 자동 재시도는 2번으로 줄인다. 공식 모듈의 타입은 이 패키지의 공개 API에 나오지 않는다.
   - `func (c *Client) Fingerprints(ctx context.Context, values [][]byte) ([]string, error)`. 입력 순서대로, 소문자 16진수 64자.
   - `func (c *Client) PutPending(ctx context.Context, projectID int64, fingerprint string, value []byte) error`
   - `func (c *Client) ListPending(ctx context.Context, projectID int64) ([]string, error)`. 없으면 빈 목록.
@@ -332,7 +332,7 @@ OpenBao의 구성:
 | KV v2 | 마운트 `secret`. 임시 원본은 `pending/<프로젝트 ID>/<지문>`, 본문은 `{"value": "<base64>"}` |
 | AppRole `worker` | `transit/hmac/fingerprint` update, `secret/data/pending/*`와 `secret/data/projects/*` create·update, `secret/metadata/pending/*` list·delete |
 | AppRole `web` | `secret/data/pending/*`와 `secret/data/projects/*` read. 이 계획에서 web은 OpenBao에 접속하지 않는다 |
-| 토큰 | TTL 1시간. 클라이언트는 처음 쓸 때 로그인하고, 403을 받으면 한 번 다시 로그인해 재시도한다 |
+| 토큰 | TTL 1시간. 클라이언트는 처음 쓸 때 AppRole 모듈로 로그인하고, 403을 받으면 한 번 다시 로그인해 재시도한다. 갱신용 goroutine은 두지 않는다 |
 | audit device | 표준 출력으로 내보내는 file 장치 |
 
 `openbao-secrets` 컨테이너는 볼륨에 파일이 없을 때만 봉인 해제 키(32바이트)와 두 역할의 secret-id를 난수로 만든다. worker는 `BAO_ADDR`, `BAO_ROLE_ID`, `BAO_SECRET_ID_FILE`을 읽는다.
@@ -340,7 +340,7 @@ OpenBao의 구성:
 통합 테스트는 실제 원본이 든 OpenBao를 쓰지 않는다. compose의 `test` 프로필에 `-dev` 모드의 `openbao-test`를 `127.0.0.1:18200`에 두고, 테스트가 개발용 루트 토큰으로 transit, KV, AppRole을 직접 만든다. `TEST_BAO_ADDR`이 없으면 건너뛴다.
 
 - [ ] **Step 1: "구현 전에 확인할 사실"의 Task 5 항목을 공식 문서로 확인한다.** self-init으로 안 되는 것이 있으면 그 부분만 한 번 실행되는 설정 컨테이너로 옮기고 결정 기록에 쓴다.
-- [ ] **Step 2: 실패하는 테스트 작성** (`httptest`로 만든 가짜 OpenBao)
+- [ ] **Step 2: 실패하는 테스트 작성** (`httptest`로 만든 가짜 OpenBao. 공식 클라이언트가 보내는 실제 요청을 받는다)
 
 | 테스트 | 기대 |
 |---|---|
@@ -349,7 +349,7 @@ OpenBao의 구성:
 | `TestFingerprints_Batches` | 값 1,200개가 500개씩 나뉘어 요청되고 순서가 유지된다 |
 | `TestClient_LogsInOnce` | 호출 세 번에 로그인은 한 번 |
 | `TestClient_ReLoginOn403` | 403 뒤 다시 로그인해 성공한다. 두 번째도 403이면 오류 |
-| `TestClient_ErrorsHideValues` | 500 응답 본문에 값이 있어도 오류 메시지와 `%+v`에 값, secret-id, 토큰이 없다 |
+| `TestClient_ErrorsHideValues` | 500 응답 본문에 값이 있어도 오류 메시지와 `%+v`에 값, secret-id, 토큰이 없다. 공식 클라이언트의 오류는 응답 본문을 담으므로 상태 코드만 남기고 감싼다 |
 | `TestDeletePending_Missing` | 404는 nil |
 | `TestNew_RequiresTimeout` | 제한 시간 없는 클라이언트는 거부 |
 | `TestIntegration_RoundTrip` | 실제 OpenBao에서 같은 값의 지문이 두 번 같고, 쓰기·목록·삭제가 된다. `worker` 역할의 토큰으로 `secret/data/pending/…` 읽기는 403이다 |
@@ -364,7 +364,7 @@ OpenBao의 구성:
 ### Task 6: 파일 읽기, 인코딩, 위치
 
 **Files:**
-- Create: `internal/textfile/textfile.go`, `walk.go`, 두 테스트, `internal/textfile/testdata/`(EUC-KR, CRLF, BOM 예제), `docs/decisions/0018-encoding-detection.md`
+- Create: `internal/textfile/textfile.go`, `walk.go`, 두 테스트, `internal/textfile/testdata/`(EUC-KR, CRLF, BOM 예제), `docs/decisions/0019-encoding-detection.md`
 
 **Interfaces:**
 - Produces (`internal/textfile`):
@@ -453,7 +453,7 @@ OpenBao의 구성:
 ### Task 8: 스캐너 실행과 출력 읽기
 
 **Files:**
-- Create: `internal/betterleaks/betterleaks.go`, `internal/opengrep/opengrep.go`, `internal/keyfile/keyfile.go`, 각 테스트와 `testdata/*.json`, `deploy/worker/scanners.lock`, `deploy/worker/fetch-scanners.sh`, `docs/decisions/0019-scanner-invocation.md`
+- Create: `internal/betterleaks/betterleaks.go`, `internal/opengrep/opengrep.go`, `internal/keyfile/keyfile.go`, 각 테스트와 `testdata/*.json`, `deploy/worker/scanners.lock`, `deploy/worker/fetch-scanners.sh`, `docs/decisions/0020-scanner-invocation.md`
 - Modify: `internal/scan/scan.go`, `deploy/worker/Dockerfile`, `Makefile`(`make scanners`), `AGENTS.md`("Formatting and tooling"의 버전 고정 문장)
 
 **Interfaces:**

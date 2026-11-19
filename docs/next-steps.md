@@ -21,7 +21,7 @@
 |---|---|---|
 | 1 | 개발 규칙과 검증 hook | 완료 |
 | 2 | 골격과 로그인 | 완료 (`docs/superpowers/plans/2026-11-18-02-skeleton-and-login.md`) |
-| 3 | 프로젝트 등록과 스캔 | 계획 문서 작성, 사용자 검토 대기 (`docs/superpowers/plans/2026-11-19-03-project-and-scan.md`) |
+| 3 | 프로젝트 등록과 스캔 | 계획 문서 검토 중. 주요 항목은 2026-11-19에 확정했다 (`docs/superpowers/plans/2026-11-19-03-project-and-scan.md`) |
 | 4 | 화면 디자인 시안과 판정 화면 | |
 | 5 | 적용 | |
 | 6 | 리포트와 PDF | |
