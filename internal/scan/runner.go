@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 )
@@ -198,23 +199,23 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 	}
 	res.Files, res.Skipped = len(files.files)+files.unstorable, files.skipped
 
-	raws, versions, dropped, err := r.detect(ctx, dir, copies, files)
+	d, err := r.detect(ctx, dir, copies, files)
 	if err != nil {
 		return err
 	}
-	res.ToolVersions = versions
-	placed, notPlaced, err := locate(ctx, dir, files, raws, r.opts.MaxFileBytes)
+	res.ToolVersions = d.versions
+	placed, notPlaced, err := locate(ctx, dir, files, d.raws, r.opts.MaxFileBytes)
 	if err != nil {
 		return err
 	}
-	dropContext(placed, files, dropped)
-	res.Dropped = dropped.count + notPlaced
+	dropContext(placed, files, d.dropped)
+	res.Dropped = d.dropped.count + notPlaced
 
 	fingerprints, err := r.fingerprint(ctx, placed)
 	if err != nil {
 		return err
 	}
-	findings, originals := merge(placed, fingerprints, newValueIndex(maskValues(placed, raws)))
+	findings, originals := merge(placed, fingerprints, newValueIndex(maskValues(placed, d.raws)))
 	if err := r.park(ctx, int64(p.ID), originals); err != nil {
 		return err
 	}
@@ -228,10 +229,36 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 	if err := r.store.SaveResult(ctx, j.ID, r.opts.WorkerID, id, res); err != nil {
 		return fmt.Errorf("saving scan result: %w", err)
 	}
-	r.logger.InfoContext(ctx, "scan finished", "scan_id", id, "job_id", j.ID,
-		"files", res.Files, "skipped", res.Skipped, "dropped", res.Dropped, "findings", len(res.Findings))
+	r.logSummary(ctx, j, id, res, d, files.skippedPaths)
 	r.removeStalePending(ctx, id, int64(p.ID), keep)
 	return nil
+}
+
+// maxLoggedPaths is the number of skipped paths logged for a scan.
+const maxLoggedPaths = 50
+
+// logSummary logs what the scan of j found and what it could not look at:
+// the counts of res, the errors each scanner reported for files it could
+// analyse only in part, the number of scanner results in files that could
+// not be read as text, and the first maxLoggedPaths skipped paths with
+// their total. A path goes through finding.Printable first. No value,
+// matched text or surrounding line is logged.
+func (r *Runner) logSummary(ctx context.Context, j job.Job, id ID, res Result, d detection, skipped []string) {
+	errs := make([]any, 0, len(d.versions))
+	for _, tool := range slices.Sorted(maps.Keys(d.versions)) {
+		errs = append(errs, slog.Int(tool, d.errors[tool]))
+	}
+	r.logger.InfoContext(ctx, "scan finished", "scan_id", id, "job_id", j.ID,
+		"files", res.Files, "skipped", res.Skipped, "dropped", res.Dropped, "findings", len(res.Findings),
+		"results_in_skipped_files", d.inSkipped, slog.Group("scanner_errors", errs...))
+	if len(skipped) == 0 {
+		return
+	}
+	paths := make([]string, 0, min(len(skipped), maxLoggedPaths))
+	for _, p := range skipped[:min(len(skipped), maxLoggedPaths)] {
+		paths = append(paths, finding.Printable(p))
+	}
+	r.logger.InfoContext(ctx, "scan skipped files", "scan_id", id, "job_id", j.ID, "total", len(skipped), "paths", paths)
 }
 
 // fingerprint returns the fingerprint of every distinct value in placed,

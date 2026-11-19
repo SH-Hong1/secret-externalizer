@@ -38,6 +38,9 @@ type fileList struct {
 	// files whose path cannot be stored, and the directories that could not
 	// be read.
 	skipped int
+	// skippedPaths holds the paths of the skipped files, in walk order. A
+	// path that is not storable is kept as it is.
+	skippedPaths []string
 	// copied counts the EUC-KR files written to the folder of copies.
 	copied int
 }
@@ -75,12 +78,14 @@ func listFiles(ctx context.Context, dir string, excludes []string, maxBytes int6
 		if !storablePath(rel) {
 			l.unstorable++
 			l.skipped++
+			l.skippedPaths = append(l.skippedPaths, rel)
 			return nil
 		}
 		f, err := textfile.Read(filepath.Join(dir, filepath.FromSlash(rel)), maxBytes)
 		if notText(err) {
 			l.files[rel] = sourceFile{}
 			l.skipped++
+			l.skippedPaths = append(l.skippedPaths, rel)
 			return nil
 		}
 		if err != nil {
