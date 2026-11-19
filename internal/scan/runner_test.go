@@ -1089,3 +1089,100 @@ func TestHandle_UnstorableFileNameSkipped(t *testing.T) {
 		})
 	}
 }
+
+func TestHandle_SplitsConnectionString(t *testing.T) {
+	const (
+		url       = "jdbc:mysql://shop_app:dev-only-fake-pw@db.invalid:3306/shop" //nolint:gosec // G101: an obviously fake fixture value
+		urlPrefix = "    url: "
+		h2        = "jdbc:h2:mem:test"
+		paramURL  = "jdbc:postgresql://db.invalid/shop?user=a_user&sslpassword=dev-only-fake-ssl"
+	)
+	lines := []string{"# 주문 DB", "spring:", "  datasource:", urlPrefix + url}
+	euckr, err := korean.EUCKR.NewEncoder().String(strings.Join(lines, "\r\n") + "\r\n")
+	if err != nil {
+		t.Fatalf("encoding EUC-KR: %v", err)
+	}
+	e := newEnv(t, map[string]string{
+		"lf/application.yml":    strings.Join(lines, "\n") + "\n",
+		"crlf/application.yml":  strings.Join(lines, "\r\n") + "\r\n",
+		"euckr/application.yml": euckr,
+		"h2/application.yml":    "spring:\n  datasource:\n" + urlPrefix + h2 + "\n",
+		"param/application.yml": "spring:\n  datasource:\n" + urlPrefix + paramURL + "\n",
+	})
+	urlScanner := func(needle string) *needleScanner {
+		return &needleScanner{tool: "opengrep", rule: "yaml-jdbc-url", category: finding.CategoryStorage, kind: finding.KindURL, needle: needle}
+	}
+	if err := e.handle(t.Context(), urlScanner(url), urlScanner(h2), urlScanner(paramURL)); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t)
+	if got.Dropped != 0 {
+		t.Errorf("Handle() dropped %d results, want none", got.Dropped)
+	}
+
+	parts := []struct {
+		kind  finding.Kind
+		value string
+	}{
+		{finding.KindAccount, "shop_app"},
+		{finding.KindPassword, "dev-only-fake-pw"},
+		{finding.KindHost, "db.invalid"},
+		{finding.KindPort, "3306"},
+	}
+	byFile := map[string][]finding.Finding{}
+	for _, f := range got.Findings {
+		byFile[f.File] = append(byFile[f.File], f)
+	}
+	for _, file := range []string{"lf/application.yml", "crlf/application.yml", "euckr/application.yml"} {
+		fs := byFile[file]
+		if len(fs) != len(parts) {
+			t.Errorf("Handle() findings in %s = %+v, want one for each of %d components", file, fs, len(parts))
+			continue
+		}
+		for _, p := range parts {
+			var f *finding.Finding
+			for i := range fs {
+				if fs[i].Kind == p.kind {
+					f = &fs[i]
+				}
+			}
+			if f == nil || len(f.Locations) != 1 || f.Fingerprint != fingerprintOf(p.value) {
+				t.Errorf("Handle() findings in %s = %+v, want one %s finding of %q at one location", file, fs, p.kind, p.value)
+				continue
+			}
+			col := len(urlPrefix) + strings.Index(url, p.value) + 1
+			l := f.Locations[0]
+			if l.StartLine != 4 || l.StartCol != col || l.EndLine != 4 || l.EndCol != col+len(p.value)-1 {
+				t.Errorf("%s %s location = line %d column %d to line %d column %d, want line 4 column %d to %d",
+					file, p.kind, l.StartLine, l.StartCol, l.EndLine, l.EndCol, col, col+len(p.value)-1)
+			}
+			wantDetections := []finding.Detection{{Tool: "opengrep", Rule: "yaml-jdbc-url"}}
+			if diff := cmp.Diff(wantDetections, l.Detections); diff != "" {
+				t.Errorf("%s %s detections (-want +got):\n%s", file, p.kind, diff)
+			}
+			wantContext := []string{"spring:", "  datasource:", urlPrefix + "jdbc:mysql://****:****@****:****/shop"}
+			if diff := cmp.Diff(wantContext, l.Context); diff != "" {
+				t.Errorf("%s %s surrounding lines (-want +got):\n%s", file, p.kind, diff)
+			}
+			if string(e.orig.pending[f.Fingerprint]) != p.value {
+				t.Errorf("Handle() parked %q for the %s, want %q", e.orig.pending[f.Fingerprint], p.kind, p.value)
+			}
+		}
+	}
+	if fs := byFile["param/application.yml"]; len(fs) != 3 {
+		t.Errorf("Handle() findings in param/application.yml = %+v, want the host, the account, and the ssl password", fs)
+	}
+	for _, f := range byFile["param/application.yml"] {
+		if f.Kind == finding.KindPassword && f.Fingerprint != fingerprintOf("dev-only-fake-ssl") {
+			t.Errorf("Handle() password finding in param/application.yml = %+v, want the sslpassword value", f)
+		}
+		for _, l := range f.Locations {
+			if v := containsAny(strings.Join(l.Context, "\n"), "dev-only-fake-ssl"); v != "" {
+				t.Errorf("param/application.yml %s surrounding lines = %q, hold %q", f.Kind, l.Context, v)
+			}
+		}
+	}
+	if fs := byFile["h2/application.yml"]; len(fs) != 1 || fs[0].Kind != finding.KindURL || fs[0].Fingerprint != fingerprintOf(h2) {
+		t.Errorf("Handle() findings in h2/application.yml = %+v, want the whole URL as one url finding", fs)
+	}
+}

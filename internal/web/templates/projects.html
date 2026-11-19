@@ -1,10 +1,17 @@
 {{define "title"}}프로젝트{{end}}
-{{define "body"}}<main>
-<h1>프로젝트</h1>
-<p><a href="/projects/new">프로젝트 등록</a></p>
-{{if .}}<ul>
-{{range .}}<li><a href="/projects/{{.ID}}">{{.Name}}</a> ({{.Path}})</li>
-{{end}}</ul>
-{{else}}<p>등록된 프로젝트가 없습니다.</p>
-{{end}}<p><a href="/">홈</a></p>
-</main>{{end}}
+{{define "section"}}projects{{end}}
+{{define "body"}}<main class="page">
+<div class="page-head">
+<h1 class="page-title grow">프로젝트</h1>
+<a class="btn btn-primary btn-lg" href="/projects/new">프로젝트 등록</a>
+</div>
+{{if .Projects}}<div class="table-wrap">
+<table class="table min-w-[480px]">
+<thead><tr><th>이름</th><th>경로</th></tr></thead>
+<tbody>
+{{range .Projects}}<tr><td><a class="row-link" href="/projects/{{.ID}}">{{.Name}}</a></td><td class="code-cell">{{.Path}}</td></tr>
+{{end}}</tbody>
+</table>
+</div>
+{{else}}<p class="notice">등록된 프로젝트가 없습니다. 스캔할 소스의 경로를 등록해 주세요.</p>
+{{end}}</main>{{end}}

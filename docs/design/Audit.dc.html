@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>감사 로그</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+a{color:#1F4FD8}a:hover{color:#163A9E}
+</style>
+</helmet>
+<div style="min-height: 640px; background: #F3F4F6; color: #15171C; font-family: 'IBM Plex Sans KR', system-ui, sans-serif; font-size: 14px; line-height: 1.5">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 28px; padding: 0 24px; min-height: 52px; background: #15171C; color: #F3F4F6">
+<a href="Projects.dc.html" style="font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 15px; color: #FFFFFF; text-decoration: none">secret-externalizer</a>
+<nav aria-label="주 메뉴" style="display: flex; gap: 4px; flex-grow: 1">
+<a href="Projects.dc.html" style="padding: 14px 12px; color: #C9CED8; text-decoration: none">프로젝트</a>
+<a href="Audit.dc.html" style="padding: 14px 12px; color: #FFFFFF; text-decoration: none; font-weight: 600; box-shadow: inset 0 -3px 0 #7FA2FF">감사 로그</a>
+</nav>
+<span style="color: #C9CED8">dev-admin <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 6px; border: 1px solid #5B6270; border-radius: 4px; margin-left: 6px">admin</span></span>
+<button type="button" style="font: inherit; color: #F3F4F6; background: transparent; border: 1px solid #5B6270; border-radius: 6px; padding: 6px 12px; min-height: 36px; cursor: pointer">로그아웃</button>
+</header>
+
+<main style="max-width: 1120px; margin: 0 auto; padding: 24px">
+<h1 style="margin: 0 0 4px; font-size: 22px; font-weight: 700">감사 로그</h1>
+<p style="margin: 0 0 16px; color: #565D6B">판정, 묶음 옮기기, 원본 보기가 최신순으로 남습니다. 값은 기록하지 않습니다.</p>
+
+<div style="background: #FFFFFF; border: 1px solid #D9DDE3; border-radius: 8px; overflow-x: auto">
+<table style="width: 100%; border-collapse: collapse; min-width: 860px">
+<thead>
+<tr style="text-align: left; color: #565D6B; font-size: 13px">
+<th style="padding: 10px 16px; font-weight: 600; border-bottom: 1px solid #D9DDE3">시각 (UTC)</th>
+<th style="padding: 10px 16px; font-weight: 600; border-bottom: 1px solid #D9DDE3">사용자</th>
+<th style="padding: 10px 16px; font-weight: 600; border-bottom: 1px solid #D9DDE3">동작</th>
+<th style="padding: 10px 16px; font-weight: 600; border-bottom: 1px solid #D9DDE3">프로젝트</th>
+<th style="padding: 10px 16px; font-weight: 600; border-bottom: 1px solid #D9DDE3">내용</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC; font-family: 'IBM Plex Mono', monospace; font-size: 13px; white-space: nowrap">2026-11-19 06:41:07</td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC">dev-admin</td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC"><span style="padding: 2px 8px; border-radius: 999px; background: #15171C; color: #FFFFFF; font-size: 12.5px; font-weight: 600">원본 보기</span></td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC"><a href="Project.dc.html">shop</a></td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC">묶음 #311 · 비밀번호 · <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px">ext.db.main.password</span></td>
+</tr>
+<tr>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC; font-family: 'IBM Plex Mono', monospace; font-size: 13px; white-space: nowrap">2026-11-19 06:38:52</td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC">dev-user</td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC"><span style="padding: 2px 8px; border-radius: 999px; background: #E6ECFC; color: #12307F; font-size: 12.5px; font-weight: 600">판정 · 외부화</span></td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC"><a href="Project.dc.html">shop</a></td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC">묶음 #311 · 이름 <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px">ext.db.main.password</span></td>
+</tr>
+<tr>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC; font-family: 'IBM Plex Mono', monospace; font-size: 13px; white-space: nowrap">2026-11-19 06:37:15</td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC">dev-user</td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC"><span style="padding: 2px 8px; border-radius: 999px; background: #F0E8FB; color: #4E2190; font-size: 12.5px; font-weight: 600">판정 · 삭제·마스킹</span></td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC"><a href="Project.dc.html">shop</a></td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC">전화번호 37건 · <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px">logs/sample.log</span></td>
+</tr>
+<tr>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC; font-family: 'IBM Plex Mono', monospace; font-size: 13px; white-space: nowrap">2026-11-19 06:35:40</td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC">dev-user</td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC"><span style="padding: 2px 8px; border-radius: 999px; background: #EEF0F3; color: #3D4350; font-size: 12.5px; font-weight: 600">묶음 옮기기</span></td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC"><a href="Project.dc.html">shop</a></td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC"><span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px">root-context.xml</span> · 묶음 #311 → #340</td>
+</tr>
+<tr>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC; font-family: 'IBM Plex Mono', monospace; font-size: 13px; white-space: nowrap">2026-11-19 06:33:02</td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC">dev-user</td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC"><span style="padding: 2px 8px; border-radius: 999px; background: #FCEBD3; color: #5C2D00; font-size: 12.5px; font-weight: 600">판정 · 보류</span></td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC"><a href="Project.dc.html">shop</a></td>
+<td style="padding: 11px 16px; border-bottom: 1px solid #E6E8EC">묶음 #298 · 구조 변경 필요 · 메모 "세션 발급을 서버로 옮겨야 함"</td>
+</tr>
+<tr>
+<td style="padding: 11px 16px; font-family: 'IBM Plex Mono', monospace; font-size: 13px; white-space: nowrap">2026-11-19 06:32:48</td>
+<td style="padding: 11px 16px">dev-user</td>
+<td style="padding: 11px 16px"><span style="padding: 2px 8px; border-radius: 999px; background: #E9EBEF; color: #3D4350; font-size: 12.5px; font-weight: 600">판정 · 오탐</span></td>
+<td style="padding: 11px 16px"><a href="Project.dc.html">shop</a></td>
+<td style="padding: 11px 16px">묶음 #287 · 메모 "예제 문서의 값"</td>
+</tr>
+</tbody>
+</table>
+</div>
+<div style="margin-top: 14px"><a href="#" style="display: inline-block; padding: 9px 16px; background: #FFFFFF; color: #15171C; border: 1px solid #B9BFC9; border-radius: 6px; text-decoration: none">더 보기</a></div>
+</main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1360,"height":640}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

@@ -26,6 +26,8 @@ func TestPreview_Table(t *testing.T) {
 		{"control character after prefix", finding.CategoryOther, finding.KindPassword, "abcd\nefghij", "abcd****"},
 		{"private key", finding.CategorySSH, finding.KindPrivateKey, "-----BEGIN FAKE KEY-----", "****"},
 		{"key file", finding.CategoryStorage, finding.KindKeyFile, "dev-only-fake-key.pem", "****"},
+		{"port", finding.CategoryStorage, finding.KindPort, "3306", "****"},
+		{"eight-digit port", finding.CategoryStorage, finding.KindPort, "12345678", "1234****"},
 		{"phone", finding.CategoryCustomerData, finding.KindPhone, "010-0000-0000", "010-****-****"},
 		{"phone seoul", finding.CategoryCustomerData, finding.KindPhone, "02-000-0000", "02-***-****"},
 		{"phone country code", finding.CategoryCustomerData, finding.KindPhone, "+82-10-0000-0000", "+82-**-****-****"},
@@ -106,7 +108,7 @@ func TestParseCategory_Unknown(t *testing.T) {
 }
 
 func TestParseKind(t *testing.T) {
-	for _, s := range []string{"phone", "rrn", "email", "card", "address", "password", "token", "account", "host", "url", "private-key", "key-file", "other"} {
+	for _, s := range []string{"phone", "rrn", "email", "card", "address", "password", "token", "account", "host", "port", "url", "private-key", "key-file", "other"} {
 		got, err := finding.ParseKind(s)
 		if err != nil || string(got) != s {
 			t.Errorf("ParseKind(%q) = %q, %v, want %q, nil", s, got, err, s)

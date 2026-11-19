@@ -193,3 +193,45 @@ func TestHandle_RealScannersEncodedValue(t *testing.T) {
 		}
 	}
 }
+
+// TestHandle_RealScannersSplitURL checks that the password betterleaks
+// reports inside a JDBC URL and the password split from opengrep's URL are
+// one location of one finding.
+func TestHandle_RealScannersSplitURL(t *testing.T) {
+	blBin := realBin(t, "BETTERLEAKS_BIN", "betterleaks")
+	ogBin := realBin(t, "OPENGREP_BIN", "opengrep")
+	rules, err := filepath.Abs(filepath.Join("..", "..", "rules"))
+	if err != nil {
+		t.Fatalf("Abs(rules) error = %v", err)
+	}
+	const urlPassword = "dev-only-fake-url-pw-8" //nolint:gosec // G101: an obviously fake fixture value
+	e := newEnv(t, map[string]string{
+		"src/main/resources/application.yml": "spring:\n  datasource:\n    url: jdbc:mysql://shop_app:" + urlPassword + "@db.invalid:3306/shop\n",
+	})
+	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
+	bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
+	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env)
+
+	if err := e.handle(t.Context(), bl, og); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t)
+	kinds := map[finding.Kind]int{}
+	for _, f := range got.Findings {
+		kinds[f.Kind]++
+	}
+	wantKinds := map[finding.Kind]int{finding.KindAccount: 1, finding.KindPassword: 1, finding.KindHost: 1, finding.KindPort: 1}
+	if got.Dropped != 0 || fmt.Sprint(kinds) != fmt.Sprint(wantKinds) {
+		t.Fatalf("Handle() = %+v, want one finding of each component and nothing dropped", got)
+	}
+	for _, f := range got.Findings {
+		if f.Kind != finding.KindPassword {
+			continue
+		}
+		want := []finding.Detection{{Tool: "betterleaks", Rule: "generic-credential-uri"}, {Tool: "opengrep", Rule: "yaml-jdbc-url"}}
+		if f.Fingerprint != fingerprintOf(urlPassword) || f.Category != finding.CategoryStorage ||
+			len(f.Locations) != 1 || fmt.Sprint(f.Locations[0].Detections) != fmt.Sprint(want) {
+			t.Errorf("password finding = %+v, want the password at one location found by %v", f, want)
+		}
+	}
+}

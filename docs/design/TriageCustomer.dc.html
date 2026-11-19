@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>판정 화면, 고객정보</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+a{color:#1F4FD8}a:hover{color:#163A9E}
+</style>
+</helmet>
+<div style="min-height: 900px; background: #F3F4F6; color: #15171C; font-family: 'IBM Plex Sans KR', system-ui, sans-serif; font-size: 14px; line-height: 1.5; display: flex; flex-direction: column">
+
+<header style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 28px; padding: 0 24px; min-height: 52px; background: #15171C; color: #F3F4F6">
+<a href="Projects.dc.html" style="font-family: 'IBM Plex Mono', monospace; font-weight: 600; font-size: 15px; color: #FFFFFF; text-decoration: none">secret-externalizer</a>
+<nav aria-label="주 메뉴" style="display: flex; gap: 4px; flex-grow: 1">
+<a href="Projects.dc.html" style="padding: 14px 12px; color: #FFFFFF; text-decoration: none; font-weight: 600; box-shadow: inset 0 -3px 0 #7FA2FF">프로젝트</a>
+</nav>
+<span style="color: #C9CED8">dev-user <span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; padding: 2px 6px; border: 1px solid #5B6270; border-radius: 4px; margin-left: 6px">user</span></span>
+<button type="button" style="font: inherit; color: #F3F4F6; background: transparent; border: 1px solid #5B6270; border-radius: 6px; padding: 6px 12px; min-height: 36px; cursor: pointer">로그아웃</button>
+</header>
+
+<div style="display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; padding: 18px 24px 12px">
+<nav aria-label="위치" style="color: #565D6B"><a href="Projects.dc.html">프로젝트</a> / <a href="Project.dc.html">shop</a> /</nav>
+<h1 style="margin: 0; font-size: 22px; font-weight: 700">판정</h1>
+<span style="color: #565D6B; flex-grow: 1">스캔 #12 기준 · 2026-11-19 05:12 UTC · 커밋 <span style="font-family: 'IBM Plex Mono', monospace">a41c9e2</span></span>
+<span style="font-weight: 600">미판정 96 <span style="color: #565D6B; font-weight: 400">/ 전체 128</span></span>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 24px; padding: 0 24px 14px">
+<div role="group" aria-label="상태" style="display: flex; flex-wrap: wrap; gap: 6px">
+<a href="#" style="padding: 7px 12px; border-radius: 6px; background: #15171C; color: #FFFFFF; text-decoration: none; font-weight: 600">미판정 96</a>
+<a href="#" style="padding: 7px 12px; border-radius: 6px; background: #FFFFFF; border: 1px solid #D9DDE3; color: #15171C; text-decoration: none">외부화 18</a>
+<a href="#" style="padding: 7px 12px; border-radius: 6px; background: #FFFFFF; border: 1px solid #D9DDE3; color: #15171C; text-decoration: none">삭제·마스킹 6</a>
+<a href="#" style="padding: 7px 12px; border-radius: 6px; background: #FFFFFF; border: 1px solid #D9DDE3; color: #15171C; text-decoration: none">오탐 5</a>
+<a href="#" style="padding: 7px 12px; border-radius: 6px; background: #FFFFFF; border: 1px solid #D9DDE3; color: #15171C; text-decoration: none">보류 3</a>
+<a href="#" style="padding: 7px 12px; border-radius: 6px; background: #FFFFFF; border: 1px solid #D9DDE3; color: #15171C; text-decoration: none">전체 128</a>
+</div>
+<div style="display: flex; align-items: center; gap: 8px">
+<label for="cat" style="color: #565D6B">분류</label>
+<select id="cat" style="font: inherit; padding: 7px 10px; min-height: 36px; border: 1px solid #B9BFC9; border-radius: 6px; background: #FFFFFF; color: #15171C">
+<option>고객정보</option><option>전체</option>
+</select>
+</div>
+</div>
+
+<div style="display: flex; flex-wrap: wrap; flex-grow: 1; margin: 0 24px 24px; background: #FFFFFF; border: 1px solid #D9DDE3; border-radius: 8px; overflow: hidden">
+
+<nav aria-label="묶음 목록" style="flex: 1 1 340px; max-width: 420px; min-width: 0; border-right: 1px solid #D9DDE3; display: flex; flex-direction: column">
+<a href="#" aria-current="true" style="display: block; padding: 12px 16px; border-bottom: 1px solid #E6E8EC; background: #EDF1FD; box-shadow: inset 3px 0 0 #1F4FD8; color: #15171C; text-decoration: none">
+<span style="display: flex; justify-content: space-between; gap: 8px"><span style="font-weight: 600">전화번호 <span style="font-weight: 400; color: #565D6B">· 고객정보</span></span><span style="color: #565D6B">37건</span></span>
+<span style="display: block; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #3D4350; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">logs/sample.log</span>
+</a>
+<a href="#" style="display: block; padding: 12px 16px; border-bottom: 1px solid #E6E8EC; color: #15171C; text-decoration: none">
+<span style="display: flex; justify-content: space-between; gap: 8px"><span style="font-weight: 600">주민등록번호 <span style="font-weight: 400; color: #565D6B">· 고객정보</span></span><span style="color: #565D6B">4건</span></span>
+<span style="display: block; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #3D4350; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">logs/sample.log</span>
+</a>
+<a href="#" style="display: block; padding: 12px 16px; border-bottom: 1px solid #E6E8EC; color: #15171C; text-decoration: none">
+<span style="display: flex; justify-content: space-between; gap: 8px"><span style="font-weight: 600">이메일 <span style="font-weight: 400; color: #565D6B">· 고객정보</span></span><span style="color: #565D6B">12건</span></span>
+<span style="display: block; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #3D4350; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">data/members-sample.csv</span>
+</a>
+<a href="#" style="display: block; padding: 12px 16px; border-bottom: 1px solid #E6E8EC; color: #15171C; text-decoration: none">
+<span style="display: flex; justify-content: space-between; gap: 8px"><span style="font-weight: 600">주소 <span style="font-weight: 400; color: #565D6B">· 고객정보</span></span><span style="color: #565D6B">9건</span></span>
+<span style="display: block; font-family: 'IBM Plex Mono', monospace; font-size: 12.5px; color: #3D4350; overflow: hidden; text-overflow: ellipsis; white-space: nowrap">data/members-sample.csv</span>
+</a>
+<div style="margin-top: auto; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 16px; border-top: 1px solid #D9DDE3; color: #565D6B">
+<span>1 / 1쪽 · 4줄</span>
+</div>
+</nav>
+
+<section aria-label="상세" style="flex: 999 1 560px; min-width: 0; padding: 20px 24px 24px; display: flex; flex-direction: column; gap: 18px">
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px">
+<h2 style="margin: 0; font-size: 18px; font-weight: 700">전화번호</h2>
+<span style="color: #565D6B">고객정보</span>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; padding: 3px 8px; background: #F3F4F6; border: 1px solid #D9DDE3; border-radius: 4px">010-****-****</span>
+<span style="flex-grow: 1"></span>
+<span style="padding: 3px 10px; border: 1px solid #15171C; border-radius: 999px; font-size: 12.5px; font-weight: 600">미판정</span>
+</div>
+
+<dl style="margin: 0; display: grid; grid-template-columns: 120px minmax(0, 1fr); gap: 10px 16px; padding: 16px; border: 1px solid #D9DDE3; border-radius: 6px">
+<dt style="color: #565D6B">파일</dt>
+<dd style="margin: 0; font-family: 'IBM Plex Mono', monospace; font-weight: 600">logs/sample.log</dd>
+<dt style="color: #565D6B">이 파일의 건수</dt>
+<dd style="margin: 0">37건</dd>
+<dt style="color: #565D6B">줄 번호</dt>
+<dd style="margin: 0; font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.8">203, 204, 211, 219, 240, 241, 258, 263, 270, 288, 301, 302, 317, 329, 344, 350, 362, 377, 381, 399 <span style="font-family: 'IBM Plex Sans KR', sans-serif; color: #565D6B">외 17곳</span></dd>
+<dt style="color: #565D6B">탐지</dt>
+<dd style="margin: 0; font-family: 'IBM Plex Mono', monospace; font-size: 13px">betterleaks kr-phone-number</dd>
+</dl>
+
+<p style="margin: 0; padding: 12px 14px; background: #F7F8FA; border: 1px solid #D9DDE3; border-radius: 6px; color: #3D4350">고객정보는 값과 주변 줄을 저장하지 않습니다. 내용은 편집기에서 이 파일의 줄 번호로 확인해 주세요.</p>
+
+<form style="display: flex; flex-direction: column; gap: 14px; padding: 16px; background: #F7F8FA; border: 1px solid #D9DDE3; border-radius: 6px">
+<p style="margin: 0; font-weight: 600">이 파일의 전화번호 37건을 한 번에 판정합니다.</p>
+<div style="display: flex; flex-direction: column; gap: 4px; max-width: 520px">
+<label for="note" style="font-weight: 600">메모 <span style="font-weight: 400; color: #565D6B">· 선택</span></label>
+<input id="note" style="font: inherit; padding: 9px 10px; min-height: 22px; border: 1px solid #B9BFC9; border-radius: 6px; background: #FFFFFF; color: #15171C">
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<button type="button" style="font: inherit; font-weight: 600; background: #6B2FB8; color: #FFFFFF; border: 1px solid #6B2FB8; border-radius: 6px; padding: 10px 18px; min-height: 44px; cursor: pointer">삭제·마스킹</button>
+<button type="button" style="font: inherit; font-weight: 600; background: #FFFFFF; color: #3D4350; border: 1px solid #3D4350; border-radius: 6px; padding: 10px 18px; min-height: 44px; cursor: pointer">오탐</button>
+<span style="width: 1px; align-self: stretch; background: #D9DDE3"></span>
+<label for="reason" style="color: #565D6B">보류 사유</label>
+<select id="reason" style="font: inherit; padding: 9px 10px; min-height: 44px; border: 1px solid #B9BFC9; border-radius: 6px; background: #FFFFFF; color: #15171C">
+<option>확인 필요</option><option>구조 변경 필요</option><option>나중에 처리</option>
+</select>
+<button type="button" style="font: inherit; font-weight: 600; background: #FFFFFF; color: #8A4300; border: 1px solid #8A4300; border-radius: 6px; padding: 10px 18px; min-height: 44px; cursor: pointer">보류</button>
+</div>
+</form>
+
+</section>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":1360,"height":900}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

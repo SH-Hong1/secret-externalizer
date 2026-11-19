@@ -1,40 +1,68 @@
-{{define "title"}}스캔 {{.Scan.ID}}{{end}}
+{{define "title"}}스캔 #{{.Scan.ID}}{{end}}
+{{define "section"}}projects{{end}}
 {{define "head"}}{{if .Scan.Status.Active}}<meta http-equiv="refresh" content="3">
 {{end}}{{end}}
-{{define "body"}}<main>
-<h1>스캔 {{.Scan.ID}}</h1>
-<p>상태: {{.StatusLabel}}</p>
-{{if .Scan.Status.Active}}<p>이 화면은 3초마다 새로 고쳐집니다.</p>
-{{end}}{{if eq .Scan.Status "failed"}}<p>실패 사유: {{.Scan.FailureReason}}</p>
-{{end}}<p>요청: {{.Scan.RequestedBy}}, {{.RequestedAt}}</p>
-{{if .FinishedAt}}<p>끝난 시각: {{.FinishedAt}}</p>
-{{end}}{{if .Findings}}<p>커밋 해시: {{if .Scan.CommitHash}}{{.Scan.CommitHash}}{{else}}없음{{end}}</p>
-<p>규칙 버전: {{.Scan.RulesVersion}}</p>
-{{if .Tools}}<p>도구 버전:{{range .Tools}} {{.Name}} {{.Version}}{{end}}</p>
-{{end}}<p>검사한 파일 {{.Scan.Files}}개</p>
-{{if .Scan.Skipped}}<p>건너뛴 파일 {{.Scan.Skipped}}개: 20MiB를 넘거나, 바이너리이거나, UTF-8과 EUC-KR이 아니거나, 읽을 수 없는 파일입니다.</p>
-{{end}}{{if .Scan.Dropped}}<p>위치가 맞지 않아 버린 건수 {{.Scan.Dropped}}건: 스캐너가 보고한 값을 그 위치에서 확인하지 못해 항목으로 남기지 않았습니다.</p>
-{{end}}<h2>발견 {{.FindingsTotal}}건</h2>
-{{if .Counts}}<ul>
-{{range .Counts}}<li title="{{.Category}}">{{.Label}}: {{.N}}건</li>
-{{end}}</ul>
-{{else}}<p>탐지된 항목이 없습니다.</p>
-{{end}}{{if .Secrets}}<h2>비밀 값</h2>
-<table>
-<thead><tr><th>분류</th><th>종류</th><th>파일과 줄</th><th>미리보기</th><th>탐지</th></tr></thead>
+{{define "body"}}<main class="page">
+<div>
+<nav class="crumbs" aria-label="위치"><a href="/projects">프로젝트</a> / <a href="/projects/{{.Scan.ProjectID}}">{{.ProjectName}}</a> /</nav>
+<div class="page-head">
+<h1 class="page-title">스캔 #{{.Scan.ID}}</h1>
+<span class="badge badge-lg badge-{{.Scan.Status}}">{{.StatusLabel}}</span>
+</div>
+</div>
+{{if .Scan.Status.Active}}<div class="card card-pad flex flex-col gap-2.5">
+{{if eq .Scan.Status "running"}}<div class="progress" role="progressbar" aria-label="스캔 진행 중"></div>
+{{end}}<p class="text-2">{{.Scan.RequestedBy}} · <span class="mono">{{.RequestedAt}}</span>에 요청. {{if eq .Scan.Status "queued"}}worker가 가져가기를 기다립니다. {{end}}이 화면은 3초마다 새로 고쳐집니다.</p>
+</div>
+{{else if eq .Scan.Status "failed"}}<div class="card card-pad card-failed flex flex-col gap-2.5">
+<p class="failure"><strong>실패 사유</strong> <span class="mono text-sm">{{.Scan.FailureReason}}</span></p>
+<p class="text-2">{{.Scan.RequestedBy}} · <span class="mono">{{.RequestedAt}}</span>에 요청{{if .FinishedAt}}, <span class="mono">{{.FinishedAt}}</span>에 끝남{{end}}. 저장된 항목은 없습니다.</p>
+<div><a class="btn btn-secondary" href="/projects/{{.Scan.ProjectID}}">프로젝트에서 다시 스캔</a></div>
+</div>
+{{end}}{{if .Findings}}<dl class="facts">
+<div><dt>요청</dt><dd>{{.Scan.RequestedBy}} · <span class="mono">{{.RequestedAt}}</span></dd></div>
+<div><dt>끝난 시각</dt><dd>{{if .FinishedAt}}<span class="mono">{{.FinishedAt}}</span>{{else}}<span class="muted">—</span>{{end}}</dd></div>
+<div><dt>커밋</dt><dd class="mono">{{if .Scan.CommitHash}}{{.Scan.CommitHash}}{{else}}<span class="muted">없음</span>{{end}}</dd></div>
+<div><dt>규칙 버전</dt><dd class="mono">{{.Scan.RulesVersion}}</dd></div>
+<div><dt>도구</dt><dd class="mono">{{range $i, $t := .Tools}}{{if $i}} · {{end}}{{$t.Name}} {{$t.Version}}{{end}}</dd></div>
+<div><dt>검사한 파일</dt><dd>{{.Scan.Files}}개</dd></div>
+</dl>
+<section>
+<h2 class="section-title">찾은 항목 {{.FindingsTotal}}개</h2>
+{{if .Counts}}<div class="card bars">
+{{range .Counts}}<div class="bar-row" title="{{.Category}}"><span class="bar-label" id="count-{{.Category}}">{{.Label}}</span><meter class="bar" min="0" max="{{$.FindingsTotal}}" value="{{.N}}" aria-labelledby="count-{{.Category}}"></meter><span class="bar-count">{{.N}}</span></div>
+{{end}}</div>
+{{else}}<p class="notice">탐지된 항목이 없습니다.</p>
+{{end}}</section>
+{{if or .Scan.Skipped .Scan.Dropped}}<section class="flex flex-col gap-2.5">
+<h2 class="section-title mb-0">검사하지 못한 것</h2>
+{{if .Scan.Skipped}}<p class="notice"><strong>건너뛴 파일 {{.Scan.Skipped}}개.</strong> <span class="text-2">20MiB를 넘거나, 바이너리이거나, UTF-8과 EUC-KR이 아니거나, 읽을 수 없는 파일입니다.</span></p>
+{{end}}{{if .Scan.Dropped}}<p class="notice"><strong>위치가 맞지 않아 버린 결과 {{.Scan.Dropped}}건.</strong> <span class="text-2">스캐너가 알려 준 자리에서 값을 확인하지 못해 항목으로 남기지 않았습니다.</span></p>
+{{end}}</section>
+{{end}}{{if .Secrets}}<section class="flex flex-col gap-3">
+<h2 class="section-title mb-0">비밀 값</h2>
+{{range .Secrets}}<div class="code-box">
+<div class="code-head">
+<span class="code-file">{{.File}}:{{.Lines}}</span>
+<span title="{{.Kind}}">{{.KindLabel}}</span>
+<span class="muted" title="{{.Category}}">{{.CategoryLabel}}</span>
+<code class="tag">{{.Preview}}</code>
+<span class="grow"></span>
+{{range .Detections}}<span class="code-rule">{{.Tool}} {{.Rule}}</span>
+{{end}}</div>
+{{if .Context}}<pre class="code">{{range .Context}}{{if .Hit}}<mark class="code-line code-line-hit"><span class="sr-only">탐지된 줄 </span><span class="line-no">{{.Number}}</span>{{.Text}}</mark>{{else}}<span class="code-line"><span class="line-no">{{.Number}}</span>{{.Text}}</span>{{end}}{{end}}</pre>
+{{else}}<p class="code-empty">주변 줄을 저장하지 않았습니다.</p>
+{{end}}</div>
+{{end}}</section>
+{{end}}{{if .CustomerData}}<section>
+<h2 class="section-title">고객정보</h2>
+<div class="table-wrap">
+<table class="table min-w-[680px]">
+<thead><tr><th>파일</th><th>종류</th><th class="num">건수</th><th>위치</th><th>형식</th></tr></thead>
 <tbody>
-{{range .Secrets}}<tr><td title="{{.Category}}">{{.CategoryLabel}}</td><td title="{{.Kind}}">{{.KindLabel}}</td><td>{{.File}}:{{.Lines}}</td><td><code>{{.Preview}}</code></td><td>{{range .Detections}}{{.Tool}} {{.Rule}}<br>
-{{end}}</td></tr>
-<tr><td colspan="5">{{if .Context}}<pre>{{range .Context}}{{.Number}}{{if .Hit}}>{{else}} {{end}} {{.Text}}
-{{end}}</pre>{{else}}주변 줄을 저장하지 않았습니다.{{end}}</td></tr>
+{{range .CustomerData}}<tr><td class="code-cell">{{.File}}</td><td title="{{.Kind}}">{{.KindLabel}}</td><td class="num">{{.Count}}건</td><td>첫 줄 {{.FirstLine}}</td><td><code class="tag">{{.Preview}}</code></td></tr>
 {{end}}</tbody>
 </table>
-{{end}}{{if .CustomerData}}<h2>고객정보</h2>
-<table>
-<thead><tr><th>파일</th><th>종류</th><th>건수</th><th>첫 줄</th><th>형식</th></tr></thead>
-<tbody>
-{{range .CustomerData}}<tr><td>{{.File}}</td><td title="{{.Kind}}">{{.KindLabel}}</td><td>{{.Count}}건</td><td>첫 줄 {{.FirstLine}}</td><td><code>{{.Preview}}</code></td></tr>
-{{end}}</tbody>
-</table>
-{{end}}{{end}}<p><a href="/projects/{{.Scan.ProjectID}}">프로젝트</a></p>
-</main>{{end}}
+</div>
+</section>
+{{end}}{{end}}</main>{{end}}

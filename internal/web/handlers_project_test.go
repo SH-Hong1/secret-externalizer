@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -102,6 +103,11 @@ func TestProjectNew_ShowsForm(t *testing.T) {
 			t.Errorf("GET /projects/new body lacks %q", want)
 		}
 	}
+	for _, bad := range []string{`aria-invalid`, `role="alert"`, `class="field-error"`} {
+		if strings.Contains(res.body, bad) {
+			t.Errorf("GET /projects/new body contains %q, want an untouched form", bad)
+		}
+	}
 }
 
 func TestProjectCreate_Valid(t *testing.T) {
@@ -140,19 +146,20 @@ func TestProjectCreate_TrimsPath(t *testing.T) {
 
 func TestProjectCreate_InvalidInput(t *testing.T) {
 	tests := []struct {
-		name string
-		form url.Values
+		name  string
+		form  url.Values
+		field string // the id suffix of the field marked invalid
 	}{
-		{"path leaves the root", url.Values{"name": {"shop"}, "path": {"../x"}}},
-		{"absolute path", url.Values{"name": {"shop"}, "path": {"/etc"}}},
-		{"empty path", url.Values{"name": {"shop"}, "path": {""}}},
-		{"empty name", url.Values{"name": {"  "}, "path": {"shop"}}},
-		{"name too long", url.Values{"name": {strings.Repeat("a", 101)}, "path": {"shop"}}},
-		{"name with NUL", url.Values{"name": {"sh\x00op"}, "path": {"shop"}}},
-		{"name with control character", url.Values{"name": {"sh\x1bop"}, "path": {"shop"}}},
-		{"name with newline", url.Values{"name": {"sh\nop"}, "path": {"shop"}}},
-		{"name with invalid UTF-8", url.Values{"name": {"sh\xffop"}, "path": {"shop"}}},
-		{"invalid exclude", url.Values{"name": {"shop"}, "path": {"shop"}, "excludes": {"vendor\n../x"}}},
+		{"path leaves the root", url.Values{"name": {"shop"}, "path": {"../x"}}, "path"},
+		{"absolute path", url.Values{"name": {"shop"}, "path": {"/etc"}}, "path"},
+		{"empty path", url.Values{"name": {"shop"}, "path": {""}}, "path"},
+		{"empty name", url.Values{"name": {"  "}, "path": {"shop"}}, "name"},
+		{"name too long", url.Values{"name": {strings.Repeat("a", 101)}, "path": {"shop"}}, "name"},
+		{"name with NUL", url.Values{"name": {"sh\x00op"}, "path": {"shop"}}, "name"},
+		{"name with control character", url.Values{"name": {"sh\x1bop"}, "path": {"shop"}}, "name"},
+		{"name with newline", url.Values{"name": {"sh\nop"}, "path": {"shop"}}, "name"},
+		{"name with invalid UTF-8", url.Values{"name": {"sh\xffop"}, "path": {"shop"}}, "name"},
+		{"invalid exclude", url.Values{"name": {"shop"}, "path": {"shop"}, "excludes": {"vendor\n../x"}}, "excludes"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -167,7 +174,31 @@ func TestProjectCreate_InvalidInput(t *testing.T) {
 			if !strings.Contains(res.body, `<form method="post" action="/projects">`) {
 				t.Errorf("POST /projects(%v) body has no form, want the form again", tt.form)
 			}
+			wantInvalidField(t, res.body, tt.field)
 		})
+	}
+}
+
+// wantInvalidField checks that the registration form shows the general
+// alert and marks exactly the field project-<field> as invalid, with a
+// message that the field names in aria-describedby.
+func wantInvalidField(t *testing.T, body, field string) {
+	t.Helper()
+	if want := `<p class="alert-error" role="alert">등록하지 못했습니다. 표시된 항목을 고쳐 주세요.</p>`; !strings.Contains(body, want) {
+		t.Errorf("registration form lacks the general alert %q", want)
+	}
+	if got := strings.Count(body, `aria-invalid="true"`); got != 1 {
+		t.Errorf("registration form marks %d fields invalid, want 1", got)
+	}
+	control := regexp.MustCompile(`<(input|textarea)\b[^>]*\bid="project-` + field + `"[^>]*>`).FindString(body)
+	if !strings.Contains(control, `aria-invalid="true"`) {
+		t.Errorf("field project-%s = %q, want aria-invalid=\"true\"", field, control)
+	}
+	if want := `aria-describedby="project-` + field + `-error `; !strings.Contains(control, want) {
+		t.Errorf("field project-%s = %q, want it to contain %q", field, control, want)
+	}
+	if !regexp.MustCompile(`<span class="field-error" id="project-` + field + `-error">[^<]+</span>`).MatchString(body) {
+		t.Errorf("registration form lacks the message project-%s-error", field)
 	}
 }
 
@@ -197,6 +228,9 @@ func TestProjectCreate_Duplicate(t *testing.T) {
 	}
 	if !strings.Contains(res.body, `value="shop"`) {
 		t.Errorf("POST /projects with a duplicate body lacks the input, want the form again")
+	}
+	if strings.Contains(res.body, `aria-invalid="true"`) {
+		t.Errorf("POST /projects with a duplicate marks a field invalid, want only the alert (the store does not say which)")
 	}
 }
 

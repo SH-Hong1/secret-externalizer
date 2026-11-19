@@ -10,6 +10,7 @@ import (
 	"slices"
 	"unicode/utf8"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/connstr"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/textfile"
 )
@@ -140,6 +141,39 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 		pf.spots = append(pf.spots, spot{raw: raw, span: span, value: Value(pf.file.Text[span.Start:span.End])})
 	}
 	return pf, dropped
+}
+
+// splitConnections replaces each placed result of kind url whose value
+// connstr.Split knows with one result for each component: the same tool,
+// rule, and category, the component's kind, and the component's range in
+// the file. A URL it does not know stays one result. Parts of the URL that
+// are not components, such as the database name, are then neither a value
+// nor masked.
+func splitConnections(placed []*placedFile) {
+	for _, pf := range placed {
+		var spots []spot
+		for _, s := range pf.spots {
+			var parts []connstr.Part
+			if s.raw.Kind == finding.KindURL && !s.raw.wholeFile() {
+				parts = connstr.Split(s.value)
+			}
+			if parts == nil {
+				spots = append(spots, s)
+				continue
+			}
+			for _, p := range parts {
+				c := s
+				c.raw.Kind = p.Kind
+				c.span = finding.Span{Start: s.span.Start + p.Span.Start, End: s.span.Start + p.Span.End}
+				c.value = s.value[p.Span.Start:p.Span.End]
+				if c.raw.Value != nil {
+					c.raw.Value = c.value
+				}
+				spots = append(spots, c)
+			}
+		}
+		pf.spots = spots
+	}
 }
 
 // place returns the range of raw's value in f.Text. bom is the length of

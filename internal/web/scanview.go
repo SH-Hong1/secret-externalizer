@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 )
@@ -28,6 +29,8 @@ func categoryOrder() []finding.Category {
 // scanPage is what the scan page shows. Findings is false until the scan
 // has succeeded, and the findings sections are left out then.
 type scanPage struct {
+	User          auth.User
+	ProjectName   string
 	Scan          scan.Scan
 	StatusLabel   string
 	RequestedAt   string
@@ -73,7 +76,10 @@ type customerGroup struct {
 // scanRow is one line of a project's scan list.
 type scanRow struct {
 	ID          scan.ID
+	Status      scan.Status
 	StatusLabel string
+	RequestedBy string
+	Commit      string
 	RequestedAt string
 	Succeeded   bool
 	Findings    int
@@ -136,6 +142,8 @@ func kindLabel(k finding.Kind) string {
 		return "계정"
 	case finding.KindHost:
 		return "호스트"
+	case finding.KindPort:
+		return "포트"
 	case finding.KindURL:
 		return "URL"
 	case finding.KindPrivateKey:
@@ -262,11 +270,21 @@ func contextLines(l finding.Location) []contextLine {
 	return out
 }
 
+// shortCommit returns the first 7 characters of a commit hash, as git shows
+// it in short form.
+func shortCommit(hash string) string {
+	if len(hash) > 7 {
+		return hash[:7]
+	}
+	return hash
+}
+
 func newScanRows(scans []scan.Scan) []scanRow {
 	out := make([]scanRow, 0, len(scans))
 	for _, sc := range scans {
 		out = append(out, scanRow{
-			ID: sc.ID, StatusLabel: statusLabel(sc.Status), RequestedAt: formatTime(sc.RequestedAt),
+			ID: sc.ID, Status: sc.Status, StatusLabel: statusLabel(sc.Status), RequestedAt: formatTime(sc.RequestedAt),
+			RequestedBy: sc.RequestedBy, Commit: shortCommit(sc.CommitHash),
 			Succeeded: sc.Status == scan.StatusSucceeded, Findings: sc.Findings,
 		})
 	}

@@ -55,6 +55,7 @@ const (
 	KindToken      Kind = "token"
 	KindAccount    Kind = "account"
 	KindHost       Kind = "host"
+	KindPort       Kind = "port"
 	KindURL        Kind = "url"
 	KindPrivateKey Kind = "private-key"
 	KindKeyFile    Kind = "key-file"
@@ -66,7 +67,7 @@ const (
 func ParseKind(s string) (Kind, error) {
 	switch k := Kind(s); k {
 	case KindPhone, KindRRN, KindEmail, KindCard, KindAddress,
-		KindPassword, KindToken, KindAccount, KindHost, KindURL, KindPrivateKey, KindKeyFile, KindOther:
+		KindPassword, KindToken, KindAccount, KindHost, KindPort, KindURL, KindPrivateKey, KindKeyFile, KindOther:
 		return k, nil
 	}
 	return "", fmt.Errorf("kind %q: %w", s, ErrUnknown)
@@ -94,9 +95,13 @@ type Location struct {
 	Detections          []Detection
 }
 
+// ID identifies a stored finding.
+type ID int64
+
 // Finding is a detected value, identified by its fingerprint. It never holds
-// the value itself.
+// the value itself. ID is zero until the finding is stored.
 type Finding struct {
+	ID          ID
 	Fingerprint string
 	File        string
 	Category    Category
@@ -137,7 +142,7 @@ func customerPreview(k Kind, value string) string {
 		return "****@****"
 	case KindCard:
 		return "****-****-****-****"
-	case KindAddress, KindPassword, KindToken, KindAccount, KindHost, KindURL, KindPrivateKey, KindKeyFile, KindOther:
+	case KindAddress, KindPassword, KindToken, KindAccount, KindHost, KindPort, KindURL, KindPrivateKey, KindKeyFile, KindOther:
 		return maskText
 	}
 	return maskText
@@ -145,7 +150,7 @@ func customerPreview(k Kind, value string) string {
 
 func secretPreview(k Kind, value string) string {
 	switch k {
-	case KindPassword, KindToken, KindAccount, KindHost, KindURL, KindOther:
+	case KindPassword, KindToken, KindAccount, KindHost, KindPort, KindURL, KindOther:
 	case KindPhone, KindRRN, KindEmail, KindCard, KindAddress, KindPrivateKey, KindKeyFile:
 		return maskText
 	default:

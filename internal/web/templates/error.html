@@ -1,6 +1,9 @@
 {{define "title"}}오류{{end}}
-{{define "body"}}<main>
-<h1>{{.Status}}</h1>
-<p>{{.Message}}</p>
-{{if .LoginLink}}<p><a href="/login">다시 로그인</a></p>
-{{end}}</main>{{end}}
+{{define "body"}}<main class="page page-narrow">
+<div class="card message">
+<span class="message-code">{{.Status}}</span>
+<h1 class="message-title">{{.Message}}</h1>
+{{if .LoginLink}}<div><a class="btn btn-primary" href="/login">다시 로그인</a></div>
+{{else if .User.Subject}}<div><a class="btn btn-primary" href="/projects">프로젝트로 가기</a></div>
+{{end}}</div>
+</main>{{end}}

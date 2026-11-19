@@ -11,8 +11,8 @@ import (
 // addRoutes registers every route of the server. Only the routes that need a
 // signed-in user read the session, so /healthz answers and logout works even
 // when the session store is down. The routes that call projects or scans get
-// a deadline of storeLimit.
-func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, storeLimit time.Duration) {
+// a deadline of storeLimit. The static files need no session.
+func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, storeLimit time.Duration) {
 	signedIn := func(h http.Handler) http.Handler {
 		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd))
 	}
@@ -25,6 +25,7 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, authn Auth
 	}
 
 	mux.Handle("GET /healthz", handleHealthz())
+	mux.Handle("GET /static/{path...}", handleStatic(logger, rd, a))
 	mux.Handle("GET /login", handleLogin(logger, rd, authn, attempts))
 	mux.Handle("GET /auth/callback", handleCallback(logger, rd, authn, sessions, attempts))
 	// Logout needs no live session; see handleLogout.
@@ -37,6 +38,6 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, authn Auth
 	mux.Handle("POST /projects", usesStore(handleProjectCreate(logger, rd, projects)))
 	mux.Handle("GET /projects/{id}", usesStore(handleProject(logger, rd, projects, scans)))
 	mux.Handle("POST /projects/{id}/scans", usesStore(handleScanCreate(logger, rd, scans)))
-	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, scans)))
+	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, projects, scans)))
 	mux.Handle("/", handleNotFound(logger, rd))
 }

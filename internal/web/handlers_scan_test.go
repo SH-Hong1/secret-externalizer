@@ -258,16 +258,29 @@ func TestScan_ListsFindings(t *testing.T) {
 		"conf/app.properties", "12", "dev-****",
 		"betterleaks", "fake-rule-a", "opengrep", "fake-rule-b",
 		"저장소 접속 정보", "비밀번호",
-		"db.password=****", "<pre>",
-		"발견 1건",
+		"db.password=****", `<pre class="code">`,
+		"찾은 항목 1개",
 	)
+}
+
+func TestScan_LabelsPort(t *testing.T) {
+	f := secretFinding()
+	f.Kind, f.Preview = finding.KindPort, "****"
+	e := newTestEnv(t)
+	body := e.succeeded(t, scan.Scan{Findings: 1}, f)
+
+	wantContains(t, body, "포트")
 }
 
 func TestScan_ShowsContextLineNumbers(t *testing.T) {
 	e := newTestEnv(t)
 	body := e.succeeded(t, scan.Scan{Findings: 1}, secretFinding())
 
-	wantContains(t, body, "11  # settings\n", "12> db.password=****\n", "13    indented = 1\n")
+	wantContains(t, body,
+		`<span class="code-line"><span class="line-no">11</span># settings</span>`,
+		`<mark class="code-line code-line-hit"><span class="sr-only">탐지된 줄 </span><span class="line-no">12</span>db.password=****</mark>`,
+		`<span class="code-line"><span class="line-no">13</span>  indented = 1</span>`,
+	)
 }
 
 func TestScan_NoContextNote(t *testing.T) {
@@ -278,7 +291,7 @@ func TestScan_NoContextNote(t *testing.T) {
 	body := e.succeeded(t, scan.Scan{Findings: 1}, f)
 
 	wantContains(t, body, "주변 줄을 저장하지 않았습니다.", "conf/app.properties")
-	wantAbsent(t, body, "<pre>")
+	wantAbsent(t, body, "<pre")
 }
 
 func TestScan_GroupsCustomerData(t *testing.T) {
@@ -300,7 +313,7 @@ func TestScan_GroupsCustomerData(t *testing.T) {
 	if got := strings.Count(body, "logs/app.log"); got != 1 {
 		t.Errorf("page names logs/app.log %d times, want 1 (one line per file and kind)", got)
 	}
-	wantAbsent(t, body, "<pre>", "주변 줄을 저장하지 않았습니다.")
+	wantAbsent(t, body, "<pre", "주변 줄을 저장하지 않았습니다.")
 }
 
 func TestScan_CountsByCategory(t *testing.T) {
@@ -313,7 +326,12 @@ func TestScan_CountsByCategory(t *testing.T) {
 	e := newTestEnv(t)
 	body := e.succeeded(t, scan.Scan{Findings: 3}, a, b, c)
 
-	wantContains(t, body, "저장소 접속 정보: 1건", "SSH 접속 정보: 1건", "고객정보: 1건", "발견 3건")
+	wantContains(t, body,
+		`<span class="bar-label" id="count-storage-credential">저장소 접속 정보</span><meter class="bar" min="0" max="3" value="1" aria-labelledby="count-storage-credential"></meter><span class="bar-count">1</span>`,
+		`<span class="bar-label" id="count-ssh-credential">SSH 접속 정보</span><meter class="bar" min="0" max="3" value="1" aria-labelledby="count-ssh-credential"></meter><span class="bar-count">1</span>`,
+		`<span class="bar-label" id="count-customer-data">고객정보</span><meter class="bar" min="0" max="3" value="1" aria-labelledby="count-customer-data"></meter><span class="bar-count">1</span>`,
+		"찾은 항목 3개",
+	)
 }
 
 func TestScan_EscapesContext(t *testing.T) {
@@ -333,12 +351,12 @@ func TestScan_EscapesContext(t *testing.T) {
 func TestScan_ShowsSkippedAndDropped(t *testing.T) {
 	e := newTestEnv(t)
 	body := e.succeeded(t, scan.Scan{Files: 50, Skipped: 4, Dropped: 3})
-	wantContains(t, body, "검사한 파일 50개", "건너뛴 파일 4개", "위치가 맞지 않아 버린 건수 3건")
+	wantContains(t, body, "<dt>검사한 파일</dt><dd>50개</dd>", "건너뛴 파일 4개", "위치가 맞지 않아 버린 결과 3건")
 
 	e = newTestEnv(t)
 	body = e.succeeded(t, scan.Scan{Files: 50})
-	wantContains(t, body, "검사한 파일 50개")
-	wantAbsent(t, body, "건너뛴 파일", "버린 건수")
+	wantContains(t, body, "<dt>검사한 파일</dt><dd>50개</dd>")
+	wantAbsent(t, body, "검사하지 못한 것", "건너뛴 파일", "버린 결과")
 }
 
 func TestScan_ShowsHeader(t *testing.T) {
@@ -351,14 +369,14 @@ func TestScan_ShowsHeader(t *testing.T) {
 		ToolVersions: map[string]string{"opengrep": "2.0.0", "betterleaks": "1.10.1"},
 	})
 
-	wantContains(t, body, "fake-subject-7", "2026-11-19 00:05:07 UTC", "0123abcd", "rules-v9", "betterleaks 1.10.1", "opengrep 2.0.0")
+	wantContains(t, body, "fake-subject-7", `<span class="mono">2026-11-19 00:05:07 UTC</span>`, "0123abcd", "rules-v9", "betterleaks 1.10.1", "opengrep 2.0.0")
 	if b, o := strings.Index(body, "betterleaks 1.10.1"), strings.Index(body, "opengrep 2.0.0"); b > o {
 		t.Errorf("tool versions are not ordered by tool name")
 	}
 
 	e = newTestEnv(t)
 	body = e.succeeded(t, scan.Scan{})
-	wantContains(t, body, "커밋 해시: 없음")
+	wantContains(t, body, `<dt>커밋</dt><dd class="mono"><span class="muted">없음</span></dd>`)
 }
 
 func TestScan_Empty(t *testing.T) {
@@ -377,7 +395,7 @@ func TestScan_NoFindingsSectionWhileActive(t *testing.T) {
 			e.scans.putFindings(2, secretFinding())
 			res := e.do(t, http.MethodGet, "/scans/2", nil, e.user(t))
 
-			wantAbsent(t, res.body, "탐지된 항목이 없습니다.", "conf/app.properties", "발견")
+			wantAbsent(t, res.body, "탐지된 항목이 없습니다.", "conf/app.properties", "찾은 항목")
 		})
 	}
 }
@@ -402,7 +420,7 @@ func TestProject_ListsScans(t *testing.T) {
 
 	res := e.do(t, http.MethodGet, "/projects/"+itoa(pid), nil, e.user(t))
 
-	wantContains(t, res.body, `href="/scans/1"`, `href="/scans/2"`, "2026-11-19 04:05:06 UTC", "2026-11-18 01:02:03 UTC", "완료", "실패", "17건")
+	wantContains(t, res.body, `href="/scans/1"`, `href="/scans/2"`, `<span class="mono">2026-11-19 04:05:06 UTC</span>`, `<span class="mono">2026-11-18 01:02:03 UTC</span>`, "완료", "실패", "17건")
 	wantAbsent(t, res.body, `href="/scans/3"`, "99건")
 	if i, j := strings.Index(res.body, `href="/scans/2"`), strings.Index(res.body, `href="/scans/1"`); i > j {
 		t.Errorf("project page lists scan 1 before scan 2, want newest first")
@@ -423,5 +441,24 @@ func TestProject_ScanListFailure(t *testing.T) {
 	res := e.do(t, http.MethodGet, "/projects/"+itoa(pid), nil, e.user(t))
 	if res.status != http.StatusInternalServerError {
 		t.Errorf("GET /projects/%d with a failing scan list status = %d, want 500", pid, res.status)
+	}
+}
+
+func TestScan_NamesProject(t *testing.T) {
+	e := newTestEnv(t)
+	pid := e.newProject(t)
+	e.scans.put(scan.Scan{ID: 4, ProjectID: pid, Status: scan.StatusQueued})
+	res := e.do(t, http.MethodGet, "/scans/4", nil, e.user(t))
+	wantContains(t, res.body, `<a href="/projects/`+itoa(pid)+`">shop</a>`)
+}
+
+func TestScan_ProjectFailure(t *testing.T) {
+	e := newTestEnv(t)
+	pid := e.newProject(t)
+	e.scans.put(scan.Scan{ID: 4, ProjectID: pid, Status: scan.StatusQueued})
+	e.projects.getErr = errors.New("fake store failure")
+	res := e.do(t, http.MethodGet, "/scans/4", nil, e.user(t))
+	if res.status != http.StatusInternalServerError {
+		t.Errorf("GET /scans/4 with a failing project read status = %d, want 500", res.status)
 	}
 }

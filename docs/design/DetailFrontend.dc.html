@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>상세, JSP 항목</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+a{color:#1F4FD8}a:hover{color:#163A9E}
+</style>
+</helmet>
+<div style="width: 760px; height: 600px; box-sizing: border-box; padding: 20px 24px 24px; background: #FFFFFF; color: #15171C; font-family: 'IBM Plex Sans KR', system-ui, sans-serif; font-size: 14px; line-height: 1.5; display: flex; flex-direction: column; gap: 18px">
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px">
+<h2 style="margin: 0; font-size: 18px; font-weight: 700">토큰</h2>
+<span style="color: #565D6B">제휴사 로그인 세션</span>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; padding: 3px 8px; background: #F3F4F6; border: 1px solid #D9DDE3; border-radius: 4px">eyJh****</span>
+<span style="flex-grow: 1"></span>
+<span style="padding: 3px 10px; border: 1px solid #15171C; border-radius: 999px; font-size: 12.5px; font-weight: 600">미판정</span>
+</div>
+
+<div style="border: 1px solid #D9DDE3; border-radius: 6px; overflow: hidden">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px; background: #F7F8FA; border-bottom: 1px solid #D9DDE3">
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600">src/main/webapp/js/partner.js:42</span>
+<span style="flex-grow: 1"></span>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #565D6B">betterleaks jwt</span>
+</div>
+<pre style="margin: 0; padding: 8px 0; font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.6; overflow-x: auto"><span style="display: block; padding: 0 12px"><span style="color: #6B7280">41  </span>var partnerApi = {</span><span style="display: block; padding: 0 12px; background: #FFF1CC; box-shadow: inset 3px 0 0 #C27A00"><span style="color: #6B7280">42  </span>  token: "<strong>eyJh****</strong>",</span><span style="display: block; padding: 0 12px"><span style="color: #6B7280">43  </span>  endpoint: "/partner/session"</span><span style="display: block; padding: 0 12px"><span style="color: #6B7280">44  </span>};</span></pre>
+</div>
+
+<p style="margin: 0; padding: 12px 14px; background: #FCEBD3; border: 1px solid #E2B878; border-radius: 6px; color: #5C2D00">JSP, JS, HTML 파일의 값은 외부화할 수 없습니다. 브라우저로 내려가는 코드라서 구조를 바꿔야 합니다. 리포트의 "구조 변경이 필요한 항목"에 실립니다.</p>
+
+<form style="display: flex; flex-direction: column; gap: 14px; padding: 16px; background: #F7F8FA; border: 1px solid #D9DDE3; border-radius: 6px">
+<div style="display: flex; flex-direction: column; gap: 4px; max-width: 520px">
+<label for="note" style="font-weight: 600">메모 <span style="font-weight: 400; color: #565D6B">· 선택</span></label>
+<input id="note" style="font: inherit; padding: 9px 10px; min-height: 22px; border: 1px solid #B9BFC9; border-radius: 6px; background: #FFFFFF; color: #15171C">
+</div>
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px">
+<label for="reason" style="color: #565D6B">보류 사유 <span style="color: #8A4300; font-weight: 600">· 제안</span></label>
+<select id="reason" style="font: inherit; padding: 9px 10px; min-height: 44px; border: 1px solid #B9BFC9; border-radius: 6px; background: #FFFFFF; color: #15171C">
+<option>구조 변경 필요</option><option>확인 필요</option><option>나중에 처리</option>
+</select>
+<button type="button" style="font: inherit; font-weight: 600; background: #8A4300; color: #FFFFFF; border: 1px solid #8A4300; border-radius: 6px; padding: 10px 18px; min-height: 44px; cursor: pointer">보류</button>
+<span style="width: 1px; align-self: stretch; background: #D9DDE3"></span>
+<button type="button" style="font: inherit; font-weight: 600; background: #FFFFFF; color: #3D4350; border: 1px solid #3D4350; border-radius: 6px; padding: 10px 18px; min-height: 44px; cursor: pointer">오탐</button>
+</div>
+</form>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":760,"height":600}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

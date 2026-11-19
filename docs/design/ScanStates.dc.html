@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>스캔, 진행 중과 실패</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+a{color:#1F4FD8}a:hover{color:#163A9E}
+</style>
+</helmet>
+<div style="width: 760px; height: 560px; box-sizing: border-box; padding: 24px; background: #F3F4F6; color: #15171C; font-family: 'IBM Plex Sans KR', system-ui, sans-serif; font-size: 14px; line-height: 1.5; display: flex; flex-direction: column; gap: 16px">
+
+<div style="display: flex; flex-direction: column; gap: 10px; padding: 20px 24px; background: #FFFFFF; border: 1px solid #D9DDE3; border-radius: 8px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px">
+<h1 style="margin: 0; font-size: 22px; font-weight: 700">스캔 #13</h1>
+<span style="padding: 3px 10px; border-radius: 999px; background: #E6ECFC; color: #12307F; font-size: 13px; font-weight: 600">실행 중</span>
+</div>
+<div role="progressbar" aria-label="스캔 진행 중" style="height: 6px; background: #E6ECFC; border-radius: 3px; overflow: hidden"><span style="display: block; width: 40%; height: 100%; background: #1F4FD8; border-radius: 3px"></span></div>
+<p style="margin: 0; color: #3D4350">dev-user · 2026-11-19 06:30:11 UTC에 요청. 이 화면은 3초마다 새로 고쳐집니다.</p>
+<p style="margin: 0; color: #565D6B">스캔하는 동안에도 지난 스캔 기준으로 판정할 수 있습니다. <a href="Main.dc.html">판정 화면</a></p>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px; padding: 20px 24px; background: #FFFFFF; border: 1px solid #D9DDE3; border-radius: 8px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px">
+<h1 style="margin: 0; font-size: 22px; font-weight: 700">스캔 #14</h1>
+<span style="padding: 3px 10px; border-radius: 999px; background: #EEF0F3; color: #3D4350; font-size: 13px; font-weight: 600">대기 중</span>
+</div>
+<p style="margin: 0; color: #3D4350">dev-user · 2026-11-19 06:31:40 UTC에 요청. worker가 가져가기를 기다립니다.</p>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 10px; padding: 20px 24px; background: #FFFFFF; border: 1px solid #E5A9A1; border-radius: 8px">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px">
+<h1 style="margin: 0; font-size: 22px; font-weight: 700">스캔 #9</h1>
+<span style="padding: 3px 10px; border-radius: 999px; background: #FBE4E1; color: #7A1D12; font-size: 13px; font-weight: 600">실패</span>
+</div>
+<p style="margin: 0; padding: 10px 14px; background: #FBE4E1; border-radius: 6px; color: #7A1D12"><strong>실패 사유</strong> <span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px">secret store could not be reached</span></p>
+<p style="margin: 0; color: #3D4350">dev-user · 2026-11-18 09:40:02 UTC에 요청, 09:40:19 UTC에 끝남. 저장된 항목은 없습니다.</p>
+<div><a href="Project.dc.html" style="display: inline-block; padding: 9px 16px; background: #FFFFFF; color: #15171C; border: 1px solid #15171C; border-radius: 6px; text-decoration: none; font-weight: 600">프로젝트에서 다시 스캔</a></div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":760,"height":560}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>

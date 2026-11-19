@@ -66,8 +66,9 @@ type ScanStore interface {
 // moment it is reached; the session is read before that deadline starts.
 func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, storeLimit time.Duration) http.Handler {
 	mux := http.NewServeMux()
-	rd := newRenderer()
-	addRoutes(mux, logger, rd, authn, sessions, attempts, projects, scans, storeLimit)
+	a := loadAssets(staticFiles())
+	rd := newRenderer(a)
+	addRoutes(mux, logger, rd, a, authn, sessions, attempts, projects, scans, storeLimit)
 
 	return chain(mux,
 		recoverPanic(logger, rd),

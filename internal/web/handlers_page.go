@@ -4,6 +4,8 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+
+	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 )
 
 func handleHealthz() http.Handler {
@@ -32,13 +34,14 @@ func handleMethodNotAllowed(logger *slog.Logger, rd *renderer, allow string) htt
 func handleHome(logger *slog.Logger, rd *renderer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
-		rd.page(w, r, logger, http.StatusOK, "home.html", u)
+		rd.page(w, r, logger, http.StatusOK, "home.html", struct{ User auth.User }{u})
 	})
 }
 
 // handleAudit shows the audit log page.
 func handleAudit(logger *slog.Logger, rd *renderer) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		rd.page(w, r, logger, http.StatusOK, "audit.html", nil)
+		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
+		rd.page(w, r, logger, http.StatusOK, "audit.html", struct{ User auth.User }{u})
 	})
 }

@@ -176,3 +176,17 @@ func scanScan(row pgx.Row) (scan.Scan, error) {
 	}
 	return sc, nil
 }
+
+// LatestScan returns the project's newest succeeded scan, or ErrNotFound.
+func (s *Store) LatestScan(ctx context.Context, projectID project.ID) (scan.Scan, error) {
+	row := s.pool.QueryRow(ctx,
+		"SELECT "+scanColumns+" FROM scan WHERE project_id = $1 AND status = 'succeeded' ORDER BY id DESC LIMIT 1", projectID)
+	sc, err := scanScan(row)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return scan.Scan{}, fmt.Errorf("reading latest scan of project %d: %w", projectID, ErrNotFound)
+	}
+	if err != nil {
+		return scan.Scan{}, fmt.Errorf("reading latest scan of project %d: %w", projectID, err)
+	}
+	return sc, nil
+}

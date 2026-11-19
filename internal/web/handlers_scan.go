@@ -36,10 +36,12 @@ func handleScanCreate(logger *slog.Logger, rd *renderer, scans ScanStore) http.H
 	})
 }
 
-// handleScan shows one scan. The page refreshes itself while the scan is
-// queued or running, and lists the findings once it has succeeded.
-func handleScan(logger *slog.Logger, rd *renderer, scans ScanStore) http.Handler {
+// handleScan shows one scan under the name of its project. The page
+// refreshes itself while the scan is queued or running, and lists the
+// findings once it has succeeded.
+func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
 		n, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil || n < 1 {
 			rd.fail(w, r, logger, http.StatusNotFound, errors.New("scan id is not a number"))
@@ -54,6 +56,11 @@ func handleScan(logger *slog.Logger, rd *renderer, scans ScanStore) http.Handler
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading scan: %w", err))
 			return
 		}
+		p, err := projects.Project(r.Context(), sc.ProjectID)
+		if err != nil {
+			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading project of scan: %w", err))
+			return
+		}
 		var fs []finding.Finding
 		if sc.Status == scan.StatusSucceeded {
 			if fs, err = scans.FindingsByScan(r.Context(), sc.ID); err != nil {
@@ -61,6 +68,8 @@ func handleScan(logger *slog.Logger, rd *renderer, scans ScanStore) http.Handler
 				return
 			}
 		}
-		rd.page(w, r, logger, http.StatusOK, "scan.html", newScanPage(sc, fs))
+		page := newScanPage(sc, fs)
+		page.User, page.ProjectName = u, p.Name
+		rd.page(w, r, logger, http.StatusOK, "scan.html", page)
 	})
 }

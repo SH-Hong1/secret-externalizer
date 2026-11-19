@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>오류와 역할 없음</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+a{color:#1F4FD8}a:hover{color:#163A9E}
+</style>
+</helmet>
+<div style="width: 760px; height: 560px; box-sizing: border-box; padding: 24px; background: #F3F4F6; color: #15171C; font-family: 'IBM Plex Sans KR', system-ui, sans-serif; font-size: 14px; line-height: 1.5; display: flex; flex-direction: column; gap: 16px">
+
+<div style="flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 20px 24px; background: #FFFFFF; border: 1px solid #D9DDE3; border-radius: 8px">
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #565D6B">403</span>
+<h1 style="margin: 0; font-size: 20px; font-weight: 700">이 화면을 볼 권한이 없습니다.</h1>
+<div><a href="Projects.dc.html" style="display: inline-block; margin-top: 6px; padding: 9px 16px; background: #15171C; color: #FFFFFF; border-radius: 6px; text-decoration: none; font-weight: 600">프로젝트로 가기</a></div>
+</div>
+
+<div style="flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 20px 24px; background: #FFFFFF; border: 1px solid #D9DDE3; border-radius: 8px">
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #565D6B">500</span>
+<h1 style="margin: 0; font-size: 20px; font-weight: 700">처리 중 문제가 생겼습니다.</h1>
+<p style="margin: 0; color: #3D4350">잠시 뒤 다시 시도해 주세요.</p>
+</div>
+
+<div style="flex: 1 1 0; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 20px 24px; background: #FFFFFF; border: 1px solid #D9DDE3; border-radius: 8px">
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: #565D6B">역할 없음</span>
+<h1 style="margin: 0; font-size: 20px; font-weight: 700">이 도구를 쓸 역할이 없습니다.</h1>
+<p style="margin: 0; color: #3D4350">guest-user로 로그인했습니다. 관리자에게 <span style="font-family: 'IBM Plex Mono', monospace">user</span> 또는 <span style="font-family: 'IBM Plex Mono', monospace">admin</span> 역할을 요청해 주세요.</p>
+<div><button type="button" style="font: inherit; margin-top: 6px; padding: 9px 16px; min-height: 40px; background: #FFFFFF; color: #15171C; border: 1px solid #15171C; border-radius: 6px; font-weight: 600; cursor: pointer">로그아웃</button></div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":760,"height":560}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
