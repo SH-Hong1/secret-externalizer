@@ -87,6 +87,42 @@ func (s *Store) ExtendJob(ctx context.Context, jobID int64, workerID string, lea
 	return nil
 }
 
+// ReleaseJob gives back a job the worker holds but did not finish, in one
+// transaction: the job is queued again without its lease, the attempt it
+// used is given back (never going below zero), and its scan is queued again
+// with no start time. It returns job.ErrLeaseLost, changing nothing, when the
+// job is not running or is leased to another worker.
+func (s *Store) ReleaseJob(ctx context.Context, jobID int64, workerID string) (err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer rollback(ctx, tx, &err)
+
+	var scanID int64
+	err = tx.QueryRow(ctx, `
+		UPDATE job SET state = 'queued', attempts = greatest(attempts - 1, 0),
+			locked_by = NULL, locked_until = NULL
+		WHERE id = $1 AND state = 'running' AND locked_by = $2
+		RETURNING scan_id`,
+		jobID, workerID).Scan(&scanID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("releasing job %d: %w", jobID, job.ErrLeaseLost)
+	}
+	if err != nil {
+		return fmt.Errorf("releasing job %d: %w", jobID, err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE scan SET status = 'queued', started_at = NULL
+		WHERE id = $1 AND status IN ('queued', 'running')`, scanID); err != nil {
+		return fmt.Errorf("requeuing scan %d: %w", scanID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing release of job %d: %w", jobID, err)
+	}
+	return nil
+}
+
 // FailScan marks the job and its scan failed, in one transaction. The reason
 // is stored and shown as given, so it must be fixed wording and never text
 // from an error. It returns job.ErrLeaseLost, changing nothing, when the

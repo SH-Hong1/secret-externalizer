@@ -203,3 +203,118 @@ func TestFailScan_OnlyByLeaseHolder(t *testing.T) {
 	}
 	assertJobState(t, s, id, "failed")
 }
+
+// assertQueued fails the test unless the job of scan id is queued with
+// attempts attempts and no lease, and the scan is queued with no start time.
+func assertQueued(t *testing.T, s *db.Store, id scan.ID, attempts int) {
+	t.Helper()
+	got, err := s.Job(t.Context(), int64(id))
+	if err != nil {
+		t.Fatalf("Job(%d) error = %v", id, err)
+	}
+	if got.State != "queued" || got.Attempts != attempts || got.LockedBy != nil || got.LockedUntil != nil {
+		t.Errorf("Job(%d) = %+v, want queued with %d attempts and no lease", id, got, attempts)
+	}
+	sc, err := s.Scan(t.Context(), id)
+	if err != nil {
+		t.Fatalf("Scan(%d) error = %v", id, err)
+	}
+	if sc.Status != scan.StatusQueued || !sc.StartedAt.IsZero() {
+		t.Errorf("Scan(%d) = %+v, want queued with no start time", id, sc)
+	}
+}
+
+func TestReleaseJob_RequeuesJobAndScan(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	id := requestScan(t, s)
+
+	a, err := s.ClaimJob(ctx, "worker-a", time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimJob(worker-a) error = %v", err)
+	}
+	if err := s.StartScan(ctx, id); err != nil {
+		t.Fatalf("StartScan(%d) error = %v", id, err)
+	}
+	if err := s.ReleaseJob(ctx, a.ID, "worker-a"); err != nil {
+		t.Fatalf("ReleaseJob(worker-a, holder) error = %v", err)
+	}
+	assertQueued(t, s, id, 0)
+
+	b, err := s.ClaimJob(ctx, "worker-b", time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimJob(worker-b) after release error = %v", err)
+	}
+	if b.ID != a.ID || b.Attempts != 1 {
+		t.Errorf("ClaimJob(worker-b) after release = %+v, want job %d with 1 attempt", b, a.ID)
+	}
+}
+
+func TestReleaseJob_OnlyByLeaseHolder(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	id := requestScan(t, s)
+
+	a, err := s.ClaimJob(ctx, "worker-a", 0)
+	if err != nil {
+		t.Fatalf("ClaimJob(worker-a) error = %v", err)
+	}
+	if _, err := s.ClaimJob(ctx, "worker-b", time.Minute); err != nil {
+		t.Fatalf("ClaimJob(worker-b) error = %v", err)
+	}
+	if err := s.StartScan(ctx, id); err != nil {
+		t.Fatalf("StartScan(%d) error = %v", id, err)
+	}
+	before, err := s.Job(ctx, int64(id))
+	if err != nil {
+		t.Fatalf("Job(%d) error = %v", id, err)
+	}
+
+	if err := s.ReleaseJob(ctx, a.ID, "worker-a"); !errors.Is(err, job.ErrLeaseLost) {
+		t.Fatalf("ReleaseJob(worker-a, taken over) error = %v, want ErrLeaseLost", err)
+	}
+	after, err := s.Job(ctx, int64(id))
+	if err != nil {
+		t.Fatalf("Job(%d) error = %v", id, err)
+	}
+	if after.State != "running" || after.Attempts != before.Attempts || after.LockedBy == nil || *after.LockedBy != "worker-b" ||
+		after.LockedUntil == nil || !after.LockedUntil.Equal(*before.LockedUntil) {
+		t.Errorf("Job(%d) after a refused ReleaseJob = %+v, want it unchanged from %+v", id, after, before)
+	}
+	sc, err := s.Scan(ctx, id)
+	if err != nil {
+		t.Fatalf("Scan(%d) error = %v", id, err)
+	}
+	if sc.Status != scan.StatusRunning || sc.StartedAt.IsZero() {
+		t.Errorf("Scan(%d) after a refused ReleaseJob = %+v, want still running", id, sc)
+	}
+}
+
+func TestReleaseJob_AfterDone(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	id := requestScan(t, s)
+
+	a, err := s.ClaimJob(ctx, "worker-a", time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimJob(worker-a) error = %v", err)
+	}
+	if err := s.StartScan(ctx, id); err != nil {
+		t.Fatalf("StartScan(%d) error = %v", id, err)
+	}
+	if err := s.SaveResult(ctx, a.ID, "worker-a", id, scan.Result{}); err != nil {
+		t.Fatalf("SaveResult(%d) error = %v", id, err)
+	}
+
+	if err := s.ReleaseJob(ctx, a.ID, "worker-a"); !errors.Is(err, job.ErrLeaseLost) {
+		t.Fatalf("ReleaseJob(done job) error = %v, want ErrLeaseLost", err)
+	}
+	assertJobState(t, s, id, "done")
+	sc, err := s.Scan(ctx, id)
+	if err != nil {
+		t.Fatalf("Scan(%d) error = %v", id, err)
+	}
+	if sc.Status != scan.StatusSucceeded {
+		t.Errorf("Scan(%d) after a refused ReleaseJob = %+v, want succeeded", id, sc)
+	}
+}

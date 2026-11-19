@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -106,4 +107,21 @@ func (s *Store) FindingRow(ctx context.Context, projectID project.ID, fingerprin
 		"SELECT id, first_scan_id, last_scan_id FROM finding WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3",
 		projectID, fingerprint, file).Scan(&f.ID, &f.FirstScanID, &f.LastScanID)
 	return f, err
+}
+
+// JobRow is the lease columns of a job row.
+type JobRow struct {
+	State       string
+	Attempts    int
+	LockedBy    *string
+	LockedUntil *time.Time
+}
+
+// Job returns the lease columns of the job that runs the scan with the given
+// ID.
+func (s *Store) Job(ctx context.Context, scanID int64) (JobRow, error) {
+	var j JobRow
+	err := s.pool.QueryRow(ctx, "SELECT state, attempts, locked_by, locked_until FROM job WHERE scan_id = $1", scanID).
+		Scan(&j.State, &j.Attempts, &j.LockedBy, &j.LockedUntil)
+	return j, err
 }
