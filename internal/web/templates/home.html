@@ -2,6 +2,7 @@
 {{define "body"}}<main>
 <h1>{{.Name}}</h1>
 <p>역할: {{range $i, $r := .Roles}}{{if $i}}, {{end}}{{$r}}{{end}}</p>
+<p><a href="/projects">프로젝트</a></p>
 <form method="post" action="/logout">
 <button type="submit">로그아웃</button>
 </form>

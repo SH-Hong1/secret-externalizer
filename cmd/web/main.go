@@ -106,7 +106,7 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 		return fmt.Errorf("migrating database: %w", err)
 	}
 
-	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store))
+	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store, database))
 }
 
 // valkeyOption configures the valkey client so that a command fails within a
