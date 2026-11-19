@@ -7,6 +7,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"path/filepath"
 	"strings"
 
@@ -102,6 +104,40 @@ type leak struct {
 	Match       string
 	Secret      string
 	Tags        []string
+}
+
+// String returns the rule and where the result is. Match and Secret hold
+// text from the scanned file, so they are never printed.
+func (l leak) String() string {
+	return fmt.Sprintf("{rule:%s file:%s line:%d column:%d match:[redacted] secret:[redacted]}",
+		l.RuleID, l.File, l.StartLine, l.StartColumn)
+}
+
+// Format prints the form String returns for every fmt verb, including %#v
+// and %x, which would otherwise print Match and Secret.
+func (l leak) Format(s fmt.State, _ rune) {
+	_, _ = io.WriteString(s, l.String()) // a failed write to a fmt buffer has no one to report to
+}
+
+// MarshalJSON encodes the rule and where the result is. A leak inside a
+// slice or a struct is logged through this method, not through LogValue.
+func (l leak) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Rule   string `json:"rule"`
+		File   string `json:"file"`
+		Line   int    `json:"line"`
+		Column int    `json:"column"`
+	}{l.RuleID, l.File, l.StartLine, l.StartColumn})
+}
+
+// LogValue returns the rule and where the result is.
+func (l leak) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("rule", l.RuleID),
+		slog.String("file", l.File),
+		slog.Int("line", l.StartLine),
+		slog.Int("column", l.StartColumn),
+	)
 }
 
 // Parse reads a betterleaks JSON report of a scan of dir. Each result is
