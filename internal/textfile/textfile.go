@@ -70,8 +70,10 @@ type File struct {
 // reads more than maxBytes+1 bytes. It fails with ErrNotRegular for anything
 // but a regular file (a symbolic link included), ErrTooLarge when the file is
 // longer than maxBytes, ErrBinary when a NUL byte appears in the first 8,000
-// bytes, and ErrUnknownEncoding for UTF-16 and for bytes that are neither
-// UTF-8 nor EUC-KR.
+// bytes after any UTF-8 byte order mark, and ErrUnknownEncoding for UTF-16,
+// for a byte order mark followed by bytes that are not UTF-8, and for bytes
+// that are neither UTF-8 nor EUC-KR. A NUL byte further into the file does
+// not make it binary.
 func Read(path string, maxBytes int64) (File, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
@@ -123,19 +125,23 @@ func readLimited(path string, maxBytes int64) (_ []byte, err error) {
 	return raw, nil
 }
 
-// decode converts raw to UTF-8 and reports the encoding it had.
+// decode converts raw to UTF-8 and reports the encoding it had. The bytes
+// after a UTF-8 byte order mark are probed for NUL and must be valid UTF-8.
 func decode(raw []byte) ([]byte, Encoding, error) {
 	switch {
 	case bytes.HasPrefix(raw, []byte{0xEF, 0xBB, 0xBF}):
-		return raw[3:], UTF8, nil
+		body := raw[3:]
+		if hasNUL(body) {
+			return nil, 0, ErrBinary
+		}
+		if !utf8.Valid(body) {
+			return nil, 0, fmt.Errorf("%w: not valid UTF-8 after a byte order mark", ErrUnknownEncoding)
+		}
+		return body, UTF8, nil
 	case bytes.HasPrefix(raw, []byte{0xFF, 0xFE}), bytes.HasPrefix(raw, []byte{0xFE, 0xFF}):
 		return nil, 0, fmt.Errorf("%w: UTF-16", ErrUnknownEncoding)
 	}
-	probe := raw
-	if len(probe) > probeLen {
-		probe = probe[:probeLen]
-	}
-	if bytes.IndexByte(probe, 0) >= 0 {
+	if hasNUL(raw) {
 		return nil, 0, ErrBinary
 	}
 	if utf8.Valid(raw) {
@@ -149,6 +155,14 @@ func decode(raw []byte) ([]byte, Encoding, error) {
 		return nil, 0, fmt.Errorf("%w: not valid EUC-KR", ErrUnknownEncoding)
 	}
 	return text, EUCKR, nil
+}
+
+// hasNUL reports whether a NUL byte is in the first probeLen bytes of b.
+func hasNUL(b []byte) bool {
+	if len(b) > probeLen {
+		b = b[:probeLen]
+	}
+	return bytes.IndexByte(b, 0) >= 0
 }
 
 // Position converts a byte offset in Text to a 1-based line and a 1-based

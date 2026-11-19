@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/textfile"
 )
 
@@ -29,8 +30,13 @@ type sourceFile struct {
 // scanner result for a file not in files is not used.
 type fileList struct {
 	files map[string]sourceFile
-	// skipped counts the listed files that could not be read as text and
-	// the directories that could not be read.
+	// unstorable counts the regular files whose path cannot be stored or
+	// shown (see storablePath). They are not in files, and are counted in
+	// skipped as well.
+	unstorable int
+	// skipped counts the listed files that could not be read as text, the
+	// files whose path cannot be stored, and the directories that could not
+	// be read.
 	skipped int
 	// copied counts the EUC-KR files written to the folder of copies.
 	copied int
@@ -66,6 +72,11 @@ func listFiles(ctx context.Context, dir string, excludes []string, maxBytes int6
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		if !storablePath(rel) {
+			l.unstorable++
+			l.skipped++
+			return nil
+		}
 		f, err := textfile.Read(filepath.Join(dir, filepath.FromSlash(rel)), maxBytes)
 		if notText(err) {
 			l.files[rel] = sourceFile{}
@@ -87,6 +98,14 @@ func listFiles(ctx context.Context, dir string, excludes []string, maxBytes int6
 	}
 	l.skipped += skippedDirs
 	return l, nil
+}
+
+// storablePath reports whether rel is valid UTF-8 without control
+// characters other than tab. postgres refuses NUL and invalid UTF-8 in text,
+// so a finding in a file with another path could not be saved and would
+// fail every scan of the project.
+func storablePath(rel string) bool {
+	return finding.Printable(rel) == rel
 }
 
 // notText reports whether err from textfile.Read means the file is skipped:

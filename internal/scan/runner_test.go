@@ -1059,3 +1059,33 @@ func TestHandle_ScannerDroppedUnknownFileDropsAllContext(t *testing.T) {
 		}
 	}
 }
+
+func TestHandle_UnstorableFileNameSkipped(t *testing.T) {
+	tests := []struct {
+		name, rel, content string
+	}{
+		{name: "not valid UTF-8", rel: "conf/db\xff.properties", content: "jdbc.password=" + password + "\n"},
+		{name: "control character", rel: "conf/db\x01.properties", content: "jdbc.password=" + password + "\n"},
+		{name: "line break", rel: "conf/db\n.properties", content: "jdbc.password=" + password + "\n"},
+		{name: "key store with a control character", rel: "conf/server\x1b.jks", content: "\xfe\xed\xfe\xed\x00\x00\x00\x02dev-only-fake-keystore"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{"conf/ok.properties": "x=1\n"})
+			p := filepath.Join(e.dir, filepath.FromSlash(tt.rel))
+			if err := os.WriteFile(p, []byte(tt.content), 0o600); err != nil {
+				t.Skipf("the file system refuses the name %q: %v", tt.rel, err)
+			}
+			if err := e.handle(t.Context(), passwordOG()); err != nil {
+				t.Fatalf("Handle(%q) error = %v", tt.rel, err)
+			}
+			got := e.result(t)
+			if got.Files != 2 || got.Skipped != 1 || len(got.Findings) != 0 {
+				t.Errorf("Handle(%q) = %d files, %d skipped, findings %+v; want 2 files, 1 skipped, no findings", tt.rel, got.Files, got.Skipped, got.Findings)
+			}
+			if e.orig.puts != 0 {
+				t.Errorf("Handle(%q) put %d pending values, want none", tt.rel, e.orig.puts)
+			}
+		})
+	}
+}

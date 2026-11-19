@@ -59,7 +59,8 @@ type Scan struct {
 // its locations and, for secrets, masked surrounding lines.
 //
 // Files counts the regular files the scan listed. Skipped counts the files
-// it could not read as text and the directories it could not read. Dropped
+// it could not read as text, the files whose path is not valid UTF-8 or
+// holds a control character, and the directories it could not read. Dropped
 // counts scanner results that were discarded because their value was not
 // at the place reported or could not be placed: a value that differs from
 // the text there, a range outside the text or off a character boundary, or

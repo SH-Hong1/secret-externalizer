@@ -4,6 +4,7 @@ import (
 	"math/rand/v2"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -234,5 +235,41 @@ func TestContext_NoMaskedContentSurvives(t *testing.T) {
 				t.Fatalf("iteration %d: output %q contains masked %q (text %q)", iter, out, content, text)
 			}
 		}
+	}
+}
+
+func TestContext_ReplacesBytesPostgresRefuses(t *testing.T) {
+	// The NUL lies past the first 8,000 bytes, which textfile.Read probes.
+	text := strings.Repeat("x", 8100) + "\n" +
+		"a\x00b\tc\x1bd\x7fe\u0085f\xffg\n" +
+		"pw=dev-only-fake-pw\x00\xfe\n" +
+		"end\r\n"
+	target := spanOf(t, text, "dev-only-fake-pw\x00\xfe")
+	got, first := finding.Context(file(text), target, nil)
+	want := []string{
+		strings.Repeat("x", 200),
+		"a�b\tc�d�e�f�g",
+		"pw=****",
+		"end",
+	}
+	if diff := cmp.Diff(want, got); diff != "" || first != 1 {
+		t.Errorf("Context() first line %d, want 1; lines (-want +got):\n%s", first, diff)
+	}
+	for _, ln := range got {
+		if !utf8.ValidString(ln) || strings.ContainsRune(ln, 0) {
+			t.Errorf("Context() line %q is not valid UTF-8 without NUL", ln)
+		}
+	}
+}
+
+func TestContext_ReplacementKeepsMask(t *testing.T) {
+	// A value that ends in the middle of an invalid sequence: the whole
+	// value stays masked and the bytes around it become U+FFFD.
+	text := "k=\xffdev-only-fake-pw\xfe;\n"
+	target := spanOf(t, text, "dev-only-fake-pw")
+	got, _ := finding.Context(file(text), target, nil)
+	want := []string{"k=�****�;"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Context() (-want +got):\n%s", diff)
 	}
 }

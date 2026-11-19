@@ -2,6 +2,8 @@ package finding
 
 import (
 	"slices"
+	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/textfile"
@@ -16,7 +18,8 @@ const (
 // Context returns the lines around target in f, and the file line number of
 // the first of them. Every span in all, and target itself, is replaced by
 // "****" before the lines are cut, and a line is cut to 200 characters only
-// after that, so no part of a detected value can survive. Spans may be
+// after that, so no part of a detected value can survive. Between masking
+// and cutting, each line goes through Printable. Spans may be
 // unsorted, overlapping, adjacent or outside the text; they are clamped to the
 // text and widened to whole characters, and touching spans become one "****".
 //
@@ -47,9 +50,36 @@ func Context(f textfile.File, target Span, all []Span) (lines []string, first in
 	masked := textfile.File{Text: applyMask(f.Text, merged)}
 	lines = masked.Lines(first, last)
 	for i, ln := range lines {
-		lines[i] = truncateRunes(ln, maxLineRunes)
+		lines[i] = truncateRunes(Printable(ln), maxLineRunes)
 	}
 	return lines, first
+}
+
+// Printable returns s with every byte that is not part of valid UTF-8, and
+// every control character except tab, replaced by U+FFFD. postgres refuses
+// NUL and invalid UTF-8 in text, and the other control characters are not
+// meant to be shown. Context applies it after masking, so it only ever
+// replaces characters and cannot bring back a masked byte.
+func Printable(s string) string {
+	clean := true
+	for _, r := range s {
+		if r == utf8.RuneError || (unicode.IsControl(r) && r != '\t') {
+			clean = false
+			break
+		}
+	}
+	if clean {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		if r == utf8.RuneError || (unicode.IsControl(r) && r != '\t') {
+			r = utf8.RuneError
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
 }
 
 // widen clamps s to text and extends it to whole characters. A span that is

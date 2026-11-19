@@ -296,3 +296,25 @@ func TestLines(t *testing.T) {
 		})
 	}
 }
+
+func TestRead_BOMFileIsValidated(t *testing.T) {
+	bom := "\xef\xbb\xbf"
+	tests := []struct {
+		name    string
+		content string
+		wantErr error
+	}{
+		{"invalid UTF-8 after the mark", bom + "key=\xff\xfe\x80\n", textfile.ErrUnknownEncoding},
+		{"EUC-KR after the mark", bom + "key=\xb0\xa1\n", textfile.ErrUnknownEncoding},
+		{"NUL in the first 8,000 bytes", bom + "key=a\x00b\n", textfile.ErrBinary},
+		{"NUL at the last probed byte", bom + strings.Repeat("a", 7999) + "\x00", textfile.ErrBinary},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := textfile.Read(writeFile(t, []byte(tt.content)), 1<<20)
+			if !errors.Is(err, tt.wantErr) {
+				t.Errorf("Read(%q) = %v, %v, want error %v", tt.content, got.Encoding, err, tt.wantErr)
+			}
+		})
+	}
+}
