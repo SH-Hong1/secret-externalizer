@@ -263,6 +263,15 @@ func TestScan_ListsFindings(t *testing.T) {
 	)
 }
 
+func TestScan_LabelsPort(t *testing.T) {
+	f := secretFinding()
+	f.Kind, f.Preview = finding.KindPort, "****"
+	e := newTestEnv(t)
+	body := e.succeeded(t, scan.Scan{Findings: 1}, f)
+
+	wantContains(t, body, "포트")
+}
+
 func TestScan_ShowsContextLineNumbers(t *testing.T) {
 	e := newTestEnv(t)
 	body := e.succeeded(t, scan.Scan{Findings: 1}, secretFinding())

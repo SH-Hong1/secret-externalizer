@@ -136,6 +136,8 @@ func kindLabel(k finding.Kind) string {
 		return "계정"
 	case finding.KindHost:
 		return "호스트"
+	case finding.KindPort:
+		return "포트"
 	case finding.KindURL:
 		return "URL"
 	case finding.KindPrivateKey:

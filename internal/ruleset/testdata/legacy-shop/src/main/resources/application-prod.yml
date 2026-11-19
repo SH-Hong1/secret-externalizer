@@ -16,3 +16,6 @@ batch:
   datasource:
     password: "dev-only-fake #yaml-hash" # quoted, then a comment
     username: 'dev only batch user'
+report:
+  datasource:
+    url: jdbc:mysql://report_app:dev-only-fake-url-password@report.example.invalid:3306/report

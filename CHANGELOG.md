@@ -55,6 +55,7 @@
 - 스캔이 `failed`로 끝나는 경우: OpenBao에 닿지 않을 때, 스캐너가 끝내지 못했을 때, 30분 제한 시간을 넘겼을 때, 프로젝트 폴더 맨 위에 betterleaks 무시 파일(`.gitleaksignore`, `.betterleaksignore`)이 있을 때. 실패 사유는 정해진 문구만 화면에 보인다.
 - worker 환경 변수 `BAO_ADDR`, `BAO_ROLE_ID`, `BAO_SECRET_ID_FILE`, `BETTERLEAKS_BIN`, `OPENGREP_BIN`, `RULES_DIR`, `SCAN_TEMP_DIR`(필수)와 `GIT_BIN`(선택).
 - worker가 정상 종료(SIGTERM)할 때 잡고 있던 작업을 돌려주고, 임대를 연장하지 못한 채 임대 시간이 지나면 스스로 멈춘다. 결정 기록 0022.
+- 스캔이 JDBC URL을 구성 요소로 나눠 저장한다. `jdbc:mysql://계정:비밀번호@호스트:포트/DB`, `?user=…&password=…` 매개변수, SQL Server의 `;user=…;password=…`, Oracle의 `계정/비밀번호@호스트:포트:SID`와 `@//호스트:포트/서비스`에서 계정, 비밀번호, 호스트, 포트가 각각 항목이 되고, URL 전체는 항목으로 남지 않는다. DB 이름과 경로는 항목이 아니다. `${...}` 자리 표시자인 구성 요소는 빼고, 형식을 모르거나 나눌 구성 요소가 없는 URL(`jdbc:h2:mem:test` 등)은 지금처럼 URL 항목 하나로 남는다. 항목의 종류에 `port`(화면 표시 "포트")를 더했다(마이그레이션 `0004_port_kind.sql`). 결정 기록 0026.
 
 ### 변경
 

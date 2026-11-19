@@ -123,6 +123,25 @@ func TestSaveResult_StoresScanAndFindings(t *testing.T) {
 	}
 }
 
+func TestSaveResult_StoresPort(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	id, j := claimedScan(t, s, newProject(t, s, "shop"))
+	port := secretAt(fpA, 4)
+	port.Kind, port.Preview = finding.KindPort, "****"
+
+	if err := s.SaveResult(ctx, j.ID, "worker-a", id, result(port)); err != nil {
+		t.Fatalf("SaveResult() of a port error = %v", err)
+	}
+	findings, err := s.FindingsByScan(ctx, id)
+	if err != nil {
+		t.Fatalf("FindingsByScan(%d) error = %v", id, err)
+	}
+	if len(findings) != 1 || findings[0].Kind != finding.KindPort {
+		t.Errorf("FindingsByScan(%d) = %+v, want one port finding", id, findings)
+	}
+}
+
 func TestSaveResult_SecondScanKeepsFinding(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()
@@ -235,6 +254,7 @@ func TestSaveResult_RejectsMalformedFinding(t *testing.T) {
 		{name: "short fingerprint", mutate: func(f *finding.Finding) { f.Fingerprint = "abc" }},
 		{name: "upper-case fingerprint", mutate: func(f *finding.Finding) { f.Fingerprint = strings.Repeat("A", 64) }},
 		{name: "unknown category", mutate: func(f *finding.Finding) { f.Category = "secret" }},
+		{name: "unknown kind", mutate: func(f *finding.Finding) { f.Kind = "database" }},
 		{name: "empty file", mutate: func(f *finding.Finding) { f.File = "" }},
 		{name: "customer data with an original", mutate: func(f *finding.Finding) {
 			f.Category, f.Kind, f.HasOriginal = finding.CategoryCustomerData, finding.KindPhone, true

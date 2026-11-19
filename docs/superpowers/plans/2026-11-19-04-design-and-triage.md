@@ -161,8 +161,8 @@
   func Split(value []byte) []Part
   ```
 
-- [ ] **Step 1:** "구현 전에 확인할 사실"의 Task 3 항목 두 개를 규칙 파일과 실제 스캔으로 확인한다.
-- [ ] **Step 2: 실패하는 테스트를 쓴다.** `TestSplit`은 표 형태이고 각 줄은 입력과 기대하는 `(종류, 잘라 낸 문자열)` 목록이다.
+- [x] **Step 1:** "구현 전에 확인할 사실"의 Task 3 항목 두 개를 규칙 파일과 실제 스캔으로 확인한다. 확인 결과: `shell.yml`은 `user@host`를 값 하나로 보고하지 않고 계정과 호스트를 따로 보고하므로 나눌 ssh 대상 종류는 없고 `url`만 나눈다. JDBC URL 규칙은 URL 전체를 범위로 보고하고, betterleaks가 따로 보고한 URL 안의 비밀번호는 나눈 비밀번호와 한 위치로 합쳐진다(결정 기록 0026).
+- [x] **Step 2: 실패하는 테스트를 쓴다.** `TestSplit`은 표 형태이고 각 줄은 입력과 기대하는 `(종류, 잘라 낸 문자열)` 목록이다.
 
   | 입력 | 결과 |
   |---|---|
@@ -182,16 +182,16 @@
   | `jdbc:h2:mem:test`, `not a url`, 빈 값 | 없음 |
 
   모든 결과에서 `value[Span.Start:Span.End]`가 기대한 문자열과 같고, 범위가 겹치지 않는다. `FuzzSplit`은 어떤 입력에도 패닉이 없고 범위가 입력 안에 있으며 UTF-8 글자 경계에 있음을 확인한다.
-- [ ] **Step 3:** 실패를 확인하고 `Split`을 쓴다. 표준 라이브러리만 쓴다. `${`로 시작하는 구성 요소는 결과에서 뺀다.
-- [ ] **Step 4: 러너의 실패하는 테스트를 쓴다.** `internal/scan`의 기존 러너 테스트에 더한다.
+- [x] **Step 3:** 실패를 확인하고 `Split`을 쓴다. 표준 라이브러리만 쓴다. `${`로 시작하는 구성 요소는 결과에서 뺀다.
+- [x] **Step 4: 러너의 실패하는 테스트를 쓴다.** `internal/scan`의 기존 러너 테스트에 더한다.
   - `application.yml`에 `url: jdbc:mysql://shop_app:dev-only-fake-pw@db.invalid:3306/shop`가 있으면 결과에 종류 `url`인 항목이 없고 `account`, `password`, `host`, `port` 항목이 그 파일에 하나씩 있으며, 각 위치의 시작 열이 원문에서 그 구성 요소가 시작하는 열이다.
   - 같은 내용의 EUC-KR 파일(앞줄에 한글 주석)과 CRLF 파일에서도 줄과 열이 같다.
   - `jdbc:h2:mem:test`는 종류 `url`인 항목 하나로 남는다.
   - 네 항목의 탐지 규칙(`Detections`)은 URL을 보고한 규칙이다.
   - 주변 줄에서 네 값이 모두 가려진다.
-- [ ] **Step 5:** 값의 자리를 정한 뒤, 지문을 만들기 전에 종류가 `url`이거나 Step 1에서 확인한 ssh 대상 종류인 결과를 `connstr.Split`으로 나눈다. 나뉘면 원래 결과를 구성 요소 결과로 바꾸고(분류와 규칙은 그대로), 나뉘지 않으면 그대로 둔다. `0004_port_kind.sql`은 `finding`의 `kind` CHECK 제약을 `port`를 더한 것으로 바꾼다. `Preview`는 `port`를 다른 비밀 값 종류와 같이 다룬다.
-- [ ] **Step 6:** `make check`와 `make test-integration`이 통과하는지 확인한다.
-- [ ] **Step 7:** `CHANGELOG.md`와 결정 기록 0026(나누는 형식, 통째 항목을 남기지 않는 이유, DB 이름을 빼는 이유)을 쓰고 커밋한다. `feat(scan): split connection strings into their components`
+- [x] **Step 5:** 값의 자리를 정한 뒤, 지문을 만들기 전에 종류가 `url`이거나 Step 1에서 확인한 ssh 대상 종류인 결과를 `connstr.Split`으로 나눈다. 나뉘면 원래 결과를 구성 요소 결과로 바꾸고(분류와 규칙은 그대로), 나뉘지 않으면 그대로 둔다. `0004_port_kind.sql`은 `finding`의 `kind` CHECK 제약을 `port`를 더한 것으로 바꾼다. `Preview`는 `port`를 다른 비밀 값 종류와 같이 다룬다.
+- [x] **Step 6:** `make check`와 `make test-integration`이 통과하는지 확인한다.
+- [x] **Step 7:** `CHANGELOG.md`와 결정 기록 0026(나누는 형식, 통째 항목을 남기지 않는 이유, DB 이름을 빼는 이유)을 쓰고 커밋한다. `feat(scan): split connection strings into their components`
 
 ### Task 4: 묶음과 판정 저장
 

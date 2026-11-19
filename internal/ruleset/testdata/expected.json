@@ -57,6 +57,8 @@
   {"file": "src/main/resources/application-prod.yml", "line": 17, "category": "other-secret", "kind": "other", "value": "dev-only-fake #yaml-hash"},
   {"file": "src/main/resources/application-prod.yml", "line": 17, "category": "storage-credential", "kind": "password", "value": "dev-only-fake #yaml-hash"},
   {"file": "src/main/resources/application-prod.yml", "line": 18, "category": "storage-credential", "kind": "account", "value": "dev only batch user"},
+  {"file": "src/main/resources/application-prod.yml", "line": 21, "category": "other-secret", "kind": "other", "value": "dev-only-fake-url-password"},
+  {"file": "src/main/resources/application-prod.yml", "line": 21, "category": "storage-credential", "kind": "url", "value": "jdbc:mysql://report_app:dev-only-fake-url-password@report.example.invalid:3306/report"},
   {"file": "src/main/resources/jdbc.properties", "line": 3, "category": "storage-credential", "kind": "url", "value": "jdbc:oracle:thin:@db.example.invalid:1521:SHOP"},
   {"file": "src/main/resources/jdbc.properties", "line": 4, "category": "storage-credential", "kind": "account", "value": "shop_app"},
   {"file": "src/main/resources/jdbc.properties", "line": 5, "category": "other-secret", "kind": "other", "value": "dev-only-fake-properties-password"},

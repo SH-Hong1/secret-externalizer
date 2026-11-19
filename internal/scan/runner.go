@@ -209,6 +209,7 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 		return err
 	}
 	dropContext(placed, files, d.dropped)
+	splitConnections(placed)
 	res.Dropped = d.dropped.count + notPlaced
 
 	fingerprints, err := r.fingerprint(ctx, placed)
