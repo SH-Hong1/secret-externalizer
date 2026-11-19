@@ -30,13 +30,15 @@ type mergedLocation struct {
 // finding that is not customer data. No finding in a file marked noContext
 // gets surrounding lines (see placedFile); that covers every file with a
 // customer data finding and every file on a customer data path. Surrounding
-// lines mask every placed value of the file and every place an unplaced
-// result's value may be.
+// lines mask every placed value of the file, every place an unplaced
+// result's value may be, and every place in the file of a value in elsewhere,
+// the values found anywhere in the scan. elsewhere is searched only in files
+// that have a finding with surrounding lines.
 //
 // A location's end is the line and column of the value's last character.
 // Findings are ordered by file, first location, and fingerprint; locations
 // by position.
-func merge(placed []*placedFile, fingerprints map[string]string) ([]finding.Finding, map[string][]byte) {
+func merge(placed []*placedFile, fingerprints map[string]string, elsewhere valueIndex) ([]finding.Finding, map[string][]byte) {
 	var findings []finding.Finding
 	originals := map[string][]byte{}
 	for _, pf := range placed {
@@ -61,7 +63,10 @@ func merge(placed []*placedFile, fingerprints map[string]string) ([]finding.Find
 			})
 		}
 
-		spans := pf.spans()
+		var spans []finding.Span
+		if pf.showsContext() {
+			spans = append(pf.spans(), elsewhere.find(pf.file.Text)...)
+		}
 		for fp, mls := range byFingerprint {
 			f := newFinding(pf, fp, mls, spans)
 			if f.HasOriginal {

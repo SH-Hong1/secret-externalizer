@@ -218,6 +218,21 @@ func (pf *placedFile) position(s spot) (startLine, startCol, endLine, endCol int
 	return startLine, startCol, endLine, endCol
 }
 
+// showsContext reports whether some finding in the file gets surrounding
+// lines: the file is not marked noContext and has a result that is not a
+// whole-file result.
+func (pf *placedFile) showsContext() bool {
+	if pf.noContext {
+		return false
+	}
+	for _, s := range pf.spots {
+		if !s.raw.wholeFile() {
+			return true
+		}
+	}
+	return false
+}
+
 // spans returns the ranges to mask in the file's surrounding lines: every
 // placed text result and every place a result that could not be placed may
 // have its value.

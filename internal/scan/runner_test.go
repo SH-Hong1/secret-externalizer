@@ -638,8 +638,12 @@ func TestHandle_NoRawValueInLogs(t *testing.T) {
 		"conf/legacy.properties": legacy,
 		"logs/app.log":           "call " + phone + "\n",
 		"deploy/id_rsa":          key,
+		// crossValue is reported in cross.properties only; in Dao.java it is
+		// next to the password, where no scanner reports it.
+		"conf/cross.properties": "cross.user=" + crossValue + "\n",
+		"src/Dao.java":          "x=1\nuser(\"" + crossValue + "\")\npw=\"" + password + "\"\n",
 	}
-	values := []string{password, account, phone, hostURL, "dev-only-fake-rsa-material", "dev-only-other-value", encodedBlob}
+	values := []string{password, account, phone, hostURL, "dev-only-fake-rsa-material", "dev-only-other-value", encodedBlob, crossValue}
 	scanners := func() []scan.Scanner {
 		mismatch := passwordBL()
 		mismatch.extra = []scan.Raw{{
@@ -648,6 +652,7 @@ func TestHandle_NoRawValueInLogs(t *testing.T) {
 		}}
 		return []scan.Scanner{
 			mismatch, passwordOG(),
+			onlyAt(reportedAt(t, "conf/cross.properties", files["conf/cross.properties"], crossValue)),
 			&needleScanner{tool: "opengrep", rule: "properties-user", category: finding.CategoryStorage, kind: finding.KindAccount, needle: account},
 			&needleScanner{tool: "opengrep", rule: "properties-url", category: finding.CategoryStorage, kind: finding.KindURL, needle: hostURL},
 			&needleScanner{tool: "betterleaks", rule: "customer-phone", category: finding.CategoryCustomerData, kind: finding.KindPhone, needle: phone, lineCol: true},

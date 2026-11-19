@@ -102,6 +102,50 @@ func TestHandle_RealScanners(t *testing.T) {
 	}
 }
 
+// TestHandle_RealScannersContextMasksEveryValue scans the example project
+// of the rule tests and checks that no value the scan parked, four bytes or
+// longer, appears in any stored surrounding line, wherever it was found.
+func TestHandle_RealScannersContextMasksEveryValue(t *testing.T) {
+	blBin := realBin(t, "BETTERLEAKS_BIN", "betterleaks")
+	ogBin := realBin(t, "OPENGREP_BIN", "opengrep")
+	rules, err := filepath.Abs(filepath.Join("..", "..", "rules"))
+	if err != nil {
+		t.Fatalf("Abs(rules) error = %v", err)
+	}
+	e := newEnv(t, nil)
+	if err := os.CopyFS(e.dir, os.DirFS(filepath.Join("..", "ruleset", "testdata", "legacy-shop"))); err != nil {
+		t.Fatalf("copying legacy-shop: %v", err)
+	}
+	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
+	bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
+	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env)
+
+	if err := e.handle(t.Context(), bl, og); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t)
+	var values []string
+	for _, v := range e.orig.pending {
+		if len(v) >= 4 {
+			values = append(values, string(v))
+		}
+	}
+	lines := 0
+	for _, f := range got.Findings {
+		for _, l := range f.Locations {
+			for _, line := range l.Context {
+				lines++
+				if v := containsAny(line, values...); v != "" {
+					t.Errorf("%s line %d: surrounding line %q holds a parked value", f.File, l.StartLine, line)
+				}
+			}
+		}
+	}
+	if len(values) == 0 || lines == 0 {
+		t.Fatalf("Handle(legacy-shop) parked %d values and stored %d surrounding lines, want some of both", len(values), lines)
+	}
+}
+
 // TestHandle_RealScannersEncodedValue checks a value betterleaks finds only
 // after decoding base64: its decoded form appears nowhere in the file, so it
 // cannot be located, and the encoded text must not be stored in a

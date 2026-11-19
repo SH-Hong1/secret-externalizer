@@ -214,7 +214,7 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 	if err != nil {
 		return err
 	}
-	findings, originals := merge(placed, fingerprints)
+	findings, originals := merge(placed, fingerprints, newValueIndex(maskValues(placed, raws)))
 	if err := r.park(ctx, int64(p.ID), originals); err != nil {
 		return err
 	}
