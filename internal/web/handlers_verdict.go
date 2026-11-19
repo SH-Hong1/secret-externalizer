@@ -97,25 +97,31 @@ func pathID(r *http.Request, name string) (int64, bool) {
 }
 
 // readForm bounds and parses the form of a request that records a choice,
-// and returns the screen to go back to. A return value the screen does not
-// know gives the default screen, so the address is always the project's
-// triage screen.
+// and returns the screen to go back to.
 func readForm(w http.ResponseWriter, r *http.Request) (triageQuery, error) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxFormBytes)
 	if err := r.ParseForm(); err != nil {
 		return triageQuery{}, fmt.Errorf("reading triage form: %w", err)
 	}
+	return returnQuery(r.PostFormValue("return")), nil
+}
+
+// returnQuery reads the filter and page of the screen to go back to from
+// the return field of a form, without its selection. A value the screen
+// does not know gives the default screen, so the address is always the
+// project's triage screen.
+func returnQuery(raw string) triageQuery {
 	def := triageQuery{Status: triage.StatusUndecided, Page: 1}
-	v, err := url.ParseQuery(r.PostFormValue("return"))
+	v, err := url.ParseQuery(raw)
 	if err != nil {
-		return def, nil //nolint:nilerr // a broken return value falls back to the default screen
+		return def
 	}
 	v.Del("sel")
 	q, _, err := parseTriageValues(v)
 	if err != nil {
-		return def, nil //nolint:nilerr // an unknown filter falls back to the default screen
+		return def
 	}
-	return q, nil
+	return q
 }
 
 // actorOf returns the signed-in user of r as the actor of an audit event.
@@ -148,7 +154,7 @@ func (tw triageWriter) reject(w http.ResponseWriter, r *http.Request, pid projec
 	}
 	var s selection
 	if sel != "" {
-		s, _ = parseSel(sel) // sel is built by the handlers, never taken from input
+		s, _ = parseSel(sel) // the handlers build sel from validated IDs and group keys, so it parses
 	}
 	q.Sel = sel
 	data := triagePage{User: u, Project: p, Status: q.Status, Options: newCategoryOptions(q.Category), Error: msg}
@@ -251,6 +257,22 @@ func (tw triageWriter) latestScan(w http.ResponseWriter, r *http.Request, pid pr
 	return sc, true
 }
 
+// secretBundle returns bundle id as scan sc found it, or answers the request
+// with the error page and returns false. A bundle the scan did not find and
+// a customer data bundle are not found.
+func (tw triageWriter) secretBundle(w http.ResponseWriter, r *http.Request, pid project.ID, sc scan.Scan, id triage.BundleID) (triage.Bundle, bool) {
+	b, err := tw.store.Bundle(r.Context(), pid, sc.ID, id)
+	if err != nil {
+		tw.rd.fail(w, r, tw.logger, bundleReadStatus(err), fmt.Errorf("reading bundle: %w", err))
+		return triage.Bundle{}, false
+	}
+	if b.Category == finding.CategoryCustomerData {
+		tw.rd.fail(w, r, tw.logger, http.StatusNotFound, errors.New("bundle holds customer data"))
+		return triage.Bundle{}, false
+	}
+	return b, true
+}
+
 // handleBundleVerdict records the verdict a user gives one secret bundle and
 // sends the browser back to the triage screen, on the next line of its
 // filter.
@@ -268,15 +290,19 @@ func handleBundleVerdict(tw triageWriter) http.Handler {
 			tw.rd.fail(w, r, tw.logger, http.StatusBadRequest, err)
 			return
 		}
+		sc, ok := tw.latestScan(w, r, pid)
+		if !ok {
+			return
+		}
+		// Customer data is decided per file and kind, through its own route.
+		if _, ok := tw.secretBundle(w, r, pid, sc, id); !ok {
+			return
+		}
 		in := readVerdictInput(r)
 		sel := bundleSel(id)
 		d, msg := in.decision()
 		if msg != "" {
 			tw.reject(w, r, pid, q, sel, in, msg)
-			return
-		}
-		sc, ok := tw.latestScan(w, r, pid)
-		if !ok {
 			return
 		}
 		tw.decide(w, r, pid, sc, q, []triage.BundleID{id}, d, sel, sel, in)
@@ -339,6 +365,21 @@ func handleCustomerDataVerdict(tw triageWriter) http.Handler {
 	})
 }
 
+// remains reports whether the latest scan of pid still has bundle id after
+// a finding left it. The move is already stored, so a failed read is logged
+// and counts as gone: the screen then shows the bundle the finding went to.
+func (tw triageWriter) remains(r *http.Request, pid project.ID, id triage.BundleID) bool {
+	ctx := r.Context()
+	sc, err := tw.store.LatestScan(ctx, pid)
+	if err == nil {
+		_, err = tw.store.Bundle(ctx, pid, sc.ID, id)
+	}
+	if err != nil && !errors.Is(err, db.ErrNotFound) {
+		tw.logger.ErrorContext(ctx, "reading the bundle a finding left", "project_id", pid, "bundle_id", id, "error", err)
+	}
+	return err == nil
+}
+
 // handleMove moves one finding to a bundle of its own (to=new) or to another
 // bundle of the same value, and sends the browser back to the triage screen
 // with the bundle it came from selected, or the one it went to when the
@@ -387,19 +428,8 @@ func handleMove(tw triageWriter) http.Handler {
 			return
 		}
 		q.Sel = bundleSel(dest)
-		if from != 0 {
-			sc, ok := tw.latestScan(w, r, pid)
-			if !ok {
-				return
-			}
-			_, err := tw.store.Bundle(r.Context(), pid, sc.ID, from)
-			switch {
-			case err == nil:
-				q.Sel = bundleSel(from)
-			case !errors.Is(err, db.ErrNotFound):
-				tw.rd.fail(w, r, tw.logger, http.StatusInternalServerError, fmt.Errorf("reading bundle: %w", err))
-				return
-			}
+		if from != 0 && tw.remains(r, pid, from) {
+			q.Sel = bundleSel(from)
 		}
 		back(w, r, pid, q)
 	})

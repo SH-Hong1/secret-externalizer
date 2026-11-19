@@ -1,6 +1,7 @@
 package web_test
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -232,6 +233,23 @@ func TestVerdictRejected(t *testing.T) {
 	}
 }
 
+func TestVerdictRefusesCustomerData(t *testing.T) {
+	e := triageEnv(t)
+	target := "/projects/1/bundles/103/verdict"
+	res := e.post(t, target, verdictForm("redact", "", "", "", "status=undecided"), nil)
+	if res.status != http.StatusNotFound {
+		t.Errorf("POST %s for a customer data bundle status = %d, want 404", target, res.status)
+	}
+	if n := len(e.triage.decideCalls()); n != 0 {
+		t.Errorf("POST %s for a customer data bundle called Decide %d times, want 0", target, n)
+	}
+
+	res = e.post(t, "/projects/1/bundles/999/verdict", verdictForm("redact", "", "", "", "status=undecided"), nil)
+	if res.status != http.StatusNotFound {
+		t.Errorf("POST verdict for a bundle the latest scan does not have status = %d, want 404", res.status)
+	}
+}
+
 func TestVerdictRejectedFragment(t *testing.T) {
 	e := triageEnv(t)
 	res := e.post(t, verdictPath, verdictForm("hold", "", "someday", "", "status=undecided"),
@@ -304,11 +322,13 @@ func TestCustomerDataVerdict(t *testing.T) {
 
 	t.Run("not allowed", func(t *testing.T) {
 		e := triageEnv(t)
-		e.triage.decideErr = triage.ErrNotAllowed
 		form := url.Values{"kind": {"phone"}, "file": {"logs/sample.log"}, "from": {""}, "verdict": {"externalize"}, "return": {"status=undecided"}}
 		res := e.post(t, "/projects/1/customer-data/verdict", form, nil)
 		if res.status != http.StatusBadRequest {
 			t.Fatalf("POST customer data externalize status = %d, want 400", res.status)
+		}
+		if n := len(e.triage.decideCalls()); n != 0 {
+			t.Errorf("POST customer data externalize called Decide %d times, want 0", n)
 		}
 		wantIn(t, "refused customer data detail", section(res.body, "section", "detail"),
 			"이 항목에는 고를 수 없는 판정입니다", `action="/projects/1/customer-data/verdict"`)
@@ -349,6 +369,21 @@ func TestMove(t *testing.T) {
 		res := e.post(t, "/projects/1/findings/1001/move", url.Values{"to": {"17"}, "from": {"101"}, "return": {"status=all"}}, nil)
 		if want := "/projects/1/triage?sel=b17&status=all"; res.status != http.StatusSeeOther || res.location() != want {
 			t.Errorf("POST move from a vanished bundle = %d %q, want 303 %q", res.status, res.location(), want)
+		}
+	})
+
+	t.Run("source unreadable after the move", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.bundleErr = errors.New("fake database down")
+		res := e.post(t, "/projects/1/findings/1002/move", url.Values{"to": {"17"}, "from": {"101"}, "return": {"status=all"}}, nil)
+		if want := "/projects/1/triage?sel=b17&status=all"; res.status != http.StatusSeeOther || res.location() != want {
+			t.Errorf("POST move with the source unreadable = %d %q, want 303 %q", res.status, res.location(), want)
+		}
+		if n := len(e.triage.moveCalls()); n != 1 {
+			t.Errorf("POST move with the source unreadable called MoveFinding %d times, want 1", n)
+		}
+		if n := countErrors(t, e.log.String()); n != 1 {
+			t.Errorf("POST move with the source unreadable logged %d errors, want 1; log = %q", n, e.log.String())
 		}
 	})
 
