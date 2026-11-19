@@ -14,13 +14,15 @@ import (
 // zone named, so a reader never has to guess.
 const timeLayout = "2006-01-02 15:04:05 UTC"
 
-// categoryOrder is the order in which categories are listed.
-var categoryOrder = []finding.Category{
-	finding.CategoryStorage,
-	finding.CategorySSH,
-	finding.CategoryPartnerSession,
-	finding.CategoryOther,
-	finding.CategoryCustomerData,
+// categoryOrder returns the order in which categories are listed.
+func categoryOrder() []finding.Category {
+	return []finding.Category{
+		finding.CategoryStorage,
+		finding.CategorySSH,
+		finding.CategoryPartnerSession,
+		finding.CategoryOther,
+		finding.CategoryCustomerData,
+	}
 }
 
 // scanPage is what the scan page shows. Findings is false until the scan
@@ -184,7 +186,7 @@ func countByCategory(fs []finding.Finding) []categoryCount {
 		n[f.Category]++
 	}
 	var out []categoryCount
-	for _, c := range categoryOrder {
+	for _, c := range categoryOrder() {
 		if n[c] > 0 {
 			out = append(out, categoryCount{string(c), categoryLabel(c), n[c]})
 			delete(n, c)
