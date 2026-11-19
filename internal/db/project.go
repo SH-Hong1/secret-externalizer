@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -59,23 +60,53 @@ func (s *Store) Project(ctx context.Context, id project.ID) (project.Project, er
 	return p, nil
 }
 
-// Projects returns every project ordered by name.
-func (s *Store) Projects(ctx context.Context) ([]project.Project, error) {
-	rows, err := s.pool.Query(ctx, "SELECT "+projectColumns+" FROM project ORDER BY name")
+// ProjectSummaries returns every project ordered by name, each with its
+// newest scan and the bundle counts of its newest succeeded scan. A bundle
+// counts when that scan found one of its members, as in Entries.
+func (s *Store) ProjectSummaries(ctx context.Context) ([]project.Summary, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT p.id, p.name, p.path, p.excludes, p.created_by, p.created_at,
+			last.id, last.status, last.requested_at, ok.id IS NOT NULL,
+			coalesce(c.undecided, 0)::int, coalesce(c.total, 0)::int
+		FROM project p
+		LEFT JOIN LATERAL (
+			SELECT id, status, requested_at FROM scan WHERE project_id = p.id ORDER BY id DESC LIMIT 1
+		) last ON true
+		LEFT JOIN LATERAL (
+			SELECT id FROM scan WHERE project_id = p.id AND status = 'succeeded' ORDER BY id DESC LIMIT 1
+		) ok ON true
+		LEFT JOIN LATERAL (
+			SELECT count(*) FILTER (WHERE b.verdict = '') AS undecided, count(*) AS total
+			FROM bundle b
+			WHERE b.project_id = p.id AND EXISTS (
+				SELECT 1 FROM finding f JOIN location l ON l.finding_id = f.id
+				WHERE f.bundle_id = b.id AND l.scan_id = ok.id)
+		) c ON true
+		ORDER BY p.name`)
 	if err != nil {
-		return nil, fmt.Errorf("listing projects: %w", err)
+		return nil, fmt.Errorf("listing project summaries: %w", err)
 	}
 	defer rows.Close()
-	var out []project.Project
+	var out []project.Summary
 	for rows.Next() {
-		p, err := scanProject(rows)
-		if err != nil {
-			return nil, fmt.Errorf("reading project row: %w", err)
+		var (
+			sum    project.Summary
+			p      = &sum.Project
+			lastID *int64
+			status *string
+			at     *time.Time
+		)
+		if err := rows.Scan(&p.ID, &p.Name, &p.Path, &p.Excludes, &p.CreatedBy, &p.CreatedAt,
+			&lastID, &status, &at, &sum.HasResult, &sum.Undecided, &sum.Total); err != nil {
+			return nil, fmt.Errorf("reading project summary row: %w", err)
 		}
-		out = append(out, p)
+		if lastID != nil {
+			sum.LastScanID, sum.LastScanStatus, sum.LastScanAt = *lastID, *status, *at
+		}
+		out = append(out, sum)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing projects: %w", err)
+		return nil, fmt.Errorf("listing project summaries: %w", err)
 	}
 	return out, nil
 }

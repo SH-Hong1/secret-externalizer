@@ -18,6 +18,7 @@ import (
 	"github.com/valkey-io/valkey-go"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
 	"github.com/SH-Hong1/secret-externalizer/internal/web"
@@ -42,7 +43,8 @@ func main() {
 // A flag error is returned and not printed, so the caller reports it once.
 // Asking for help prints the usage to stdout and is not an error. Otherwise it
 // reads the configuration, waits for the identity provider, connects to
-// valkey, opens and migrates the database, and serves HTTP until SIGINT,
+// valkey, opens and migrates the database, prepares the OpenBao client
+// without contacting OpenBao, and serves HTTP until SIGINT,
 // SIGTERM or cancellation of ctx.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
 	return runWith(ctx, args, getenv, stdout, stderr, discoveryRetry{interval: 2 * time.Second, limit: 60 * time.Second})
@@ -86,6 +88,7 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	logger := slog.New(slog.NewJSONHandler(stderr, nil))
+	logger.InfoContext(ctx, "web starting", "version", version, "config", cfg)
 
 	authn, err := discover(ctx, logger, cfg.oidc, outboundClient(), retry)
 	if err != nil {
@@ -107,11 +110,20 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 		return fmt.Errorf("migrating database: %w", err)
 	}
 
-	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store, database, database, databaseLimit))
+	// bao.New does not contact OpenBao, so web starts while OpenBao is
+	// down, and only a reveal says that the secret store cannot be reached.
+	originals, err := bao.New(cfg.baoAddr, cfg.baoCreds, outboundClient())
+	if err != nil {
+		return fmt.Errorf("preparing openbao client: %w", err)
+	}
+
+	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store, database, database, database,
+		web.NewHistorySuggester(database), database, originals, databaseLimit))
 }
 
-// databaseLimit bounds the database calls of one request, so that a page
-// shows the error page instead of hanging when postgres does not answer.
+// databaseLimit bounds the database and secret store calls of one request,
+// so that a page shows the error page instead of hanging when postgres or
+// OpenBao does not answer.
 const databaseLimit = 5 * time.Second
 
 // valkeyOption configures the valkey client so that a command fails within a

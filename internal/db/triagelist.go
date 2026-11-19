@@ -293,3 +293,26 @@ func (s *Store) CustomerGroup(ctx context.Context, projectID project.ID, scanID 
 	}
 	return g, nil
 }
+
+// SameValueBundles returns, as list entries, the other bundles of the
+// project whose fingerprint is that of bundle id and which scanID found,
+// ordered by ID. Customer data is left out, since it is decided by group.
+// It returns no entries when the project has no bundle id.
+func (s *Store) SameValueBundles(ctx context.Context, projectID project.ID, scanID scan.ID, id triage.BundleID) ([]triage.Entry, error) {
+	var out []triage.Entry
+	err := s.readOnly(ctx, func(tx pgx.Tx) error {
+		var err error
+		out, err = readEntries(ctx, tx, scanBundles+`
+			SELECT sb.id, sb.category, sb.kind, sb.preview, sb.name, sb.file, sb.first_line, sb.verdict, sb.locations, 1
+			FROM scan_bundle sb
+				JOIN bundle o ON o.id = sb.id
+				JOIN bundle me ON me.id = $3 AND me.project_id = $1
+			WHERE o.fingerprint = me.fingerprint AND sb.id <> $3 AND sb.category <> 'customer-data'
+			ORDER BY sb.id`, projectID, scanID, id)
+		return err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing bundles of the same value as %d: %w", id, err)
+	}
+	return out, nil
+}

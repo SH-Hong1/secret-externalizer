@@ -88,9 +88,12 @@ func (f *fakeIssuer) discovery(w http.ResponseWriter, _ *http.Request) {
 
 // runEnv returns an environment that points run at issuerURL and at the
 // valkey in TEST_VALKEY_ADDR and the postgres in TEST_DATABASE_URL, listening
-// on a free local port.
-func runEnv(issuerURL, valkeyAddr, databaseURL string) func(string) string {
-	env := validEnv()
+// on a free local port. OpenBao is at an address where nothing listens, since
+// web starts without reaching it.
+func runEnv(t *testing.T, issuerURL, valkeyAddr, databaseURL string) func(string) string {
+	t.Helper()
+	env := validEnv(t)
+	env["BAO_ADDR"] = "http://127.0.0.1:1"
 	env["WEB_ADDR"] = "127.0.0.1:0"
 	env["VALKEY_ADDR"] = valkeyAddr
 	env["DATABASE_URL"] = databaseURL
@@ -204,7 +207,7 @@ func TestRun_ErrorHidesClientSecret(t *testing.T) {
 	closed.Close()
 
 	var stderr bytes.Buffer
-	err := runWith(t.Context(), []string{"web"}, runEnv(unreachable, "127.0.0.1:1", testDatabaseURL), io.Discard, &stderr, fastRetry())
+	err := runWith(t.Context(), []string{"web"}, runEnv(t, unreachable, "127.0.0.1:1", testDatabaseURL), io.Discard, &stderr, fastRetry())
 	if err == nil {
 		t.Fatalf("runWith() with issuer %s error = nil, want an error", unreachable)
 	}
@@ -214,13 +217,19 @@ func TestRun_ErrorHidesClientSecret(t *testing.T) {
 	if strings.Contains(stderr.String(), testClientSecret) {
 		t.Errorf("runWith() stderr = %q, contains the client secret", stderr.String())
 	}
+	if strings.Contains(stderr.String(), testSecretID) {
+		t.Errorf("runWith() stderr = %q, contains the secret-id", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), `"bao_role_id":"se-web"`) {
+		t.Errorf("runWith() stderr = %q, want a start-up line with the configuration", stderr.String())
+	}
 }
 
 func TestRun_GivesUpOnDiscovery(t *testing.T) {
 	issuer := newFakeIssuer(t, -1)
 
 	var stderr bytes.Buffer
-	err := runWith(t.Context(), []string{"web"}, runEnv(issuer.URL(), "127.0.0.1:1", testDatabaseURL), io.Discard, &stderr, fastRetry())
+	err := runWith(t.Context(), []string{"web"}, runEnv(t, issuer.URL(), "127.0.0.1:1", testDatabaseURL), io.Discard, &stderr, fastRetry())
 	if err == nil {
 		t.Fatalf("runWith() with issuer %s that always answers 503 error = nil, want an error", issuer.URL())
 	}
@@ -255,7 +264,7 @@ func TestRun_RetriesDiscovery(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	_, done := startRun(ctx, t, runEnv(issuer.URL(), valkeyAddr, databaseURL), fastRetry())
+	_, done := startRun(ctx, t, runEnv(t, issuer.URL(), valkeyAddr, databaseURL), fastRetry())
 	if got := issuer.Requests(); got != 3 {
 		t.Errorf("issuer got %d discovery requests before run listened, want 3", got)
 	}
@@ -273,7 +282,7 @@ func TestRun_ServesUntilContextIsCancelled(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	addr, done := startRun(ctx, t, runEnv(issuer.URL(), valkeyAddr, databaseURL), fastRetry())
+	addr, done := startRun(ctx, t, runEnv(t, issuer.URL(), valkeyAddr, databaseURL), fastRetry())
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/healthz", nil)
 	if err != nil {
@@ -349,7 +358,7 @@ func TestDiscover_StopsWhenContextIsCancelled(t *testing.T) {
 
 func validConfigFor(t *testing.T, issuerURL string) config {
 	t.Helper()
-	env := validEnv()
+	env := validEnv(t)
 	env["OIDC_ISSUER_URL"] = issuerURL
 	delete(env, "OIDC_DISCOVERY_URL")
 	cfg, err := loadConfig(nil, getenvFrom(env))

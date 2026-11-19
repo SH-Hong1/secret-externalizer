@@ -47,6 +47,8 @@ func TestSuggestName(t *testing.T) {
 		{"korean only", finding.CategoryOther, finding.KindOther, "비밀번호 = ****", nil, "secret.main.value"},
 		{"digit first", finding.CategoryOther, finding.KindOther, "1st.password = ****", nil, "secret.main.value"},
 		{"symbols", finding.CategoryOther, finding.KindOther, "@@@ = ****", nil, "secret.main.value"},
+		{"masked account before a colon", finding.CategoryPartnerSession, finding.KindPassword, "curl -u svcu****:Sh0p**** https://partner.example.invalid/api", nil, "partner.main.password"},
+		{"masked key before an equals", finding.CategoryOther, finding.KindOther, "abcd****.token = ****", nil, "secret.main.value"},
 		{"very long", finding.CategoryOther, finding.KindOther, strings.Repeat("a", 300) + " = ****", nil, "secret.main.value"},
 	}
 	for _, tt := range tests {

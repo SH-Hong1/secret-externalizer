@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -105,5 +107,58 @@ func TestHandle_NoSkippedFilesRecordWithoutSkippedFiles(t *testing.T) {
 	}
 	if got := logRecords(t, e.logs, "scan skipped files"); len(got) != 0 {
 		t.Errorf("Handle() logged %v, want no skipped files record", got)
+	}
+}
+
+func TestHandle_KeepsSkippedFileNames(t *testing.T) {
+	files := map[string]string{"conf/ok.properties": "x=1\n"}
+	for i := range 250 {
+		files[fmt.Sprintf("bin/f%03d.bin", i)] = "\x00"
+	}
+	e := newEnv(t, files)
+	// Paths that are not valid UTF-8 or hold a control character are counted
+	// but not kept. A file system may refuse such a name.
+	unkept := 0
+	for _, rel := range []string{"bin/a\x01.bin", "bin/a\t.bin", "bin/a\xff.bin"} {
+		if err := os.WriteFile(filepath.Join(e.dir, filepath.FromSlash(rel)), []byte("\x00"), 0o600); err == nil {
+			unkept++
+		}
+	}
+	if err := e.handle(t.Context()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t)
+	if got.Skipped != 250+unkept {
+		t.Errorf("Handle() Skipped = %d, want %d", got.Skipped, 250+unkept)
+	}
+	want := make([]string, 0, 200)
+	for i := range 200 {
+		want = append(want, fmt.Sprintf("bin/f%03d.bin", i))
+	}
+	if diff := cmp.Diff(want, got.SkippedFiles); diff != "" {
+		t.Errorf("Handle() SkippedFiles (-want +got):\n%s", diff)
+	}
+}
+
+func TestHandle_NoSkippedFileNames(t *testing.T) {
+	e := newEnv(t, map[string]string{propsFile: "jdbc.password=" + password + "\n"})
+	if err := e.handle(t.Context(), passwordOG()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if got := e.result(t); len(got.SkippedFiles) != 0 || len(got.ScannerErrors) != 0 {
+		t.Errorf("Handle() SkippedFiles = %q, ScannerErrors = %v, want none", got.SkippedFiles, got.ScannerErrors)
+	}
+}
+
+func TestHandle_KeepsScannerErrors(t *testing.T) {
+	e := newEnv(t, map[string]string{propsFile: "jdbc.password=" + password + "\n"})
+	og := passwordOG()
+	og.errors = 3
+	if err := e.handle(t.Context(), og, passwordBL()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	want := map[string]int{"opengrep": 3}
+	if diff := cmp.Diff(want, e.result(t).ScannerErrors); diff != "" {
+		t.Errorf("Handle() ScannerErrors (-want +got):\n%s", diff)
 	}
 }

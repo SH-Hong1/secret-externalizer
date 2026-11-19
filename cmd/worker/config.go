@@ -111,7 +111,7 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if !info.IsDir() {
 		return config{}, fmt.Errorf("checking WORKSPACE_ROOT: %q is not a directory", root)
 	}
-	secretID, err := readSecretID(secretIDFile)
+	secretID, err := bao.ReadSecretIDFile(secretIDFile)
 	if err != nil {
 		return config{}, fmt.Errorf("reading BAO_SECRET_ID_FILE: %w", err)
 	}
@@ -191,19 +191,4 @@ func checkRulesDir(dir string) error {
 		return fmt.Errorf("%q holds no opengrep folder", dir)
 	}
 	return nil
-}
-
-// readSecretID reads an AppRole secret-id from the file at path, without
-// surrounding white space. The errors of os.ReadFile name the path and never
-// the content.
-func readSecretID(path string) (bao.SecretID, error) {
-	b, err := os.ReadFile(path) //nolint:gosec // G304: the path is the operator's own BAO_SECRET_ID_FILE setting
-	if err != nil {
-		return "", fmt.Errorf("reading the secret-id file: %w", err)
-	}
-	s := bao.SecretID(strings.TrimSpace(string(b)))
-	if s == "" {
-		return "", fmt.Errorf("%q is empty", path)
-	}
-	return s, nil
 }

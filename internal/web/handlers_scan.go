@@ -8,9 +8,9 @@ import (
 	"strconv"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
-	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 // handleScanCreate requests a scan of a project for the signed-in user and
@@ -18,13 +18,12 @@ import (
 // scan, it sends the browser to that scan instead.
 func handleScanCreate(logger *slog.Logger, rd *renderer, scans ScanStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
 		n, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil || n < 1 {
 			rd.fail(w, r, logger, http.StatusNotFound, errors.New("project id is not a number"))
 			return
 		}
-		id, err := scans.RequestScan(r.Context(), project.ID(n), u.Subject)
+		id, err := scans.RequestScan(r.Context(), project.ID(n), actorOf(r))
 		switch {
 		case err == nil, errors.Is(err, db.ErrScanActive):
 			http.Redirect(w, r, "/scans/"+strconv.FormatInt(int64(id), 10), http.StatusSeeOther)
@@ -36,10 +35,12 @@ func handleScanCreate(logger *slog.Logger, rd *renderer, scans ScanStore) http.H
 	})
 }
 
-// handleScan shows one scan under the name of its project. The page
-// refreshes itself while the scan is queued or running, and lists the
-// findings once it has succeeded.
-func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore) http.Handler {
+// handleScan shows a summary of one scan under the name of its project. The
+// page refreshes itself while the scan is queued or running. A succeeded
+// scan shows its counts per category and what it could not look at; the
+// findings themselves are on the triage screen, which works on the project's
+// latest succeeded scan, so the page links there only from that scan.
+func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore, store TriageStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
 		n, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -61,15 +62,45 @@ func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans 
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading project of scan: %w", err))
 			return
 		}
-		var fs []finding.Finding
-		if sc.Status == scan.StatusSucceeded {
-			if fs, err = scans.FindingsByScan(r.Context(), sc.ID); err != nil {
-				rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading findings: %w", err))
-				return
-			}
-		}
-		page := newScanPage(sc, fs)
+		page := newScanPage(sc)
 		page.User, page.ProjectName = u, p.Name
+		if sc.Status == scan.StatusFailed {
+			rd.page(w, r, logger, http.StatusOK, "scan.html", page)
+			return
+		}
+
+		latest, err := store.LatestScan(r.Context(), p.ID)
+		hasLatest := err == nil
+		if err != nil && !errors.Is(err, db.ErrNotFound) {
+			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading latest scan: %w", err))
+			return
+		}
+		if hasLatest {
+			page.Triage = triagePath(p.ID)
+		}
+		if sc.Status != scan.StatusSucceeded {
+			rd.page(w, r, logger, http.StatusOK, "scan.html", page)
+			return
+		}
+
+		counts, err := scans.CategoryCounts(r.Context(), sc.ID)
+		if err != nil {
+			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("counting findings: %w", err))
+			return
+		}
+		page.setCounts(counts)
+		if !hasLatest || latest.ID != sc.ID {
+			// The triage screen shows a newer scan, not this one.
+			page.Triage, page.LaterScan = "", latest.ID
+			rd.page(w, r, logger, http.StatusOK, "scan.html", page)
+			return
+		}
+		list, err := store.Entries(r.Context(), p.ID, sc.ID, triage.Filter{Status: triage.StatusUndecided, Page: 1})
+		if err != nil {
+			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("counting verdicts: %w", err))
+			return
+		}
+		page.Undecided = list.Counts[""]
 		rd.page(w, r, logger, http.StatusOK, "scan.html", page)
 	})
 }

@@ -1,0 +1,18 @@
+{{define "original"}}<div class="original" id="original">
+{{if .Shown}}{{if .Notice}}<p class="notice-soft text-2" role="status">{{.Notice}}</p>
+{{else}}<div class="reveal-box">
+<div class="reveal-head">
+<span class="reveal-title">원본 값</span>
+<span class="reveal-lede grow">admin에게만 보입니다. 이 열람은 감사 로그에 남았습니다.</span>
+<a class="btn btn-sm reveal-close" href="{{.CloseHref}}">닫기</a>
+</div>
+{{if .IsText}}<pre class="reveal-value">{{.Text}}</pre>
+{{else}}<p class="reveal-binary">텍스트가 아닌 원본입니다. {{.Size}}바이트.</p>
+{{end}}<p class="reveal-foot">{{.By}} · <span class="mono">{{.At}}</span> · OpenBao에서 지금 읽은 값이며 이 화면을 떠나면 사라집니다.</p>
+</div>
+{{end}}{{else}}<form class="reveal-form" method="post" action="{{.Action}}" hx-post="{{.Action}}" hx-target="#original" hx-swap="outerHTML">
+<input type="hidden" name="return" value="{{.Return}}">
+<button class="btn" type="submit">원본 보기</button>
+<span class="muted">admin에게만 보이며, 열면 감사 로그에 남습니다.</span>
+</form>
+{{end}}</div>{{end}}

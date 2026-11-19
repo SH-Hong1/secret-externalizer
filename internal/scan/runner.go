@@ -10,7 +10,10 @@ import (
 	"path/filepath"
 	"slices"
 	"strconv"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
@@ -204,6 +207,8 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 		return err
 	}
 	res.ToolVersions = d.versions
+	res.SkippedFiles = keptPaths(files.skippedPaths)
+	res.ScannerErrors = reportedErrors(d.errors)
 	placed, notPlaced, err := locate(ctx, dir, files, d.raws, r.opts.MaxFileBytes)
 	if err != nil {
 		return err
@@ -233,6 +238,44 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 	r.logSummary(ctx, j, id, res, d, files.skippedPaths)
 	r.removeStalePending(ctx, id, int64(p.ID), keep)
 	return nil
+}
+
+// keptPaths returns the first MaxSkippedFiles of paths in path order,
+// leaving out the paths that are not valid UTF-8 or hold a control
+// character. paths is not changed.
+func keptPaths(paths []string) []string {
+	var out []string
+	for _, p := range paths {
+		if printablePath(p) {
+			out = append(out, p)
+		}
+	}
+	slices.Sort(out)
+	return out[:min(len(out), MaxSkippedFiles)]
+}
+
+// printablePath reports whether p is valid UTF-8 without control characters,
+// tab included.
+func printablePath(p string) bool {
+	if !utf8.ValidString(p) {
+		return false
+	}
+	return !strings.ContainsFunc(p, unicode.IsControl)
+}
+
+// reportedErrors returns the entries of errs that are not zero, or nil.
+func reportedErrors(errs map[string]int) map[string]int {
+	var out map[string]int
+	for tool, n := range errs {
+		if n == 0 {
+			continue
+		}
+		if out == nil {
+			out = map[string]int{}
+		}
+		out[tool] = n
+	}
+	return out
 }
 
 // maxLoggedPaths is the number of skipped paths logged for a scan.

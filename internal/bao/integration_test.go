@@ -1,6 +1,7 @@
 package bao_test
 
 import (
+	"context"
 	"crypto/rand"
 	"encoding/binary"
 	"errors"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -33,6 +35,16 @@ path "secret/data/projects/*" {
 }
 path "secret/metadata/pending/*" {
   capabilities = ["list", "delete"]
+}
+`
+
+// webPolicy is the web policy that deploy/openbao/config.hcl creates.
+const webPolicy = `
+path "secret/data/pending/*" {
+  capabilities = ["read"]
+}
+path "secret/data/projects/*" {
+  capabilities = ["read"]
 }
 `
 
@@ -74,29 +86,54 @@ func setUpTestBao(t *testing.T, addr string) bao.Credentials {
 			t.Fatalf("enabling approle: %v", err)
 		}
 	}
+	if _, err := root.Logical().WriteWithContext(ctx, "transit/keys/fingerprint", map[string]any{"type": "aes256-gcm96"}); err != nil {
+		t.Fatalf("writing transit/keys/fingerprint: %v", err)
+	}
+	return setUpRole(t, root, "worker", workerPolicy)
+}
+
+// setUpWebRole adds the web policy and role to a dev server that
+// setUpTestBao prepared, and returns the web role's credentials.
+func setUpWebRole(t *testing.T, addr string) bao.Credentials {
+	t.Helper()
+	cfg := api.NewConfig()
+	cfg.Address = addr
+	root, err := api.NewClient(cfg)
+	if err != nil {
+		t.Fatalf("api.NewClient(%q) error = %v", addr, err)
+	}
+	root.SetToken(testRootToken)
+	return setUpRole(t, root, "web", webPolicy)
+}
+
+// setUpRole writes the policy and AppRole name with role-id se-<name>, as
+// deploy/openbao/config.hcl does, and returns a new secret-id for it.
+func setUpRole(t *testing.T, root *api.Client, name, policy string) bao.Credentials {
+	t.Helper()
+	ctx := t.Context()
+	roleID := "se-" + name
 	writes := []struct {
 		path string
 		data map[string]any
 	}{
-		{"transit/keys/fingerprint", map[string]any{"type": "aes256-gcm96"}},
-		{"sys/policies/acl/worker", map[string]any{"policy": workerPolicy}},
-		{"auth/approle/role/worker", map[string]any{"token_policies": []string{"worker"}, "token_ttl": "1h", "token_max_ttl": "1h"}},
-		{"auth/approle/role/worker/role-id", map[string]any{"role_id": "se-worker"}},
+		{"sys/policies/acl/" + name, map[string]any{"policy": policy}},
+		{"auth/approle/role/" + name, map[string]any{"token_policies": []string{name}, "token_ttl": "1h", "token_max_ttl": "1h"}},
+		{"auth/approle/role/" + name + "/role-id", map[string]any{"role_id": roleID}},
 	}
 	for _, w := range writes {
 		if _, err := root.Logical().WriteWithContext(ctx, w.path, w.data); err != nil {
 			t.Fatalf("writing %s: %v", w.path, err)
 		}
 	}
-	secret, err := root.Logical().WriteWithContext(ctx, "auth/approle/role/worker/secret-id", nil)
+	secret, err := root.Logical().WriteWithContext(ctx, "auth/approle/role/"+name+"/secret-id", nil)
 	if err != nil {
-		t.Fatalf("creating a secret-id: %v", err)
+		t.Fatalf("creating a secret-id for %s: %v", name, err)
 	}
 	secretID, ok := secret.Data["secret_id"].(string)
 	if !ok {
-		t.Fatal("creating a secret-id: the response holds no secret_id")
+		t.Fatalf("creating a secret-id for %s: the response holds no secret_id", name)
 	}
-	return bao.Credentials{RoleID: "se-worker", SecretID: bao.SecretID(secretID)}
+	return bao.Credentials{RoleID: roleID, SecretID: bao.SecretID(secretID)}
 }
 
 func TestIntegration_RoundTrip(t *testing.T) {
@@ -148,26 +185,107 @@ func TestIntegration_RoundTrip(t *testing.T) {
 	}
 }
 
-// assertWorkerCannotRead logs in as the worker role with the official client
-// and checks that reading path is refused with 403.
-func assertWorkerCannotRead(t *testing.T, addr string, creds bao.Credentials, path string) {
+// TestIntegration_WebReadsPending checks that the web role's policy reads a
+// pending original the worker stored at the KV v2 data path, and that a
+// path with nothing stored comes back as 404, which ReadPending reports as
+// ErrNoOriginal.
+func TestIntegration_WebReadsPending(t *testing.T) {
+	addr := os.Getenv("TEST_BAO_ADDR")
+	if addr == "" {
+		t.Skip("set TEST_BAO_ADDR to run against OpenBao, for example TEST_BAO_ADDR=http://127.0.0.1:18200 (the compose openbao-test service)")
+	}
+	workerCreds := setUpTestBao(t, addr)
+	webCreds := setUpWebRole(t, addr)
+	ctx := t.Context()
+	hc := &http.Client{Timeout: 10 * time.Second}
+	worker, err := bao.New(addr, workerCreds, hc)
+	if err != nil {
+		t.Fatalf("New(%q) for the worker error = %v", addr, err)
+	}
+	web, err := bao.New(addr, webCreds, hc)
+	if err != nil {
+		t.Fatalf("New(%q) for web error = %v", addr, err)
+	}
+
+	value := []byte("dev-only-fake-reveal-<b>\x00")
+	fps, err := worker.Fingerprints(ctx, [][]byte{value, []byte("dev-only-fake-never-stored")})
+	if err != nil {
+		t.Fatalf("Fingerprints() error = %v", err)
+	}
+	projectID := randomProjectID(t)
+	if err := worker.PutPending(ctx, projectID, fps[0], value); err != nil {
+		t.Fatalf("PutPending(%d, %q) error = %v", projectID, fps[0], err)
+	}
+	t.Cleanup(func() {
+		if err := worker.DeletePending(context.Background(), projectID, fps[0]); err != nil {
+			t.Errorf("DeletePending(%d, %q) error = %v", projectID, fps[0], err)
+		}
+	})
+
+	got, err := web.ReadPending(ctx, projectID, fps[0])
+	if err != nil {
+		t.Fatalf("ReadPending(%d, %q) as web error = %v", projectID, fps[0], err)
+	}
+	if string(got.Reveal()) != string(value) {
+		t.Errorf("ReadPending(%d, %q) as web = %d bytes, want the %d bytes stored", projectID, fps[0], len(got.Reveal()), len(value))
+	}
+
+	assertStatus(t, addr, webCreds, fmt.Sprintf("secret/data/pending/%d/%s", projectID, fps[1]), http.StatusNotFound)
+	if _, err := web.ReadPending(ctx, projectID, fps[1]); !errors.Is(err, bao.ErrNoOriginal) {
+		t.Errorf("ReadPending(%d, %q) of a value never stored error = %v, want ErrNoOriginal", projectID, fps[1], err)
+	}
+	if err := web.PutPending(ctx, projectID, fps[1], value); err == nil || !strings.Contains(err.Error(), "403") {
+		t.Errorf("PutPending() as web error = %v, want status 403", err)
+	}
+}
+
+// assertStatus logs in with creds through the official client and reads
+// path, and checks that OpenBao answered with status. The official client
+// turns a 404 with no data into a nil secret and a nil error, so a 404 is
+// read from the raw response.
+func assertStatus(t *testing.T, addr string, creds bao.Credentials, path string, status int) {
 	t.Helper()
 	ctx := t.Context()
+	client := loginAs(t, addr, creds)
+	resp, err := client.Logical().ReadRawWithContext(ctx, path)
+	if resp != nil {
+		defer resp.Body.Close() //nolint:errcheck // a read-only response body; closing cannot lose data
+	}
+	if resp == nil {
+		t.Fatalf("reading %s: no response, error = %v", path, err)
+	}
+	if resp.StatusCode != status {
+		t.Errorf("reading %s status = %d, want %d", path, resp.StatusCode, status)
+	}
+}
+
+// loginAs logs in with creds through the official client and returns a
+// client that carries the token.
+func loginAs(t *testing.T, addr string, creds bao.Credentials) *api.Client {
+	t.Helper()
 	cfg := api.NewConfig()
 	cfg.Address = addr
 	client, err := api.NewClient(cfg)
 	if err != nil {
 		t.Fatalf("api.NewClient(%q) error = %v", addr, err)
 	}
-	login, err := client.Logical().WriteWithContext(ctx, "auth/approle/login", map[string]any{
+	login, err := client.Logical().WriteWithContext(t.Context(), "auth/approle/login", map[string]any{
 		"role_id":   creds.RoleID,
 		"secret_id": string(creds.SecretID),
 	})
 	if err != nil || login == nil || login.Auth == nil {
-		t.Fatalf("logging in as the worker role: %v", err)
+		t.Fatalf("logging in as %s: %v", creds.RoleID, err)
 	}
 	client.SetToken(login.Auth.ClientToken)
-	_, err = client.Logical().ReadWithContext(ctx, path)
+	return client
+}
+
+// assertWorkerCannotRead logs in as the worker role with the official client
+// and checks that reading path is refused with 403.
+func assertWorkerCannotRead(t *testing.T, addr string, creds bao.Credentials, path string) {
+	t.Helper()
+	client := loginAs(t, addr, creds)
+	_, err := client.Logical().ReadWithContext(t.Context(), path)
 	var re *api.ResponseError
 	if !errors.As(err, &re) || re.StatusCode != http.StatusForbidden {
 		t.Errorf("reading %s with the worker token error = %v, want status 403", path, err)

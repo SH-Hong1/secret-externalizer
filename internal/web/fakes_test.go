@@ -8,12 +8,15 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 // fakeSessions keeps sessions in memory. A non-nil error field makes the
@@ -164,9 +167,10 @@ type fakeProjects struct {
 	getErr    error
 	listErr   error
 
-	mu       sync.Mutex
-	projects map[project.ID]project.Project
-	next     project.ID
+	mu        sync.Mutex
+	projects  map[project.ID]project.Project
+	summaries map[project.ID]project.Summary
+	next      project.ID
 }
 
 func newFakeProjects() *fakeProjects {
@@ -198,18 +202,33 @@ func (f *fakeProjects) Project(_ context.Context, id project.ID) (project.Projec
 	return p, nil
 }
 
-func (f *fakeProjects) Projects(context.Context) ([]project.Project, error) {
+// ProjectSummaries returns every project ordered by name, with the summary
+// that putSummary stored for it, or an empty one.
+func (f *fakeProjects) ProjectSummaries(context.Context) ([]project.Summary, error) {
 	if f.listErr != nil {
 		return nil, f.listErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	out := make([]project.Project, 0, len(f.projects))
+	out := make([]project.Summary, 0, len(f.projects))
 	for _, p := range f.projects {
-		out = append(out, p)
+		s := f.summaries[p.ID]
+		s.Project = p
+		out = append(out, s)
 	}
-	slices.SortFunc(out, func(a, b project.Project) int { return cmp.Compare(a.Name, b.Name) })
+	slices.SortFunc(out, func(a, b project.Summary) int { return cmp.Compare(a.Project.Name, b.Project.Name) })
 	return out, nil
+}
+
+// putSummary stores the scan and verdict state ProjectSummaries returns for
+// s.Project.ID.
+func (f *fakeProjects) putSummary(s project.Summary) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.summaries == nil {
+		f.summaries = make(map[project.ID]project.Summary)
+	}
+	f.summaries[s.Project.ID] = s
 }
 
 // all returns every stored project ordered by ID.
@@ -228,22 +247,22 @@ func (f *fakeProjects) all() []project.Project {
 // the database does. A non-nil error field makes the matching method return
 // that error.
 type fakeScans struct {
-	requestErr  error
-	getErr      error
-	listErr     error
-	findingsErr error
+	requestErr error
+	getErr     error
+	listErr    error
+	countsErr  error
 
-	mu       sync.Mutex
-	scans    map[scan.ID]scan.Scan
-	findings map[scan.ID][]finding.Finding
-	next     scan.ID
+	mu     sync.Mutex
+	scans  map[scan.ID]scan.Scan
+	counts map[scan.ID][]scan.CategoryCount
+	next   scan.ID
 }
 
 func newFakeScans() *fakeScans {
-	return &fakeScans{scans: make(map[scan.ID]scan.Scan), findings: make(map[scan.ID][]finding.Finding)}
+	return &fakeScans{scans: make(map[scan.ID]scan.Scan), counts: make(map[scan.ID][]scan.CategoryCount)}
 }
 
-func (f *fakeScans) RequestScan(_ context.Context, projectID project.ID, requestedBy string) (scan.ID, error) {
+func (f *fakeScans) RequestScan(_ context.Context, projectID project.ID, by audit.Actor) (scan.ID, error) {
 	if f.requestErr != nil {
 		return 0, f.requestErr
 	}
@@ -255,7 +274,7 @@ func (f *fakeScans) RequestScan(_ context.Context, projectID project.ID, request
 		}
 	}
 	f.next++
-	f.scans[f.next] = scan.Scan{ID: f.next, ProjectID: projectID, Status: scan.StatusQueued, RequestedBy: requestedBy}
+	f.scans[f.next] = scan.Scan{ID: f.next, ProjectID: projectID, Status: scan.StatusQueued, RequestedBy: by.Subject, RequesterName: by.Name}
 	return f.next, nil
 }
 
@@ -288,20 +307,20 @@ func (f *fakeScans) ScansByProject(_ context.Context, projectID project.ID) ([]s
 	return out, nil
 }
 
-func (f *fakeScans) FindingsByScan(_ context.Context, id scan.ID) ([]finding.Finding, error) {
-	if f.findingsErr != nil {
-		return nil, f.findingsErr
+func (f *fakeScans) CategoryCounts(_ context.Context, id scan.ID) ([]scan.CategoryCount, error) {
+	if f.countsErr != nil {
+		return nil, f.countsErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return slices.Clone(f.findings[id]), nil
+	return slices.Clone(f.counts[id]), nil
 }
 
-// putFindings stores the findings that FindingsByScan returns for id.
-func (f *fakeScans) putFindings(id scan.ID, fs ...finding.Finding) {
+// putCounts stores the category counts that CategoryCounts returns for id.
+func (f *fakeScans) putCounts(id scan.ID, counts ...scan.CategoryCount) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.findings[id] = fs
+	f.counts[id] = counts
 }
 
 // put stores sc under its ID.
@@ -358,11 +377,11 @@ func (b *blockingStore) Project(ctx context.Context, _ project.ID) (project.Proj
 	return project.Project{}, b.wait(ctx)
 }
 
-func (b *blockingStore) Projects(ctx context.Context) ([]project.Project, error) {
+func (b *blockingStore) ProjectSummaries(ctx context.Context) ([]project.Summary, error) {
 	return nil, b.wait(ctx)
 }
 
-func (b *blockingStore) RequestScan(ctx context.Context, _ project.ID, _ string) (scan.ID, error) {
+func (b *blockingStore) RequestScan(ctx context.Context, _ project.ID, _ audit.Actor) (scan.ID, error) {
 	return 0, b.wait(ctx)
 }
 
@@ -374,6 +393,440 @@ func (b *blockingStore) ScansByProject(ctx context.Context, _ project.ID) ([]sca
 	return nil, b.wait(ctx)
 }
 
-func (b *blockingStore) FindingsByScan(ctx context.Context, _ scan.ID) ([]finding.Finding, error) {
+func (b *blockingStore) CategoryCounts(ctx context.Context, _ scan.ID) ([]scan.CategoryCount, error) {
+	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) LatestScan(ctx context.Context, _ project.ID) (scan.Scan, error) {
+	return scan.Scan{}, b.wait(ctx)
+}
+
+func (b *blockingStore) Entries(ctx context.Context, _ project.ID, _ scan.ID, _ triage.Filter) (triage.Page, error) {
+	return triage.Page{}, b.wait(ctx)
+}
+
+func (b *blockingStore) Bundle(ctx context.Context, _ project.ID, _ scan.ID, _ triage.BundleID) (triage.Bundle, error) {
+	return triage.Bundle{}, b.wait(ctx)
+}
+
+func (b *blockingStore) CustomerGroup(ctx context.Context, _ project.ID, _ scan.ID, _ triage.GroupKey) (triage.Group, error) {
+	return triage.Group{}, b.wait(ctx)
+}
+
+func (b *blockingStore) Decide(ctx context.Context, _ project.ID, _ []triage.BundleID, _ triage.Decision, _ audit.Actor) error {
+	return b.wait(ctx)
+}
+
+func (b *blockingStore) MoveFinding(ctx context.Context, _ project.ID, _ finding.ID, _ triage.BundleID, _ audit.Actor) (triage.BundleID, error) {
+	return 0, b.wait(ctx)
+}
+
+func (b *blockingStore) SameValueBundles(ctx context.Context, _ project.ID, _ scan.ID, _ triage.BundleID) ([]triage.Entry, error) {
+	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) UsedNames(ctx context.Context, _ project.ID) ([]triage.Name, error) {
+	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) PastDecision(ctx context.Context, _ string, _ triage.BundleID) (triage.Decision, bool, error) {
+	return triage.Decision{}, false, b.wait(ctx)
+}
+
+// fakeTriage keeps the triage state of projects in memory. Entries filters
+// and pages entries the way the database does, and returns counts as given.
+// A non-nil error field makes the matching method return that error.
+type fakeTriage struct {
+	latestErr  error
+	entriesErr error
+	bundleErr  error
+	pastErr    error
+	decideErr  error
+	moveErr    error
+	// moveNew is the bundle MoveFinding returns for a move to a new bundle.
+	moveNew triage.BundleID
+
+	mu      sync.Mutex
+	latest  map[project.ID]scan.Scan
+	entries map[project.ID][]triage.Entry
+	counts  map[project.ID]map[triage.Verdict]int
+	bundles map[triage.BundleID]triage.Bundle
+	groups  map[triage.GroupKey]triage.Group
+	past    map[string]triage.Decision
+	used    []triage.Name
+	filters []triage.Filter
+	same    map[triage.BundleID][]triage.Entry
+	decides []decideCall
+	moves   []moveCall
+}
+
+// decideCall is the arguments of one Decide call.
+type decideCall struct {
+	Project  project.ID
+	Bundles  []triage.BundleID
+	Decision triage.Decision
+	By       audit.Actor
+}
+
+// moveCall is the arguments of one MoveFinding call.
+type moveCall struct {
+	Project project.ID
+	Finding finding.ID
+	To      triage.BundleID
+	By      audit.Actor
+}
+
+func newFakeTriage() *fakeTriage {
+	return &fakeTriage{
+		latest:  make(map[project.ID]scan.Scan),
+		entries: make(map[project.ID][]triage.Entry),
+		counts:  make(map[project.ID]map[triage.Verdict]int),
+		bundles: make(map[triage.BundleID]triage.Bundle),
+		groups:  make(map[triage.GroupKey]triage.Group),
+		past:    make(map[string]triage.Decision),
+		same:    make(map[triage.BundleID][]triage.Entry),
+	}
+}
+
+func (f *fakeTriage) LatestScan(_ context.Context, projectID project.ID) (scan.Scan, error) {
+	if f.latestErr != nil {
+		return scan.Scan{}, f.latestErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sc, ok := f.latest[projectID]
+	if !ok {
+		return scan.Scan{}, db.ErrNotFound
+	}
+	return sc, nil
+}
+
+func (f *fakeTriage) Entries(_ context.Context, projectID project.ID, _ scan.ID, filter triage.Filter) (triage.Page, error) {
+	if f.entriesErr != nil {
+		return triage.Page{}, f.entriesErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.filters = append(f.filters, filter)
+	var match []triage.Entry
+	for _, e := range f.entries[projectID] {
+		if filter.Category != "" && e.Category != filter.Category {
+			continue
+		}
+		switch filter.Status {
+		case triage.StatusAll:
+		case triage.StatusUndecided:
+			if e.Verdict != "" {
+				continue
+			}
+		default:
+			if string(e.Verdict) != filter.Status {
+				continue
+			}
+		}
+		match = append(match, e)
+	}
+	p := triage.Page{Total: len(match), Counts: map[triage.Verdict]int{}}
+	for v, n := range f.counts[projectID] {
+		p.Counts[v] = n
+	}
+	p.Pages = max(1, (p.Total+triage.PageSize-1)/triage.PageSize)
+	p.Page = min(max(filter.Page, 1), p.Pages)
+	start := (p.Page - 1) * triage.PageSize
+	p.Entries = slices.Clone(match[start:min(start+triage.PageSize, len(match))])
+	return p, nil
+}
+
+func (f *fakeTriage) Bundle(_ context.Context, projectID project.ID, _ scan.ID, id triage.BundleID) (triage.Bundle, error) {
+	if f.bundleErr != nil {
+		return triage.Bundle{}, f.bundleErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.bundles[id]
+	if !ok || b.ProjectID != projectID {
+		return triage.Bundle{}, db.ErrNotFound
+	}
+	return b, nil
+}
+
+func (f *fakeTriage) CustomerGroup(_ context.Context, _ project.ID, _ scan.ID, key triage.GroupKey) (triage.Group, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	g, ok := f.groups[key]
+	if !ok {
+		return triage.Group{Key: key}, nil
+	}
+	return g, nil
+}
+
+// Decide records the call. Unless decideErr is set, it gives the bundles the
+// decision and the verdict to the list entries of those bundles, and of the
+// customer data groups whose bundles are all among them.
+func (f *fakeTriage) Decide(_ context.Context, projectID project.ID, ids []triage.BundleID, d triage.Decision, by audit.Actor) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.decides = append(f.decides, decideCall{projectID, slices.Clone(ids), d, by})
+	if f.decideErr != nil {
+		return f.decideErr
+	}
+	for _, id := range ids {
+		if b, ok := f.bundles[id]; ok {
+			b.Decision = d
+			f.bundles[id] = b
+		}
+	}
+	entries := f.entries[projectID]
+	for i, e := range entries {
+		switch {
+		case e.Bundle != 0 && slices.Contains(ids, e.Bundle):
+			entries[i].Verdict = d.Verdict
+		case e.Bundle == 0:
+			g, ok := f.groups[e.Group]
+			if !ok || !containsAll(ids, g.Bundles) {
+				continue
+			}
+			delete(f.groups, e.Group)
+			g.Key.Verdict = d.Verdict
+			f.groups[g.Key] = g
+			entries[i].Group, entries[i].Verdict = g.Key, d.Verdict
+		}
+	}
+	return nil
+}
+
+func containsAll(set, sub []triage.BundleID) bool {
+	for _, id := range sub {
+		if !slices.Contains(set, id) {
+			return false
+		}
+	}
+	return true
+}
+
+// MoveFinding records the call and returns moveErr, or the bundle to, or
+// moveNew for a move to a new bundle.
+func (f *fakeTriage) MoveFinding(_ context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (triage.BundleID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.moves = append(f.moves, moveCall{projectID, id, to, by})
+	if f.moveErr != nil {
+		return 0, f.moveErr
+	}
+	if to == 0 {
+		return f.moveNew, nil
+	}
+	return to, nil
+}
+
+func (f *fakeTriage) SameValueBundles(_ context.Context, _ project.ID, _ scan.ID, id triage.BundleID) ([]triage.Entry, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.same[id]), nil
+}
+
+// removeBundle forgets bundle id, as when its last member moved away.
+func (f *fakeTriage) removeBundle(id triage.BundleID) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.bundles, id)
+}
+
+// decideCalls returns the Decide calls so far.
+func (f *fakeTriage) decideCalls() []decideCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.decides)
+}
+
+// moveCalls returns the MoveFinding calls so far.
+func (f *fakeTriage) moveCalls() []moveCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.moves)
+}
+
+func (f *fakeTriage) UsedNames(context.Context, project.ID) ([]triage.Name, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.used), nil
+}
+
+func (f *fakeTriage) PastDecision(_ context.Context, fingerprint string, _ triage.BundleID) (triage.Decision, bool, error) {
+	if f.pastErr != nil {
+		return triage.Decision{}, false, f.pastErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.past[fingerprint]
+	return d, ok, nil
+}
+
+// putBundle stores b, so Bundle returns it.
+func (f *fakeTriage) putBundle(b triage.Bundle) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bundles[b.ID] = b
+}
+
+// putGroup stores g under its key, so CustomerGroup returns it.
+func (f *fakeTriage) putGroup(g triage.Group) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.groups[g.Key] = g
+}
+
+// setScan makes sc the latest succeeded scan of its project, with entries
+// as its triage list and counts as its bundle counts.
+func (f *fakeTriage) setScan(sc scan.Scan, counts map[triage.Verdict]int, entries ...triage.Entry) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.latest[sc.ProjectID] = sc
+	f.entries[sc.ProjectID] = entries
+	f.counts[sc.ProjectID] = counts
+}
+
+// lastFilter returns the filter of the last Entries call.
+func (f *fakeTriage) lastFilter() (triage.Filter, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.filters) == 0 {
+		return triage.Filter{}, false
+	}
+	return f.filters[len(f.filters)-1], true
+}
+
+// callLog records the order of calls across fakes.
+type callLog struct {
+	mu    sync.Mutex
+	calls []string
+}
+
+func (c *callLog) add(call string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.calls = append(c.calls, call)
+}
+
+func (c *callLog) all() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return slices.Clone(c.calls)
+}
+
+// revealCall is the arguments of one RecordReveal call.
+type revealCall struct {
+	Project project.ID
+	Bundle  triage.BundleID
+	By      audit.Actor
+}
+
+// fakeAudit keeps audit events in memory, newest first. RecordReveal records
+// its call in log and returns revealErr.
+type fakeAudit struct {
+	log       *callLog
+	revealErr error
+	eventsErr error
+
+	mu      sync.Mutex
+	reveals []revealCall
+	events  []audit.Event
+	befores []int64
+	limits  []int
+}
+
+func (f *fakeAudit) RecordReveal(_ context.Context, projectID project.ID, id triage.BundleID, by audit.Actor) error {
+	f.log.add("RecordReveal")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reveals = append(f.reveals, revealCall{projectID, id, by})
+	return f.revealErr
+}
+
+// AuditEvents returns at most limit of the stored events with an ID below
+// before, or from the first when before is 0.
+func (f *fakeAudit) AuditEvents(_ context.Context, before int64, limit int) ([]audit.Event, error) {
+	if f.eventsErr != nil {
+		return nil, f.eventsErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.befores = append(f.befores, before)
+	f.limits = append(f.limits, limit)
+	var out []audit.Event
+	for _, e := range f.events {
+		if before != 0 && e.ID >= before {
+			continue
+		}
+		if len(out) == limit {
+			break
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+func (f *fakeAudit) revealCalls() []revealCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.reveals)
+}
+
+// fakeOriginals returns the value stored for a project and fingerprint, or
+// err when it is set, or bao.ErrNoOriginal. It records each call in log.
+type fakeOriginals struct {
+	log *callLog
+	err error
+
+	mu     sync.Mutex
+	values map[string]bao.Value
+	reads  []string
+}
+
+func originalKey(projectID int64, fingerprint string) string {
+	return fmt.Sprintf("%d/%s", projectID, fingerprint)
+}
+
+func (f *fakeOriginals) ReadPending(_ context.Context, projectID int64, fingerprint string) (bao.Value, error) {
+	f.log.add("ReadPending")
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := originalKey(projectID, fingerprint)
+	f.reads = append(f.reads, key)
+	if f.err != nil {
+		return nil, f.err
+	}
+	v, ok := f.values[key]
+	if !ok {
+		return nil, fmt.Errorf("reading: %w", bao.ErrNoOriginal)
+	}
+	return v, nil
+}
+
+// put stores value as the original of fingerprint in the project.
+func (f *fakeOriginals) put(projectID int64, fingerprint string, value bao.Value) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.values == nil {
+		f.values = make(map[string]bao.Value)
+	}
+	f.values[originalKey(projectID, fingerprint)] = value
+}
+
+func (f *fakeOriginals) readCalls() []string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.reads)
+}
+
+func (b *blockingStore) RecordReveal(ctx context.Context, _ project.ID, _ triage.BundleID, _ audit.Actor) error {
+	return b.wait(ctx)
+}
+
+func (b *blockingStore) AuditEvents(ctx context.Context, _ int64, _ int) ([]audit.Event, error) {
+	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) ReadPending(ctx context.Context, _ int64, _ string) (bao.Value, error) {
 	return nil, b.wait(ctx)
 }

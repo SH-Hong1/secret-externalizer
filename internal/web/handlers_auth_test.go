@@ -22,13 +22,17 @@ const fakeCode = "fake-auth-code-0000"
 
 // testEnv is a server built on fakes, with its log captured.
 type testEnv struct {
-	handler  http.Handler
-	log      *bytes.Buffer
-	authn    *fakeAuthenticator
-	sessions *fakeSessions
-	attempts *fakeAttempts
-	projects *fakeProjects
-	scans    *fakeScans
+	handler   http.Handler
+	log       *bytes.Buffer
+	authn     *fakeAuthenticator
+	sessions  *fakeSessions
+	attempts  *fakeAttempts
+	projects  *fakeProjects
+	scans     *fakeScans
+	triage    *fakeTriage
+	calls     *callLog
+	audits    *fakeAudit
+	originals *fakeOriginals
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -40,9 +44,13 @@ func newTestEnv(t *testing.T) *testEnv {
 		attempts: newFakeAttempts(),
 		projects: newFakeProjects(),
 		scans:    newFakeScans(),
+		triage:   newFakeTriage(),
+		calls:    &callLog{},
 	}
+	e.audits = &fakeAudit{log: e.calls}
+	e.originals = &fakeOriginals{log: e.calls}
 	logger := slog.New(slog.NewJSONHandler(e.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts, e.projects, e.scans, time.Minute)
+	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts, e.projects, e.scans, e.triage, web.NewHistorySuggester(e.triage), e.audits, e.originals, time.Minute)
 	return e
 }
 
@@ -233,6 +241,9 @@ func TestCallback_StateMismatch(t *testing.T) {
 
 	if res.status != http.StatusBadRequest {
 		t.Errorf("callback with another state status = %d, want 400", res.status)
+	}
+	if !strings.Contains(res.body, "처음부터 다시 로그인해 주세요") || !strings.Contains(res.body, `href="/login"`) {
+		t.Errorf("callback with another state body = %q, want the request to log in again and a link to /login", res.body)
 	}
 	if n := e.sessions.count(); n != 0 {
 		t.Errorf("sessions = %d, want 0", n)

@@ -26,39 +26,52 @@ func categoryOrder() []finding.Category {
 	}
 }
 
-// scanPage is what the scan page shows. Findings is false until the scan
-// has succeeded, and the findings sections are left out then.
+// scanPage is what the scan page shows. Requester is the name of the user
+// who asked for the scan, or the subject for a scan stored without a name.
+// Succeeded is true for a succeeded scan, and the sections about what it
+// found are left out otherwise. Triage is the path of the triage screen when
+// the page links there: from the project's latest succeeded scan, and from a
+// queued or running scan when a succeeded one exists. LaterScan is the ID of
+// the project's latest succeeded scan when it is newer than this one.
+// SkippedMore counts the skipped files and folders whose path is not listed,
+// SkippedCapped tells whether the list stopped at scan.MaxSkippedFiles, and
+// Unchecked whether the scan left anything unchecked at all.
 type scanPage struct {
 	User          auth.User
 	ProjectName   string
 	Scan          scan.Scan
 	StatusLabel   string
+	Requester     string
 	RequestedAt   string
 	FinishedAt    string
 	Tools         []toolVersion
-	Findings      bool
+	Succeeded     bool
 	Counts        []categoryCount
-	Secrets       []secretRow
-	CustomerData  []customerGroup
-	FindingsTotal int
+	Findings      int
+	Locations     int
+	SkippedMore   int
+	SkippedCapped bool
+	ScannerErrors []toolErrors
+	Unchecked     bool
+	Triage        string
+	Undecided     int
+	LaterScan     scan.ID
 }
 
 type toolVersion struct {
 	Name, Version string
 }
 
+// toolErrors is the number of errors one scanner reported for files it
+// could analyse only in part.
+type toolErrors struct {
+	Name string
+	N    int
+}
+
 type categoryCount struct {
 	Category, Label string
 	N               int
-}
-
-// secretRow is one location of a secret finding.
-type secretRow struct {
-	Category, CategoryLabel string
-	Kind, KindLabel         string
-	File, Lines, Preview    string
-	Detections              []finding.Detection
-	Context                 []contextLine
 }
 
 type contextLine struct {
@@ -67,22 +80,17 @@ type contextLine struct {
 	Text   string
 }
 
-// customerGroup is the customer data of one kind in one file.
-type customerGroup struct {
-	File, Kind, KindLabel, Preview string
-	Count, FirstLine               int
-}
-
 // scanRow is one line of a project's scan list.
 type scanRow struct {
 	ID          scan.ID
 	Status      scan.Status
 	StatusLabel string
-	RequestedBy string
+	Requester   string
 	Commit      string
 	RequestedAt string
 	Succeeded   bool
 	Findings    int
+	Basis       bool
 }
 
 func formatTime(t time.Time) string {
@@ -156,24 +164,32 @@ func kindLabel(k finding.Kind) string {
 	return string(k)
 }
 
-// newScanPage shapes a scan and, for a succeeded scan, its findings for the
-// page. fs is not changed.
-func newScanPage(sc scan.Scan, fs []finding.Finding) scanPage {
+// newScanPage shapes a scan for the page. The counts of a succeeded scan
+// are added by setCounts.
+func newScanPage(sc scan.Scan) scanPage {
 	p := scanPage{
-		Scan:        sc,
-		StatusLabel: statusLabel(sc.Status),
-		RequestedAt: formatTime(sc.RequestedAt),
-		FinishedAt:  formatTime(sc.FinishedAt),
-		Tools:       toolVersions(sc.ToolVersions),
-		Findings:    sc.Status == scan.StatusSucceeded,
+		Scan:          sc,
+		StatusLabel:   statusLabel(sc.Status),
+		Requester:     requester(sc),
+		RequestedAt:   formatTime(sc.RequestedAt),
+		FinishedAt:    formatTime(sc.FinishedAt),
+		Tools:         toolVersions(sc.ToolVersions),
+		Succeeded:     sc.Status == scan.StatusSucceeded,
+		SkippedMore:   max(0, sc.Skipped-len(sc.SkippedFiles)),
+		SkippedCapped: len(sc.SkippedFiles) >= scan.MaxSkippedFiles,
+		ScannerErrors: scannerErrors(sc.ScannerErrors),
 	}
-	if !p.Findings {
-		return p
-	}
-	p.FindingsTotal = len(fs)
-	p.Counts = countByCategory(fs)
-	p.Secrets, p.CustomerData = rowsOf(fs)
+	p.Unchecked = sc.Skipped > 0 || sc.Dropped > 0 || len(p.ScannerErrors) > 0
 	return p
+}
+
+// requester returns the name shown for the user who asked for sc: the name
+// kept with the scan, or the subject for a scan stored without one.
+func requester(sc scan.Scan) string {
+	if sc.RequesterName != "" {
+		return sc.RequesterName
+	}
+	return sc.RequestedBy
 }
 
 func toolVersions(m map[string]string) []toolVersion {
@@ -185,71 +201,42 @@ func toolVersions(m map[string]string) []toolVersion {
 	return out
 }
 
-// countByCategory counts findings per category, in categoryOrder, leaving out
-// categories without findings. A category outside categoryOrder follows,
-// ordered by name.
-func countByCategory(fs []finding.Finding) []categoryCount {
-	n := map[finding.Category]int{}
-	for _, f := range fs {
-		n[f.Category]++
-	}
-	var out []categoryCount
-	for _, c := range categoryOrder() {
-		if n[c] > 0 {
-			out = append(out, categoryCount{string(c), categoryLabel(c), n[c]})
-			delete(n, c)
+// scannerErrors lists the tools of m that reported errors, ordered by name.
+func scannerErrors(m map[string]int) []toolErrors {
+	var out []toolErrors
+	for name, n := range m {
+		if n > 0 {
+			out = append(out, toolErrors{name, n})
 		}
 	}
-	var rest []finding.Category
-	for c := range n {
-		rest = append(rest, c)
-	}
-	slices.Sort(rest)
-	for _, c := range rest {
-		out = append(out, categoryCount{string(c), categoryLabel(c), n[c]})
-	}
+	slices.SortFunc(out, func(a, b toolErrors) int { return strings.Compare(a.Name, b.Name) })
 	return out
 }
 
-// rowsOf turns findings into one row per location for secrets and one group
-// per file and kind for customer data. Both keep the order of fs.
-func rowsOf(fs []finding.Finding) ([]secretRow, []customerGroup) {
-	var secrets []secretRow
-	var groups []customerGroup
-	type key struct {
-		file string
-		kind finding.Kind
-	}
-	index := map[key]int{}
-	for _, f := range fs {
-		if f.Category == finding.CategoryCustomerData {
-			k := key{f.File, f.Kind}
-			for _, l := range f.Locations {
-				i, ok := index[k]
-				if !ok {
-					i = len(groups)
-					index[k] = i
-					groups = append(groups, customerGroup{
-						File: f.File, Kind: string(f.Kind), KindLabel: kindLabel(f.Kind),
-						Preview: f.Preview, FirstLine: l.StartLine,
-					})
-				}
-				groups[i].Count++
-				groups[i].FirstLine = min(groups[i].FirstLine, l.StartLine)
-			}
-			continue
+// setCounts adds the counts of findings per category, in categoryOrder,
+// and their totals. A category outside categoryOrder follows, ordered by
+// name. counts is not changed.
+func (p *scanPage) setCounts(counts []scan.CategoryCount) {
+	rank := func(c finding.Category) int {
+		i := slices.Index(categoryOrder(), c)
+		if i < 0 {
+			return len(categoryOrder())
 		}
-		for _, l := range f.Locations {
-			secrets = append(secrets, secretRow{
-				Category: string(f.Category), CategoryLabel: categoryLabel(f.Category),
-				Kind: string(f.Kind), KindLabel: kindLabel(f.Kind),
-				File: f.File, Lines: lineRange(l), Preview: f.Preview,
-				Detections: slices.Clone(l.Detections),
-				Context:    contextLines(l),
-			})
-		}
+		return i
 	}
-	return secrets, groups
+	sorted := slices.Clone(counts)
+	slices.SortStableFunc(sorted, func(a, b scan.CategoryCount) int {
+		if d := rank(a.Category) - rank(b.Category); d != 0 {
+			return d
+		}
+		return strings.Compare(string(a.Category), string(b.Category))
+	})
+	p.Counts = make([]categoryCount, 0, len(sorted))
+	for _, c := range sorted {
+		p.Counts = append(p.Counts, categoryCount{string(c.Category), categoryLabel(c.Category), c.Findings})
+		p.Findings += c.Findings
+		p.Locations += c.Locations
+	}
 }
 
 func lineRange(l finding.Location) string {
@@ -284,7 +271,7 @@ func newScanRows(scans []scan.Scan) []scanRow {
 	for _, sc := range scans {
 		out = append(out, scanRow{
 			ID: sc.ID, Status: sc.Status, StatusLabel: statusLabel(sc.Status), RequestedAt: formatTime(sc.RequestedAt),
-			RequestedBy: sc.RequestedBy, Commit: shortCommit(sc.CommitHash),
+			Requester: requester(sc), Commit: shortCommit(sc.CommitHash),
 			Succeeded: sc.Status == scan.StatusSucceeded, Findings: sc.Findings,
 		})
 	}

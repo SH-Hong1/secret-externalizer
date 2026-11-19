@@ -190,6 +190,10 @@ Sources: Let's Go; Practical Go.
   - the preview built by `finding.Preview`: the first four characters of a
     secret that is at least eight characters long, followed by a mask. A
     shorter secret, a private key, and a key file show only the mask.
+
+  The value itself is written in one place: the response to an `admin`'s
+  request to reveal an original, which reads it from OpenBao for that request,
+  keeps no copy, and records the request in the audit trail before reading.
 - A type that holds a secret value implements `LogValue() slog.Value` and
   `String() string`, and both return a redacted form.
 - Customer data found in scanned files is never copied anywhere. Store only

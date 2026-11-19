@@ -4,7 +4,7 @@
 
 ## 띄우고 내리기
 
-Docker Engine 26 이상과, 볼륨 마운트의 `subpath`를 지원하는 그에 맞는 Compose가 필요하다. worker는 `openbao-secrets` 볼륨의 `worker` 폴더만 `volume.subpath`로 마운트하는데, 이전 Engine이나 이 옵션을 모르는 Compose에서는 worker가 뜨지 않는다. 아래의 `docker compose`는 따로 설치한 `docker-compose`로 바꿔 써도 된다.
+Docker Engine 26 이상과, 볼륨 마운트의 `subpath`를 지원하는 그에 맞는 Compose가 필요하다. worker와 web은 `openbao-secrets` 볼륨에서 각자의 폴더(`worker`, `web`)만 `volume.subpath`로 마운트하는데, 이전 Engine이나 이 옵션을 모르는 Compose에서는 worker와 web이 뜨지 않는다. 아래의 `docker compose`는 따로 설치한 `docker-compose`로 바꿔 써도 된다.
 
 ```sh
 docker compose up --build -d   # 처음에는 Keycloak이 realm을 가져오느라 30초쯤 걸린다
@@ -33,7 +33,7 @@ docker compose up --build -d
 - worker는 uid 65532로 실행된다. Linux 호스트의 Docker(네이티브)에서는 bind mount가 호스트 소유권을 그대로 유지하므로, 스캔할 파일과 폴더를 uid 65532가 읽을 수 있어야 한다. 읽을 수 없는 파일과 폴더(예: `0700` 폴더, `0600` 개인키나 `.env`)는 오류 없이 건너뛰고 건너뛴 수를 센다. macOS의 colima나 Docker Desktop에서는 소유권이 바뀌어 보이므로 이 문제가 생기지 않는다.
 - worker는 큐에 쌓인 스캔을 하나씩 실행한다. 파일마다 UTF-8이나 EUC-KR 텍스트로 읽고, betterleaks, opengrep, 키 파일 탐지기를 돌려 찾은 값을 항목으로 저장한다. postgres에는 값의 지문, 가린 미리보기, 위치, 가린 주변 줄만 남고, 비밀 값의 원본은 OpenBao에 보관한다. 고객정보는 원본을 보관하지 않고 주변 줄도 남기지 않는다. 실패하면 화면에는 정해진 사유만 보이고 자세한 오류는 `docker compose logs worker`에 남는다.
 - 스캔 하나는 30분을 넘기면 `scan took longer than the time limit`으로 실패한다. 20MiB가 넘는 파일, 바이너리 파일, UTF-8도 EUC-KR도 아닌 파일은 텍스트로 스캔하지 않고 건너뛴 수에 센다. 경로가 UTF-8이 아니거나 제어 문자가 든 파일도 건너뛴 수에 센다. 키 저장소(`.jks`, `.p12` 등)는 바이너리라도 키 파일 항목이 된다.
-- 스캔이 성공하면 worker 로그(`docker compose logs worker`)에 `scan finished` 기록이 하나 남는다. 스캔 ID(`scan_id`), 읽은 파일 수(`files`), 건너뛴 수(`skipped`), 버린 건수(`dropped`), 항목 수(`findings`), 텍스트로 읽지 못해 건너뛴 파일에 스캐너가 낸 결과 수(`results_in_skipped_files`), 도구별로 파일을 일부만 분석했다고 알린 오류 수(`scanner_errors`, opengrep의 파일별 10초 시간 초과나 부분 파싱 등)가 들어 있다. 건너뛴 파일이 있으면 `scan skipped files` 기록에 처음 50개의 상대 경로(`paths`)와 전체 수(`total`)가 남는다. 경로의 제어 문자와 깨진 UTF-8은 `U+FFFD`로 바뀐다. 읽지 못한 폴더는 수만 `skipped`에 들어가고 경로는 남지 않는다. 화면에는 건너뛴 파일의 이름과 스캐너 오류 수가 아직 보이지 않는다.
+- 스캔이 성공하면 worker 로그(`docker compose logs worker`)에 `scan finished` 기록이 하나 남는다. 스캔 ID(`scan_id`), 스캔이 목록에 넣은 일반 파일 수(`files`, 텍스트로 읽지 못하거나 경로를 저장할 수 없어 건너뛴 파일도 센다), 건너뛴 수(`skipped`), 버린 건수(`dropped`), 항목 수(`findings`), 텍스트로 읽지 못해 건너뛴 파일에 스캐너가 낸 결과 수(`results_in_skipped_files`), 도구별로 파일을 일부만 분석했다고 알린 오류 수(`scanner_errors`, opengrep의 파일별 10초 시간 초과나 부분 파싱 등)가 들어 있다. 건너뛴 파일이 있으면 `scan skipped files` 기록에 처음 50개의 상대 경로(`paths`)와 전체 수(`total`)가 남는다. 경로의 제어 문자와 깨진 UTF-8은 `U+FFFD`로 바뀐다. 읽지 못한 폴더는 수만 `skipped`에 들어가고 경로는 남지 않는다. 건너뛴 파일의 이름(경로순 처음 200개, UTF-8이 아니거나 제어 문자가 든 경로는 빼고 수에만 센다)과 도구별 스캐너 오류 수는 데이터베이스에도 저장되어 스캔 화면의 "검사하지 못한 것"에 보인다.
 - 프로젝트 폴더 맨 위에 `.gitleaksignore`나 `.betterleaksignore`가 있으면 스캔하지 않고 `project has a scanner ignore file (.gitleaksignore or .betterleaksignore); remove it and scan again`으로 실패한다. betterleaks가 이 파일에 적힌 결과를 숨기고, 이를 끄는 옵션이 없기 때문이다. 작업 폴더에서 파일을 지우거나 이름을 바꾼 뒤 다시 스캔한다. 하위 폴더에 있는 같은 이름의 파일은 betterleaks가 읽지 않으므로 상관없다.
 - EUC-KR 파일은 스캔하는 동안 UTF-8 사본을 worker의 `/tmp`(tmpfs, 1GiB)에 두고 스캔이 끝나면 지운다. EUC-KR 파일이 1GiB 가까이 되는 프로젝트를 스캔하려면 `compose.yaml`에서 크기를 늘린다. tmpfs는 호스트 메모리를 쓴다.
 - OpenBao에 닿지 않으면 스캔은 `the secret store could not be reached; see the worker log`로 실패하고 postgres에는 항목을 하나도 저장하지 않는다. 그 실행이 실패하기 전에 OpenBao에 이미 보관한 원본은 남아 있다가, 그 프로젝트의 다음 스캔이 성공하면 그 스캔에 없는 것이 지워진다.
@@ -42,7 +42,7 @@ docker compose up --build -d
 
 ## 스캔을 끝까지 해 보기
 
-예제 프로젝트(값은 모두 가짜다)로 등록부터 탐지 목록까지 확인한다.
+예제 프로젝트(값은 모두 가짜다)로 등록부터 판정까지 확인한다.
 
 ```sh
 export SE_WORKSPACE=$HOME/work                  # 홈 폴더 아래의 폴더
@@ -53,15 +53,25 @@ docker compose up --build -d
 
 1. `dev-user`로 로그인하고 `/projects/new`에서 이름 `legacy-shop`, 경로 `legacy-shop`으로 등록한다.
 2. 프로젝트 화면에서 "스캔 시작"을 누른다. 스캔 화면은 끝날 때까지 3초마다 새로 고쳐진다.
-3. 끝나면 스캔 화면에 다음이 보인다.
-   - 상태, 요청한 사람과 시각(UTC), 커밋 해시(예제는 git 저장소가 아니므로 "없음"), 규칙 버전, 도구 버전, 읽은 파일 수
-   - 분류별 건수와 `발견 N건`. 위치가 맞지 않아 버린 건수와 건너뛴 파일 수는 0이 아닐 때만 보인다.
-   - 비밀 값 항목마다 분류, 종류, 파일과 줄, 가린 미리보기(`dev-****`처럼 앞 네 글자만), 탐지한 도구와 규칙, 줄 번호가 붙은 가린 주변 줄. 값이 있는 줄에는 `>` 표시가 붙는다. 주변 줄을 저장하지 않은 항목은 그 사실이 적혀 있다.
-   - 고객정보는 파일과 종류별로 한 줄(건수, 첫 줄, 형식 미리보기)이고 주변 줄은 없다.
-4. 프로젝트 화면의 스캔 목록에서 이전 스캔을 본다. 예제 파일에서 값을 지우고 다시 스캔하면 그 항목만 사라지고 나머지 항목은 같은 항목으로 이어진다.
-5. 끝나면 `$SE_WORKSPACE/legacy-shop`을 지운다. OpenBao에는 프로젝트의 마지막 스캔이 찾은 비밀 값의 원본이 남는다. 같은 프로젝트를 다시 스캔하면 그 스캔에 없는 값의 원본이 정리된다.
+3. 끝나면 스캔 화면에 다음이 보인다. 스캔 화면은 요약만 보이고, 찾은 항목 하나하나는 판정 화면(`/projects/{id}/triage`)에서 본다.
+   - 상태, 요청한 사람의 이름과 시각(UTC), 커밋 해시(예제는 git 저장소가 아니므로 "없음"), 규칙 버전, 도구 버전, 찾은 파일 수(읽지 못해 건너뛴 파일도 센다)
+   - 분류별 항목 수와 `찾은 항목 N개(위치 M곳)`
+   - 프로젝트의 마지막 성공한 스캔이면 "판정하기 · 미판정 N" 버튼. 이후에 성공한 스캔이 있으면 버튼 대신 "이후 스캔이 있습니다" 안내와 그 스캔의 링크
+   - "검사하지 못한 것": 건너뛴 파일(펼침 상자 안에 경로 목록, 200개를 넘으면 "외 N개"), 위치가 맞지 않아 버린 결과, 도구별 스캐너 오류. 각각 0이 아닐 때만 보인다.
+   - 스캔이 대기 중이거나 실행 중일 때 성공한 이전 스캔이 있으면, 지난 스캔 기준으로 판정할 수 있다는 안내와 판정 화면 링크가 보인다.
+4. "판정하기"를 누르면 판정 화면이 열린다. 왼쪽 목록은 마지막 성공한 스캔의 묶음을 한 쪽에 50줄씩 보이고(기본 필터는 미판정), 줄을 고르면 오른쪽에 위치, 가린 주변 줄, 이름 입력란과 판정 버튼이 보인다. 고객정보는 파일과 종류마다 한 줄이고 값과 주변 줄이 없다. 판정하면 그 줄이 미판정 목록에서 빠지고 다음 줄이 골라진다.
+5. 프로젝트 화면의 스캔 목록에서 이전 스캔을 본다. 예제 파일에서 값을 지우고 다시 스캔하면 판정 화면에서 그 항목만 사라지고, 나머지 묶음은 판정과 이름을 그대로 유지한다.
+6. 끝나면 `$SE_WORKSPACE/legacy-shop`을 지운다. OpenBao에는 프로젝트의 마지막 스캔이 찾은 비밀 값의 원본이 남는다. 같은 프로젝트를 다시 스캔하면 그 스캔에 없는 값의 원본이 정리된다.
 
-스캔 결과 화면은 postgres에 저장된 가린 값만 보여 주므로 화면에서 원본 값을 볼 방법은 없다.
+스캔 결과 화면과 판정 화면은 postgres에 저장된 가린 값만 보여 준다. 원본 값은 `admin`이 판정 화면에서 "원본 보기"를 누를 때만 보인다(아래).
+
+## 원본 보기와 감사 로그
+
+1. `dev-admin`으로 로그인하고 위의 예제 프로젝트를 스캔한 뒤 판정 화면(`/projects/{id}/triage`)을 연다.
+2. 비밀 값 묶음의 상세 맨 위에 "원본 보기" 버튼이 있다. `admin`에게만, 마지막 스캔이 원본을 보관한 묶음에만 보인다. 고객정보에는 없다.
+3. 누르면 web이 먼저 감사 기록을 남기고, 그다음 OpenBao에서 원본을 읽어 그 응답에만 넣는다. 검은 테두리 상자에 값과 연 사람, 시각이 보이고 "닫기"를 누르면 값 없이 같은 상세로 돌아간다. 값은 저장하지 않고 캐시하지 않는다(`Cache-Control: no-store`). 텍스트가 아닌 값(UTF-8이 아니거나 NUL이 든 값)은 크기만 보인다.
+4. OpenBao에 원본이 없으면 "보관된 원본이 없습니다. 다시 스캔하면 보관됩니다.", OpenBao에 닿지 않으면 "비밀 저장소에 연결할 수 없습니다.", OpenBao가 읽기를 거부했으면 "비밀 저장소에서 원본을 읽지 못했습니다."가 보인다. 두 경우에도 열람 시도는 감사 기록에 남는다. web은 OpenBao가 없어도 기동하고 다른 화면은 그대로 쓸 수 있다.
+5. 머리 띠의 "감사 로그"(`/audit`)에서 판정, 묶음 옮기기, 원본 보기가 최신순으로 한 쪽에 100줄씩 보인다. 시각은 UTC이고, 내용에는 묶음과 항목 번호, 판정한 묶음의 종류(고객정보는 파일 경로도), 이름(`ext.…`), 보류 사유, 메모만 있고 값은 없다. "더 보기"가 다음 쪽(`/audit?before=<마지막 줄의 ID>`)을 연다.
 
 ## OpenBao
 
@@ -70,7 +80,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
 | 서비스 | 내용 |
 |---|---|
 | `openbao-secrets` | 한 번 실행되고 끝난다. `openbao-secrets` 볼륨에 봉인 해제 키(`unseal/key`)와 AppRole secret-id(`worker/secret-id`, `web/secret-id`)를 난수로 만든다. 이미 있는 파일은 그대로 둔다 |
-| `openbao` | 원본을 보관한다. 호스트에 포트를 열지 않는다. 데이터는 `openbao-data` 볼륨에 있다 |
+| `openbao` | 원본을 보관한다. 호스트에 포트를 열지 않고, compose 네트워크의 worker(쓰기)와 web(원본 보기의 읽기)만 쓴다. 데이터는 `openbao-data` 볼륨에 있다 |
 | `openbao-test` | `test` 프로필에서만 뜬다. 통합 테스트용 `-dev` 서버이며 `127.0.0.1:18200`에 열린다. 메모리에만 저장하고 루트 토큰은 `dev-only-openbao-test-root-token`이다 |
 
 - 처음 뜰 때 OpenBao가 스스로 초기화(self-init)한다. transit 키 `fingerprint`, KV v2 마운트 `secret`, AppRole `worker`와 `web`, 정책, 표준 출력 audit device를 만든다. 루트 토큰은 초기화가 끝나면 폐기되어 남지 않는다.
@@ -91,7 +101,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
 | 사용자 | 비밀번호 | 역할 | 볼 수 있는 화면 |
 |---|---|---|---|
 | `dev-user` | `dev-only-user-password` | `user` | 홈, 프로젝트와 스캔 |
-| `dev-admin` | `dev-only-admin-password` | `admin` | 홈, 프로젝트와 스캔, 감사 로그(`/audit`) |
+| `dev-admin` | `dev-only-admin-password` | `admin` | 홈, 프로젝트와 스캔, 판정 화면의 원본 보기, 감사 로그(`/audit`) |
 | `dev-norole` | `dev-only-norole-password` | 없음 | 로그인 뒤 403. 이 화면의 로그아웃 버튼으로 Keycloak 세션을 끝내고 다른 계정으로 로그인한다 |
 
 Keycloak 관리 콘솔(`http://localhost:8081/admin/`)의 계정은 `dev-only-admin` / `dev-only-admin-password`다. 이 계정은 `master` realm이 처음 만들어질 때만 생긴다.
@@ -130,6 +140,9 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 | `OIDC_DISCOVERY_URL` | | web이 발급자에 닿는 주소. 비우면 `OIDC_ISSUER_URL`을 쓴다. 여기서 읽은 discovery 문서의 `issuer`가 `OIDC_ISSUER_URL`과 다르면 web이 기동하지 않는다 |
 | `OIDC_CLIENT_ID` | 예 | `secret-externalizer-web` |
 | `OIDC_CLIENT_SECRET` | 예 | 로그와 오류 메시지에 남지 않는다 |
+| `BAO_ADDR` | 예 | OpenBao 주소. compose에서는 `http://openbao:8200`. web은 기동할 때 OpenBao에 닿지 않아도 되고, 원본 보기를 누를 때만 연결한다 |
+| `BAO_ROLE_ID` | 예 | AppRole role-id. compose에서는 `se-web`. 이 역할의 정책은 `secret/data/pending/*` 읽기만 허용한다 |
+| `BAO_SECRET_ID_FILE` | 예 | AppRole secret-id가 든 파일. 앞뒤 공백은 뗀다. compose에서는 `openbao-secrets` 볼륨의 `web` 폴더만 `/run/secrets/openbao`에 읽기 전용으로 마운트하고 `/run/secrets/openbao/secret-id`를 쓴다. secret-id는 로그와 오류 메시지에 남지 않는다 |
 
 ## worker 환경 변수
 

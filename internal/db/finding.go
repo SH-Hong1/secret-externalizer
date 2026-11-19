@@ -20,7 +20,8 @@ type detection struct {
 
 // SaveResult records a finished scan in one transaction: it checks that the
 // worker holds the job, stores each finding and its locations, marks the
-// scan succeeded with the counts and versions of r, and marks the job done.
+// scan succeeded with the counts, versions, skipped file paths and scanner
+// error counts of r, and marks the job done.
 // It returns job.ErrLeaseLost, storing nothing, when the worker does not hold
 // the job, which is also the case when the result was already saved.
 //
@@ -45,11 +46,21 @@ func (s *Store) SaveResult(ctx context.Context, jobID int64, workerID string, id
 		if toolVersions == nil {
 			toolVersions = map[string]string{}
 		}
+		skippedFiles := r.SkippedFiles
+		if skippedFiles == nil {
+			skippedFiles = []string{}
+		}
+		scannerErrors := r.ScannerErrors
+		if scannerErrors == nil {
+			scannerErrors = map[string]int{}
+		}
 		if _, err := tx.Exec(ctx, `
 			UPDATE scan SET status = 'succeeded', finished_at = now(), commit_hash = $2, rules_version = $3,
-				tool_versions = $4, files = $5, skipped = $6, dropped = $7, findings = $8
+				tool_versions = $4, files = $5, skipped = $6, skipped_files = $7, scanner_errors = $8,
+				dropped = $9, findings = $10
 			WHERE id = $1`,
-			id, r.CommitHash, r.RulesVersion, toolVersions, r.Files, r.Skipped, r.Dropped, len(r.Findings)); err != nil {
+			id, r.CommitHash, r.RulesVersion, toolVersions, r.Files, r.Skipped, skippedFiles, scannerErrors,
+			r.Dropped, len(r.Findings)); err != nil {
 			return fmt.Errorf("finishing scan %d: %w", id, err)
 		}
 		return nil
@@ -168,6 +179,34 @@ func (s *Store) FindingsByScan(ctx context.Context, id scan.ID) ([]finding.Findi
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("listing findings of scan %d: %w", id, err)
+	}
+	return out, nil
+}
+
+// CategoryCounts returns, for each category the scan found something in,
+// the number of findings and of their locations in that scan, ordered by
+// category. A scan that found nothing, or that does not exist, gives none.
+func (s *Store) CategoryCounts(ctx context.Context, id scan.ID) ([]scan.CategoryCount, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT f.category, count(DISTINCT f.id), count(*)
+		FROM location l JOIN finding f ON f.id = l.finding_id
+		WHERE l.scan_id = $1
+		GROUP BY f.category
+		ORDER BY f.category`, id)
+	if err != nil {
+		return nil, fmt.Errorf("counting findings of scan %d: %w", id, err)
+	}
+	defer rows.Close()
+	var out []scan.CategoryCount
+	for rows.Next() {
+		var c scan.CategoryCount
+		if err := rows.Scan(&c.Category, &c.Findings, &c.Locations); err != nil {
+			return nil, fmt.Errorf("reading category count: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("counting findings of scan %d: %w", id, err)
 	}
 	return out, nil
 }

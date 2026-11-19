@@ -8,11 +8,14 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 // Authenticator runs the login with the identity provider.
@@ -39,10 +42,12 @@ type AttemptStore interface {
 // ProjectStore keeps the registered projects. CreateProject fails with an
 // error matching db.ErrDuplicate when the name or path is taken, and Project
 // with one matching db.ErrNotFound when the ID is unknown.
+// ProjectSummaries returns every project ordered by name, with its newest
+// scan and the bundle counts of its newest succeeded scan.
 type ProjectStore interface {
 	CreateProject(ctx context.Context, p project.Project) (project.ID, error)
 	Project(ctx context.Context, id project.ID) (project.Project, error)
-	Projects(ctx context.Context) ([]project.Project, error)
+	ProjectSummaries(ctx context.Context) ([]project.Summary, error)
 }
 
 // ScanStore keeps the scans. RequestScan returns the ID of the project's
@@ -50,25 +55,71 @@ type ProjectStore interface {
 // already queued or running, and an error matching db.ErrNotFound when the
 // project is unknown. Scan fails with an error matching db.ErrNotFound when
 // the ID is unknown. ScansByProject returns the project's scans, newest
-// first. FindingsByScan returns the findings of one scan, ordered by file and
-// line, with the locations of that scan only.
+// first. CategoryCounts returns the number of findings and locations a scan
+// found in each category, leaving out the categories it found nothing in.
 type ScanStore interface {
-	RequestScan(ctx context.Context, projectID project.ID, requestedBy string) (scan.ID, error)
+	RequestScan(ctx context.Context, projectID project.ID, by audit.Actor) (scan.ID, error)
 	Scan(ctx context.Context, id scan.ID) (scan.Scan, error)
 	ScansByProject(ctx context.Context, projectID project.ID) ([]scan.Scan, error)
-	FindingsByScan(ctx context.Context, id scan.ID) ([]finding.Finding, error)
+	CategoryCounts(ctx context.Context, id scan.ID) ([]scan.CategoryCount, error)
+}
+
+// TriageStore keeps the bundles of a project and the verdicts users give
+// them. LatestScan returns the project's newest succeeded scan, or an error
+// matching db.ErrNotFound. Entries returns one page of the triage list of a
+// scan; a page past the last gives the last. Bundle returns a bundle with
+// the members the scan found, or an error matching db.ErrNotFound.
+// CustomerGroup returns the customer data a key names, with no bundles when
+// it names nothing. SameValueBundles returns the other bundles of a bundle's
+// value that the scan found. Decide and MoveFinding record a user's choice;
+// Decide fails with an error matching triage.ErrNotAllowed or db.ErrDuplicate
+// when it stores nothing because of the decision, MoveFinding with one
+// matching triage.ErrNotAllowed when the finding may not move there, and both
+// with one matching db.ErrNotFound when something they name is unknown.
+type TriageStore interface {
+	LatestScan(ctx context.Context, projectID project.ID) (scan.Scan, error)
+	Entries(ctx context.Context, projectID project.ID, scanID scan.ID, f triage.Filter) (triage.Page, error)
+	Bundle(ctx context.Context, projectID project.ID, scanID scan.ID, id triage.BundleID) (triage.Bundle, error)
+	CustomerGroup(ctx context.Context, projectID project.ID, scanID scan.ID, key triage.GroupKey) (triage.Group, error)
+	SameValueBundles(ctx context.Context, projectID project.ID, scanID scan.ID, id triage.BundleID) ([]triage.Entry, error)
+	Decide(ctx context.Context, projectID project.ID, ids []triage.BundleID, d triage.Decision, by audit.Actor) error
+	MoveFinding(ctx context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (triage.BundleID, error)
+}
+
+// Suggester proposes a verdict and a name for a bundle that has no verdict.
+// A suggestion is shown, never stored.
+type Suggester interface {
+	Suggest(ctx context.Context, b triage.Bundle) (triage.Suggestion, error)
+}
+
+// AuditStore keeps the audit trail. RecordReveal records that a user asked
+// to see the original value of a bundle, and fails with an error matching
+// db.ErrNotFound when the project has no such bundle. AuditEvents returns at
+// most limit events, newest first, starting below the event ID before, or
+// from the newest when before is 0.
+type AuditStore interface {
+	RecordReveal(ctx context.Context, projectID project.ID, id triage.BundleID, by audit.Actor) error
+	AuditEvents(ctx context.Context, before int64, limit int) ([]audit.Event, error)
+}
+
+// Originals reads the original values that scans keep in the secret store.
+// ReadPending fails with an error matching bao.ErrNoOriginal when the store
+// holds no original for the fingerprint in the project.
+type Originals interface {
+	ReadPending(ctx context.Context, projectID int64, fingerprint string) (bao.Value, error)
 }
 
 // NewServer returns the complete handler, including middleware. From the
 // outside in, a request passes panic recovery, the request log, the security
 // headers, and cross-origin protection before it reaches its route. A route
-// that calls projects or scans runs under a deadline storeLimit from the
-// moment it is reached; the session is read before that deadline starts.
-func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, storeLimit time.Duration) http.Handler {
+// that calls projects, scans, triage, the audit trail or the originals runs
+// under a deadline storeLimit from the moment it is reached; the session is
+// read before that deadline starts.
+func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, triage TriageStore, suggester Suggester, audits AuditStore, originals Originals, storeLimit time.Duration) http.Handler {
 	mux := http.NewServeMux()
 	a := loadAssets(staticFiles())
 	rd := newRenderer(a)
-	addRoutes(mux, logger, rd, a, authn, sessions, attempts, projects, scans, storeLimit)
+	addRoutes(mux, logger, rd, a, authn, sessions, attempts, projects, scans, triage, suggester, audits, originals, storeLimit)
 
 	return chain(mux,
 		recoverPanic(logger, rd),

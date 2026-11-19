@@ -10,9 +10,10 @@ import (
 
 // addRoutes registers every route of the server. Only the routes that need a
 // signed-in user read the session, so /healthz answers and logout works even
-// when the session store is down. The routes that call projects or scans get
-// a deadline of storeLimit. The static files need no session.
-func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, storeLimit time.Duration) {
+// when the session store is down. The routes that call projects, scans,
+// triage, the audit trail or the originals get a deadline of storeLimit. The
+// static files need no session.
+func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, triage TriageStore, suggester Suggester, audits AuditStore, originals Originals, storeLimit time.Duration) {
 	signedIn := func(h http.Handler) http.Handler {
 		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd))
 	}
@@ -20,8 +21,10 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	usesStore := func(h http.Handler) http.Handler {
 		return signedIn(timeLimit(storeLimit)(h))
 	}
-	withRole := func(role auth.Role, h http.Handler) http.Handler {
-		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd), requireRole(logger, rd, role))
+	// adminStore is usesStore for a route only an admin may use. The role
+	// is checked before the deadline starts and before the handler runs.
+	adminStore := func(h http.Handler) http.Handler {
+		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd), requireRole(logger, rd, auth.RoleAdmin), timeLimit(storeLimit))
 	}
 
 	mux.Handle("GET /healthz", handleHealthz())
@@ -30,14 +33,24 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	mux.Handle("GET /auth/callback", handleCallback(logger, rd, authn, sessions, attempts))
 	// Logout needs no live session; see handleLogout.
 	mux.Handle("POST /logout", handleLogout(logger, authn, sessions))
-	mux.Handle("/logout", handleMethodNotAllowed(logger, rd, http.MethodPost))
+	mux.Handle("/logout", handlePostOnly(logger, rd))
 	mux.Handle("GET /{$}", signedIn(handleHome(logger, rd)))
-	mux.Handle("GET /audit", withRole(auth.RoleAdmin, handleAudit(logger, rd)))
+	mux.Handle("GET /audit", adminStore(handleAudit(logger, rd, audits)))
 	mux.Handle("GET /projects", usesStore(handleProjectList(logger, rd, projects)))
 	mux.Handle("GET /projects/new", signedIn(handleProjectNew(logger, rd)))
 	mux.Handle("POST /projects", usesStore(handleProjectCreate(logger, rd, projects)))
-	mux.Handle("GET /projects/{id}", usesStore(handleProject(logger, rd, projects, scans)))
+	mux.Handle("GET /projects/{id}", usesStore(handleProject(logger, rd, projects, scans, triage)))
+	mux.Handle("GET /projects/{id}/triage", usesStore(handleTriage(logger, rd, projects, triage, suggester)))
+	tw := triageWriter{logger: logger, rd: rd, projects: projects, store: triage, suggester: suggester}
+	mux.Handle("POST /projects/{id}/bundles/{bundle}/verdict", usesStore(handleBundleVerdict(tw)))
+	mux.Handle("/projects/{id}/bundles/{bundle}/verdict", handlePostOnly(logger, rd))
+	mux.Handle("POST /projects/{id}/customer-data/verdict", usesStore(handleCustomerDataVerdict(tw)))
+	mux.Handle("/projects/{id}/customer-data/verdict", handlePostOnly(logger, rd))
+	mux.Handle("POST /projects/{id}/findings/{finding}/move", usesStore(handleMove(tw)))
+	mux.Handle("/projects/{id}/findings/{finding}/move", handlePostOnly(logger, rd))
+	mux.Handle("POST /projects/{id}/bundles/{bundle}/original", adminStore(handleOriginal(tw, audits, originals)))
+	mux.Handle("/projects/{id}/bundles/{bundle}/original", handlePostOnly(logger, rd))
 	mux.Handle("POST /projects/{id}/scans", usesStore(handleScanCreate(logger, rd, scans)))
-	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, projects, scans)))
+	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, projects, scans, triage)))
 	mux.Handle("/", handleNotFound(logger, rd))
 }

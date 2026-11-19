@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
@@ -26,7 +27,7 @@ func TestRequestScan_CreatesScanAndJob(t *testing.T) {
 	ctx := t.Context()
 	pid := newProject(t, s, "shop")
 
-	id, err := s.RequestScan(ctx, pid, "fake-subject")
+	id, err := s.RequestScan(ctx, pid, audit.Actor{Subject: "fake-subject", Name: "fake-user"})
 	if err != nil {
 		t.Fatalf("RequestScan(%d) error = %v", pid, err)
 	}
@@ -34,8 +35,9 @@ func TestRequestScan_CreatesScanAndJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scan(%d) error = %v", id, err)
 	}
-	if got.Status != scan.StatusQueued || got.ProjectID != pid || got.RequestedBy != "fake-subject" || got.RequestedAt.IsZero() {
-		t.Errorf("Scan(%d) = %+v, want a queued scan of project %d requested by fake-subject", id, got, pid)
+	if got.Status != scan.StatusQueued || got.ProjectID != pid || got.RequestedBy != "fake-subject" ||
+		got.RequesterName != "fake-user" || got.RequestedAt.IsZero() {
+		t.Errorf("Scan(%d) = %+v, want a queued scan of project %d requested by fake-subject named fake-user", id, got, pid)
 	}
 	if !got.StartedAt.IsZero() || !got.FinishedAt.IsZero() {
 		t.Errorf("Scan(%d) started at %v, finished at %v, want both unset", id, got.StartedAt, got.FinishedAt)
@@ -58,7 +60,7 @@ func TestRequestScan_CreatesScanAndJob(t *testing.T) {
 
 func TestRequestScan_UnknownProject(t *testing.T) {
 	s := newMigratedStore(t)
-	_, err := s.RequestScan(t.Context(), 424242, "fake-subject")
+	_, err := s.RequestScan(t.Context(), 424242, audit.Actor{Subject: "fake-subject"})
 	if !errors.Is(err, db.ErrNotFound) {
 		t.Errorf("RequestScan(424242) error = %v, want ErrNotFound", err)
 	}
@@ -77,17 +79,17 @@ func TestRequestScan_ActiveScan(t *testing.T) {
 	ctx := t.Context()
 	pid := newProject(t, s, "shop")
 
-	first, err := s.RequestScan(ctx, pid, "fake-subject")
+	first, err := s.RequestScan(ctx, pid, audit.Actor{Subject: "fake-subject"})
 	if err != nil {
 		t.Fatalf("RequestScan(first) error = %v", err)
 	}
-	second, err := s.RequestScan(ctx, pid, "fake-subject")
+	second, err := s.RequestScan(ctx, pid, audit.Actor{Subject: "fake-subject"})
 	if !errors.Is(err, db.ErrScanActive) || second != first {
 		t.Errorf("RequestScan(second) = %d, %v, want %d, ErrScanActive", second, err, first)
 	}
 
 	other := newProject(t, s, "other")
-	if _, err := s.RequestScan(ctx, other, "fake-subject"); err != nil {
+	if _, err := s.RequestScan(ctx, other, audit.Actor{Subject: "fake-subject"}); err != nil {
 		t.Errorf("RequestScan(other project) error = %v, want nil", err)
 	}
 }
@@ -105,7 +107,7 @@ func TestRequestScan_Concurrent(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			ids[i], errs[i] = s.RequestScan(ctx, pid, "fake-subject")
+			ids[i], errs[i] = s.RequestScan(ctx, pid, audit.Actor{Subject: "fake-subject"})
 		}()
 	}
 	wg.Wait()
@@ -140,7 +142,7 @@ func TestRequestScan_AfterFinish(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()
 	pid := newProject(t, s, "shop")
-	first, err := s.RequestScan(ctx, pid, "fake-subject")
+	first, err := s.RequestScan(ctx, pid, audit.Actor{Subject: "fake-subject"})
 	if err != nil {
 		t.Fatalf("RequestScan(first) error = %v", err)
 	}
@@ -151,8 +153,30 @@ func TestRequestScan_AfterFinish(t *testing.T) {
 	if err := s.SaveResult(ctx, j.ID, "worker-a", first, scan.Result{}); err != nil {
 		t.Fatalf("SaveResult() error = %v", err)
 	}
-	second, err := s.RequestScan(ctx, pid, "fake-subject")
+	second, err := s.RequestScan(ctx, pid, audit.Actor{Subject: "fake-subject"})
 	if err != nil || second == first {
 		t.Errorf("RequestScan(after finish) = %d, %v, want a new scan other than %d", second, err, first)
+	}
+}
+
+func TestMigration0006KeepsOlderScans(t *testing.T) {
+	s := db.NewTestStore(t)
+	ctx := t.Context()
+	if err := s.MigrateThrough(ctx, 5); err != nil {
+		t.Fatalf("MigrateThrough(5) error = %v", err)
+	}
+	id, err := s.InsertRawScan(ctx, newProject(t, s, "shop"))
+	if err != nil {
+		t.Fatalf("InsertRawScan() error = %v", err)
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() over 0005 error = %v", err)
+	}
+	got, err := s.Scan(ctx, id)
+	if err != nil {
+		t.Fatalf("Scan(%d) error = %v", id, err)
+	}
+	if got.RequestedBy != "fake-subject" || got.RequesterName != "" || got.SkippedFiles != nil || got.ScannerErrors != nil {
+		t.Errorf("Scan(%d) = %+v, want requested by fake-subject with no name, skipped files or scanner errors", id, got)
 	}
 }

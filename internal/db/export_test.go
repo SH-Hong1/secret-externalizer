@@ -16,6 +16,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
@@ -152,6 +153,15 @@ func (s *Store) MigrateThrough(ctx context.Context, version int) error {
 		}
 	}
 	return s.migrate(ctx, fsys)
+}
+
+// InsertRawScan stores a queued scan of the project requested by
+// fake-subject, with SQL that needs only the schema of migration 0002.
+func (s *Store) InsertRawScan(ctx context.Context, projectID project.ID) (scan.ID, error) {
+	var id scan.ID
+	err := s.pool.QueryRow(ctx,
+		"INSERT INTO scan (project_id, requested_by) VALUES ($1, 'fake-subject') RETURNING id", projectID).Scan(&id)
+	return id, err
 }
 
 // InsertRawFinding stores a finding of the scan with one location at line,

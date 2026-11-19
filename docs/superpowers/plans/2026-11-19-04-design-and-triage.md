@@ -136,7 +136,7 @@
 - [x] **Step 3:** 테스트가 실패하는지 확인한다. `go test ./internal/web/ -run 'TestStatic|TestAsset|TestLayout|TestNoInline'`
 - [x] **Step 4:** `static.go`를 쓴다. `//go:embed static`으로 넣고, `handleStatic() http.Handler`가 파일 이름 하나만 받는다. `securityHeaders`의 `no-store`는 이 handler가 덮어쓴다. `parseTemplates`는 `template.New(...).Funcs`로 `asset`을 넣는다.
 - [x] **Step 5:** `layout.html`에 `<link rel="stylesheet">`, `<script src defer>`, `<meta name="htmx-config">`, 머리와 내비게이션을 넣고, 모든 쪽 템플릿을 시안대로 다시 쓴다(frontend-design 스킬). `assets/app.css`에 `docs/design/README.md`의 값을 테마로 옮긴다. IBM Plex Sans KR(400, 600, 700)과 D2Coding(400, 700)의 woff2 파일과 라이선스 전문을 `internal/web/static/fonts/`에 넣고 `@font-face`로 불러온다(결정 기록 0029). 글꼴 파일은 배포처의 공식 릴리스에서 받아 체크섬을 `Makefile`에 적는다. `make css`로 `static/app.css`를 만든다.
-- [ ] **Step 6:** `make check`가 통과하는지 확인한다. `docker compose up --build`로 띄워 Chromium에서 로그인, 프로젝트 목록, 등록, 스캔 화면이 시안과 같은지 보고, 콘솔에 CSP 위반이 없는지 확인한다.
+- [x] **Step 6:** `make check`가 통과하는지 확인한다. `docker compose up --build`로 띄워 Chromium에서 로그인, 프로젝트 목록, 등록, 스캔 화면이 시안과 같은지 보고, 콘솔에 CSP 위반이 없는지 확인한다. 실제 화면 확인은 2026-11-20에 했다.
 - [x] **Step 7:** `CHANGELOG.md`와 결정 기록 0025(standalone CLI, 만든 CSS를 저장소에 두는 이유, htmx를 쓰는 범위)를 쓰고 커밋한다. `feat(web): add the stylesheet, htmx and the shared page frame`
 
 ### Task 3: 접속 정보를 구성 요소로 나누기
@@ -384,7 +384,7 @@
 - Consumes: Task 4의 `Store` 메서드, Task 5의 `Suggestion`
 - Produces: `GET /projects/{id}/triage?category=&status=&page=&sel=`. `sel`은 `b<묶음 ID>` 또는 `c.<종류>.<파일 경로>`다(고객정보 한 무리, 판정은 `status`를 따른다). `status`의 기본값은 `undecided`다. 요청 머리에 `HX-Request: true`와 `HX-Target: detail`이 있으면 `<section id="detail">` 조각만 돌려준다. `TriageStore`는 Task 4의 메서드 여덟 개를 갖는 인터페이스이고 `internal/web/server.go`에 둔다. `NewServer`의 매개변수에 `triage TriageStore`, `suggester Suggester`를 더한다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다.** 손으로 쓴 fake `TriageStore`를 쓴다.
+- [x] **Step 1: 실패하는 테스트를 쓴다.** 손으로 쓴 fake `TriageStore`를 쓴다.
   - `TestTriagePage`: 목록에 묶음마다 분류, 위치 수, 이름이나 첫 위치가 보인다. `sel`이 없으면 첫 줄이 골라진 상세가 함께 보인다. 상세에 파일과 줄, 탐지 도구와 규칙, 가린 주변 줄(탐지된 줄 표시), 같은 값의 다른 위치, 이름 입력란(제안한 이름), 허용된 판정 버튼만 있다.
   - `TestTriageCustomerData`: 고객정보 상세에 종류, 파일, 건수, 줄 번호, 형식 미리보기가 있고 주변 줄, 이름 입력란, 원본 보기 단추가 없다.
   - `TestTriageSuggestion`: 과거 판정이 있는 묶음의 상세에 "제안" 표시와 그 판정이 미리 골라져 있고, 목록의 상태는 여전히 미판정이다.
@@ -393,10 +393,10 @@
   - `TestTriageBadInput`: 모르는 `category`, `status`, 숫자가 아닌 `page`, 형식이 틀린 `sel`은 400이다. 없는 묶음의 `sel`은 404다. 없는 프로젝트는 404다.
   - `TestTriageEscapes`: 주변 줄과 파일 경로의 `<script>`가 이스케이프되어 나온다.
   - `TestTriageRequiresLogin`: 세션이 없으면 로그인으로 보낸다.
-- [ ] **Step 2:** 실패를 확인한다.
-- [ ] **Step 3:** handler와 템플릿을 시안대로 쓴다(frontend-design 스킬). 목록의 줄은 `<a href="?...&sel=...">`이고 `hx-get`, `hx-target="#detail"`, `hx-push-url="true"`를 갖는다. `Suggester`의 구현은 `cmd/web`이 조립한다: 과거 판정(`PastDecision`)이 있으면 그것을 쓰고, 없으면 `triage.Default`다. `Suggester`가 오류를 내면 제안 없이 그리고 오류를 한 번 로그에 남긴다.
-- [ ] **Step 4:** 프로젝트 화면에 판정 화면으로 가는 링크와 상태별 건수를 넣는다. 프로젝트 목록에는 시안대로 마지막 스캔(시각과 상태), 미판정 수, 전체 수 열을 넣는다. 이를 위해 `*db.Store`에 `ProjectSummaries(ctx) ([]project.Summary, error)`를 더하고 쿼리 하나로 읽는다.
-- [ ] **Step 5:** `make check`가 통과하는지 확인하고 커밋한다. `feat(web): show the triage list and detail`
+- [x] **Step 2:** 실패를 확인한다.
+- [x] **Step 3:** handler와 템플릿을 시안대로 쓴다(frontend-design 스킬). 목록의 줄은 `<a href="?...&sel=...">`이고 `hx-get`, `hx-target="#detail"`, `hx-push-url="true"`를 갖는다. `Suggester`의 구현은 `cmd/web`이 조립한다: 과거 판정(`PastDecision`)이 있으면 그것을 쓰고, 없으면 `triage.Default`다. `Suggester`가 오류를 내면 제안 없이 그리고 오류를 한 번 로그에 남긴다.
+- [x] **Step 4:** 프로젝트 화면에 판정 화면으로 가는 링크와 상태별 건수를 넣는다. 프로젝트 목록에는 시안대로 마지막 스캔(시각과 상태), 미판정 수, 전체 수 열을 넣는다. 이를 위해 `*db.Store`에 `ProjectSummaries(ctx) ([]project.Summary, error)`를 더하고 쿼리 하나로 읽는다.
+- [x] **Step 5:** `make check`가 통과하는지 확인하고 커밋한다. `feat(web): show the triage list and detail`
 
 ### Task 7: 판정하기, 묶음 옮기기
 
@@ -405,21 +405,21 @@
 
 **Interfaces:**
 - Produces:
-  - `POST /projects/{id}/bundles/{bundle}/verdict` — 양식 값 `verdict`(빈 값은 판정 취소), `hold_reason`, `name`, `note`, `return`(돌아갈 필터와 쪽)
+  - `POST /projects/{id}/bundles/{bundle}/verdict` — 양식 값 `verdict`(`none`은 판정 취소, 값이 없으면 400), `hold_reason`, `name`, `note`, `return`(돌아갈 필터와 쪽)
   - `POST /projects/{id}/customer-data/verdict` — 양식 값 `kind`, `file`, `from`(지금의 판정), `verdict`, `hold_reason`, `note`, `return`
   - `POST /projects/{id}/findings/{finding}/move` — 양식 값 `to`(`new` 또는 묶음 ID), `return`
   - 성공하면 303으로 판정 화면에 돌아간다. 판정한 뒤에는 같은 필터의 다음 줄이 골라지고, 옮긴 뒤에는 원래 묶음(없어졌으면 옮겨 간 묶음)이 골라진다. 실패(400)는 판정 화면을 다시 그리고 상세 위에 사유를 보인다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다.**
+- [x] **Step 1: 실패하는 테스트를 쓴다.**
   - `TestVerdictSaves`: 외부화와 이름을 보내면 `Decide`가 그 묶음 ID, `Decision`, 로그인한 사용자의 `audit.Actor`로 한 번 불리고 303이다.
   - `TestVerdictRejected`: 표 형태. 형식이 틀린 이름, 모르는 `verdict`, 모르는 `hold_reason`은 `Decide`를 부르지 않고 400이다. `Decide`가 `triage.ErrNotAllowed`를 주면 400과 "이 항목에는 고를 수 없는 판정입니다", `db.ErrDuplicate`면 400과 "이미 쓰는 이름입니다"와 보낸 이름이 입력란에 남고, `db.ErrNotFound`면 404다.
   - `TestCustomerDataVerdict`: `CustomerGroup`이 준 묶음 ID 전부로 `Decide`를 한 번 부른다. 무리가 비어 있으면 404다.
   - `TestMove`: `to=new`는 `MoveFinding(…, 0, …)`, `to=17`은 17로 부른다. `ErrNotAllowed`는 400이다.
   - `TestReturnIsLocal`: `return`에 `https://evil.invalid`나 `//evil.invalid`를 넣어도 303의 `Location`이 `/projects/{id}/triage`로 시작한다.
   - `TestWritesNeedPost`: 세 주소의 `GET`은 405다. 다른 출처의 `POST`는 지금의 cross-origin 보호가 막는다.
-- [ ] **Step 2:** 실패를 확인하고 handler를 쓴다. 양식 본문은 `http.MaxBytesReader`로 64KiB에 묶는다.
-- [ ] **Step 3:** 상세 템플릿에 판정 양식, 판정 취소, 구성원마다 "따로 떼기"와 "다른 묶음으로"(같은 지문의 다른 묶음이 있을 때만)를 넣는다. 한 묶음이 설정 파일과 shell에 걸쳐 있으면 이름의 두 표기를 함께 보인다.
-- [ ] **Step 4:** `make check`가 통과하는지 확인하고 커밋한다. `feat(web): record verdicts and move findings between bundles`
+- [x] **Step 2:** 실패를 확인하고 handler를 쓴다. 양식 본문은 `http.MaxBytesReader`로 64KiB에 묶는다.
+- [x] **Step 3:** 상세 템플릿에 판정 양식, 판정 취소, 구성원마다 "따로 떼기"와 "다른 묶음으로"(같은 지문의 다른 묶음이 있을 때만)를 넣는다. 한 묶음이 설정 파일과 shell에 걸쳐 있으면 이름의 두 표기를 함께 보인다.
+- [x] **Step 4:** `make check`가 통과하는지 확인하고 커밋한다. `feat(web): record verdicts and move findings between bundles`
 
 ### Task 8: 원본 보기와 감사 로그
 
@@ -445,8 +445,8 @@
 - Produces (`*db.Store`): `RecordReveal(ctx, projectID project.ID, id triage.BundleID, by audit.Actor) error`, `AuditEvents(ctx, before int64, limit int) ([]audit.Event, error)`(최신순, `before`가 0이면 처음부터)
 - Produces (web): `POST /projects/{id}/bundles/{bundle}/original`(`admin`), `GET /audit?before=`(`admin`, 한 쪽 100줄). web 인터페이스 `Originals { ReadPending(ctx, projectID int64, fingerprint string) (bao.Value, error) }`. web 환경 변수 `BAO_ADDR`, `BAO_ROLE_ID`, `BAO_SECRET_ID_FILE`(필수).
 
-- [ ] **Step 1:** "구현 전에 확인할 사실"의 Task 8 항목을 실행 중인 OpenBao에서 확인한다.
-- [ ] **Step 2: 실패하는 테스트를 쓴다.**
+- [x] **Step 1:** "구현 전에 확인할 사실"의 Task 8 항목을 실행 중인 OpenBao에서 확인한다. 확인 결과: web 정책의 `secret/data/pending/*` 읽기로 worker가 `PutPending`으로 넣은 KV v2 값을 web AppRole이 읽고, 없는 경로는 404로 오며 `ReadPending`이 `ErrNoOriginal`로 돌려준다. web은 이 경로에 쓰지 못한다(403). `openbao-test`에서 `TestIntegration_WebReadsPending`으로 확인했다.
+- [x] **Step 2: 실패하는 테스트를 쓴다.**
   - `bao`: `TestReadPending`은 `PutPending`으로 넣은 값을 그대로 읽고, 없는 지문은 `ErrNoOriginal`, 형식이 틀린 지문은 OpenBao를 부르지 않고 오류다. `TestValueRedacts`는 `%v`, `%s`, `%x`, `%#v`, `slog`, `json.Marshal` 어디에도 값이 나오지 않음을 확인한다.
   - `TestOriginalAdminOnly`: `dev-user`는 403이고 `RecordReveal`도 `ReadPending`도 불리지 않는다.
   - `TestOriginalOrder`: `RecordReveal`이 `ReadPending`보다 먼저 불린다. `RecordReveal`이 실패하면 `ReadPending`이 불리지 않고 500이다.
@@ -455,9 +455,9 @@
   - `TestOriginalNotText`: UTF-8이 아니거나 NUL이 든 값은 "텍스트가 아닌 원본, N바이트"만 보인다.
   - `TestOriginalRefused`: 고객정보 묶음, 구성원 모두 `HasOriginal`이 false인 묶음, 마지막 스캔에 없는 묶음은 404이고 `RecordReveal`이 불리지 않는다.
   - `TestAuditPage`: `admin`에게 시각, 사용자, 동작, 프로젝트, 대상, 내용이 최신순으로 보이고 "더 보기" 링크의 `before`가 마지막 줄의 ID다. `dev-user`는 403이다.
-- [ ] **Step 3:** 실패를 확인하고 구현한다. `original.html`은 조각이고 상세의 원본 자리에 끼워진다(`hx-post`, `hx-target`). htmx가 없으면 판정 화면 전체를 값과 함께 그린다. 값은 `string(v.Reveal())`로 이 handler 안에서만 꺼낸다.
-- [ ] **Step 4:** `cmd/web`이 `bao.New`로 클라이언트를 만들어 넘긴다. `compose.yaml`의 web에 환경 변수 세 개와 `openbao-secrets` 볼륨의 web secret-id(읽기 전용)를 더하고, `depends_on`에 openbao를 넣는다. web이 기동할 때 OpenBao에 닿지 않아도 기동은 되고 원본 보기만 안내를 보인다.
-- [ ] **Step 5:** `AGENTS.md` Security 절 첫 항목에 문장을 더한다.
+- [x] **Step 3:** 실패를 확인하고 구현한다. `original.html`은 조각이고 상세의 원본 자리에 끼워진다(`hx-post`, `hx-target`). htmx가 없으면 판정 화면 전체를 값과 함께 그린다. 값은 `string(v.Reveal())`로 이 handler 안에서만 꺼낸다.
+- [x] **Step 4:** `cmd/web`이 `bao.New`로 클라이언트를 만들어 넘긴다. `compose.yaml`의 web에 환경 변수 세 개와 `openbao-secrets` 볼륨의 web secret-id(읽기 전용)를 더하고, `depends_on`에 openbao를 넣는다. web이 기동할 때 OpenBao에 닿지 않아도 기동은 되고 원본 보기만 안내를 보인다.
+- [x] **Step 5:** `AGENTS.md` Security 절 첫 항목에 문장을 더한다.
 
   ```
   The value itself is written in one place: the response to an `admin`'s
@@ -465,8 +465,8 @@
   keeps no copy, and records the request in the audit trail before reading.
   ```
 
-- [ ] **Step 6:** `make check`와 `make test-integration`이 통과하는지 확인한다.
-- [ ] **Step 7:** `CHANGELOG.md`, `docs/local-run.md`(web의 새 환경 변수), 결정 기록 0028(검토 항목 12, 13)을 쓰고 커밋한다. `feat(web): let an admin reveal an original and show the audit trail`
+- [x] **Step 6:** `make check`와 `make test-integration`이 통과하는지 확인한다.
+- [x] **Step 7:** `CHANGELOG.md`, `docs/local-run.md`(web의 새 환경 변수), 결정 기록 0028(검토 항목 12, 13)을 쓰고 커밋한다. `feat(web): let an admin reveal an original and show the audit trail`
 
 ### Task 9: 스캔 화면 정리와 건너뛴 파일
 
@@ -477,20 +477,20 @@
 **Interfaces:**
 - Produces: `scan.Result`와 `scan.Scan`에 `SkippedFiles []string`(상대 경로, 처음 200개, 경로순), `ScannerErrors map[string]int`(도구 이름별)를 더한다. `scan` 테이블에 `skipped_files text[] NOT NULL DEFAULT '{}'`, `scanner_errors jsonb NOT NULL DEFAULT '{}'`.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다.**
+- [x] **Step 1: 실패하는 테스트를 쓴다.**
   - 러너: 건너뛴 파일이 250개면 `Result.SkippedFiles`가 경로순 200개이고 `Skipped`는 250이다. 경로가 UTF-8이 아니거나 제어 문자가 든 파일은 `SkippedFiles`에 넣지 않는다(`Skipped`에는 센다). 스캐너가 오류 3건을 보고하면 `ScannerErrors["opengrep"]`이 3이다.
   - `db`: `SaveResult` 뒤에 `Scan`이 두 값을 그대로 돌려준다.
   - web `TestScanPage`: 건너뛴 파일 목록이 `<details>` 안에 있고, 250개 중 200개만 저장했으면 "외 50개"가 보인다. 스캐너 오류가 있으면 도구별 건수와 "일부 파일을 끝까지 분석하지 못했습니다"가 보인다. 탐지 표는 없고 분류별 건수와 판정 화면으로 가는 링크가 있다. 프로젝트의 마지막 성공한 스캔이 아니면 링크 대신 "이후 스캔이 있습니다" 안내가 있다. 실패한 스캔에도 요청한 사람과 시각이 보인다.
-- [ ] **Step 2:** 실패를 확인하고 구현한다. 러너가 로그에 쓰려고 이미 모으는 값을 `Result`에 싣는다. 스캔 화면에서 `FindingsByScan`으로 그리던 표를 지우고 `rowsOf`, `secretRow`, `customerGroup` 등 쓰이지 않게 된 코드를 지운다. 건수의 단위는 "항목 N개(위치 M곳)"로 통일한다.
-- [ ] **Step 3:** `make check`와 `make test-integration`이 통과하는지 확인하고 커밋한다. `feat(scan): keep the skipped file names and move the findings to the triage screen`
+- [x] **Step 2:** 실패를 확인하고 구현한다. 러너가 로그에 쓰려고 이미 모으는 값을 `Result`에 싣는다. 스캔 화면에서 `FindingsByScan`으로 그리던 표를 지우고 `rowsOf`, `secretRow`, `customerGroup` 등 쓰이지 않게 된 코드를 지운다. 건수의 단위는 "항목 N개(위치 M곳)"로 통일한다.
+- [x] **Step 3:** `make check`와 `make test-integration`이 통과하는지 확인하고 커밋한다. `feat(scan): keep the skipped file names and move the findings to the triage screen`
 
 ### Task 10: 실제 확인과 문서
 
 **Files:**
 - Modify: `docs/next-steps.md`, `docs/local-run.md`, `CHANGELOG.md`
 
-- [ ] **Step 1:** `docker compose down -v` 뒤 `docker compose up --build`로 새로 띄우고, 계획 3의 예제 소스 프로젝트를 등록해 스캔한다.
-- [ ] **Step 2:** Chromium에서 아래 표를 확인하고 결과를 PR 본문에 적는다.
+- [x] **Step 1:** `docker compose down -v` 뒤 `docker compose up --build`로 새로 띄우고, 계획 3의 예제 소스 프로젝트를 등록해 스캔한다. 확인 표는 기존 볼륨 위에서 이미지를 다시 만들어 띄운 스택으로 했고, 마지막에 `down -v`로 빈 볼륨에서 다시 띄워 등록, 스캔, 원본 보기를 확인했다.
+- [x] **Step 2:** Chromium에서 아래 표를 확인하고 결과를 PR 본문에 적는다. 2026-11-20에 14개 모두 확인했다.
 
   | 번호 | 확인 |
   |---|---|
@@ -509,8 +509,8 @@
   | 13 | 스크립트를 끈 채로 2, 4, 6이 쪽 전체 새로 고침으로 된다 |
   | 14 | 스캔 화면에서 건너뛴 파일 이름이 펼쳐진다 |
 
-- [ ] **Step 3:** `docs/next-steps.md`를 고친다. 표의 계획 4를 완료로 바꾸고, "계획 4에 필요한 계획 3의 남은 일"에서 끝난 것을 지우고, 이 계획이 계획 5로 넘기는 일(오탐의 임시 원본 지우기, 한 파일 안의 같은 값을 따로 이름 붙이기, 호스트·포트·계정의 자동 묶기)을 적는다.
-- [ ] **Step 4:** `superpowers:requesting-code-review`로 브랜치 전체를 검토받고 PR 2를 올린다.
+- [x] **Step 3:** `docs/next-steps.md`를 고친다. 표의 계획 4를 완료로 바꾸고, "계획 4에 필요한 계획 3의 남은 일"에서 끝난 것을 지우고, 이 계획이 계획 5로 넘기는 일(오탐의 임시 원본 지우기, 한 파일 안의 같은 값을 따로 이름 붙이기, 호스트·포트·계정의 자동 묶기)을 적는다.
+- [x] **Step 4:** `superpowers:requesting-code-review`로 브랜치 전체를 검토받고 PR 2를 올린다.
 
 ## 이 계획이 하지 않는 것
 

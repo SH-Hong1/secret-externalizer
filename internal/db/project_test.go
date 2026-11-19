@@ -2,7 +2,6 @@ package db_test
 
 import (
 	"errors"
-	"slices"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -100,35 +99,5 @@ func TestProject_NotFound(t *testing.T) {
 	_, err := s.Project(t.Context(), 424242)
 	if !errors.Is(err, db.ErrNotFound) {
 		t.Errorf("Project(424242) error = %v, want ErrNotFound", err)
-	}
-}
-
-func TestProjects_OrderedByName(t *testing.T) {
-	s := newMigratedStore(t)
-	ctx := t.Context()
-
-	got, err := s.Projects(ctx)
-	if err != nil {
-		t.Fatalf("Projects() on an empty table error = %v", err)
-	}
-	if len(got) != 0 {
-		t.Errorf("Projects() on an empty table = %v, want none", got)
-	}
-
-	for _, name := range []string{"charlie", "alpha", "bravo"} {
-		if _, err := s.CreateProject(ctx, project.Project{Name: name, Path: name, CreatedBy: "fake-subject"}); err != nil {
-			t.Fatalf("CreateProject(%q) error = %v", name, err)
-		}
-	}
-	got, err = s.Projects(ctx)
-	if err != nil {
-		t.Fatalf("Projects() error = %v", err)
-	}
-	var names []string
-	for _, p := range got {
-		names = append(names, p.Name)
-	}
-	if want := []string{"alpha", "bravo", "charlie"}; !slices.Equal(names, want) {
-		t.Errorf("Projects() names = %v, want %v", names, want)
 	}
 }

@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 )
 
@@ -19,10 +22,28 @@ const testClientSecret = "dev-only-cmd-web-test-secret" //nolint:gosec // G101: 
 // testDatabaseURL is an obviously fake database URL.
 const testDatabaseURL = "postgres://se_app:dev-only-cmd-web-test-db@postgres:5432/secret_externalizer" //nolint:gosec // G101: an obviously fake fixture value
 
-// validEnv returns a complete environment that loadConfig accepts. Tests
-// change or remove one variable at a time.
-func validEnv() map[string]string {
+// testSecretID is an obviously fake AppRole secret-id.
+const testSecretID = "dev-only-cmd-web-test-secret-id" //nolint:gosec // G101: an obviously fake fixture value
+
+// writeSecretID writes content to a new file and returns its path.
+func writeSecretID(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "secret-id")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("writing the secret-id file: %v", err)
+	}
+	return path
+}
+
+// validEnv returns a complete environment that loadConfig accepts, with a
+// secret-id file in a temporary folder. Tests change or remove one variable
+// at a time.
+func validEnv(t *testing.T) map[string]string {
+	t.Helper()
 	return map[string]string{
+		"BAO_ADDR":           "http://openbao:8200",
+		"BAO_ROLE_ID":        "se-web",
+		"BAO_SECRET_ID_FILE": writeSecretID(t, testSecretID+"\n"),
 		"WEB_BASE_URL":       "http://localhost:8080",
 		"VALKEY_ADDR":        "valkey:6379",
 		"DATABASE_URL":       testDatabaseURL,
@@ -38,14 +59,16 @@ func getenvFrom(env map[string]string) func(string) string {
 }
 
 func TestLoadConfig(t *testing.T) {
-	got, err := loadConfig(nil, getenvFrom(validEnv()))
+	got, err := loadConfig(nil, getenvFrom(validEnv(t)))
 	if err != nil {
-		t.Fatalf("loadConfig(nil, validEnv()) error = %v", err)
+		t.Fatalf("loadConfig(nil, validEnv(t)) error = %v", err)
 	}
 	want := config{
 		addr:       ":8080",
 		valkeyAddr: "valkey:6379",
 		dsn:        db.DSN(testDatabaseURL),
+		baoAddr:    "http://openbao:8200",
+		baoCreds:   bao.Credentials{RoleID: "se-web", SecretID: testSecretID},
 		oidc: auth.Config{
 			IssuerURL:    "http://localhost:8081/realms/secret-externalizer",
 			DiscoveryURL: "http://keycloak:8080/realms/secret-externalizer",
@@ -56,7 +79,7 @@ func TestLoadConfig(t *testing.T) {
 		},
 	}
 	if diff := cmp.Diff(want, got, cmp.AllowUnexported(config{})); diff != "" {
-		t.Errorf("loadConfig(nil, validEnv()) mismatch (-want +got):\n%s", diff)
+		t.Errorf("loadConfig(nil, validEnv(t)) mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -73,7 +96,7 @@ func TestLoadConfig_Addr(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			env := validEnv()
+			env := validEnv(t)
 			env["WEB_ADDR"] = tt.addr
 			got, err := loadConfig(nil, getenvFrom(env))
 			if tt.wantErr {
@@ -100,9 +123,12 @@ func TestLoadConfig_MissingRequired(t *testing.T) {
 		"OIDC_ISSUER_URL",
 		"OIDC_CLIENT_ID",
 		"OIDC_CLIENT_SECRET",
+		"BAO_ADDR",
+		"BAO_ROLE_ID",
+		"BAO_SECRET_ID_FILE",
 	} {
 		t.Run(name, func(t *testing.T) {
-			env := validEnv()
+			env := validEnv(t)
 			delete(env, name)
 			_, err := loadConfig(nil, getenvFrom(env))
 			if err == nil {
@@ -116,7 +142,7 @@ func TestLoadConfig_MissingRequired(t *testing.T) {
 }
 
 func TestLoadConfig_DiscoveryURLIsOptional(t *testing.T) {
-	env := validEnv()
+	env := validEnv(t)
 	delete(env, "OIDC_DISCOVERY_URL")
 	got, err := loadConfig(nil, getenvFrom(env))
 	if err != nil {
@@ -128,7 +154,7 @@ func TestLoadConfig_DiscoveryURLIsOptional(t *testing.T) {
 }
 
 func TestLoadConfig_DerivedURLs(t *testing.T) {
-	env := validEnv()
+	env := validEnv(t)
 	env["WEB_BASE_URL"] = "http://localhost:8080/"
 	got, err := loadConfig(nil, getenvFrom(env))
 	if err != nil {
@@ -156,7 +182,7 @@ func TestLoadConfig_BadBaseURL(t *testing.T) {
 		"http://localhost:8080?",
 	} {
 		t.Run(base, func(t *testing.T) {
-			env := validEnv()
+			env := validEnv(t)
 			env["WEB_BASE_URL"] = base
 			if _, err := loadConfig(nil, getenvFrom(env)); err == nil {
 				t.Errorf("loadConfig() with WEB_BASE_URL=%q error = nil, want an error", base)
@@ -166,7 +192,7 @@ func TestLoadConfig_BadBaseURL(t *testing.T) {
 }
 
 func TestLoadConfig_BadValkeyAddr(t *testing.T) {
-	env := validEnv()
+	env := validEnv(t)
 	env["VALKEY_ADDR"] = "valkey"
 	if _, err := loadConfig(nil, getenvFrom(env)); err == nil {
 		t.Errorf("loadConfig() with VALKEY_ADDR=%q error = nil, want an error", env["VALKEY_ADDR"])
@@ -174,9 +200,9 @@ func TestLoadConfig_BadValkeyAddr(t *testing.T) {
 }
 
 func TestConfig_Redacted(t *testing.T) {
-	cfg, err := loadConfig(nil, getenvFrom(validEnv()))
+	cfg, err := loadConfig(nil, getenvFrom(validEnv(t)))
 	if err != nil {
-		t.Fatalf("loadConfig(nil, validEnv()) error = %v", err)
+		t.Fatalf("loadConfig(nil, validEnv(t)) error = %v", err)
 	}
 	var buf bytes.Buffer
 	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "config", cfg)
@@ -189,6 +215,12 @@ func TestConfig_Redacted(t *testing.T) {
 		if strings.Contains(out, testClientSecret) {
 			t.Errorf("output %q of config contains the client secret", out)
 		}
+		if strings.Contains(out, testSecretID) {
+			t.Errorf("output %q of config contains the secret-id", out)
+		}
+	}
+	if want := "se-web"; !strings.Contains(fmt.Sprintf("%v", cfg), want) {
+		t.Errorf("Sprintf(%%v, config) = %q, want the role-id %q", fmt.Sprintf("%v", cfg), want)
 	}
 	if want := "secret-externalizer-web"; !strings.Contains(fmt.Sprintf("%v", cfg), want) {
 		t.Errorf("Sprintf(%%v, config) = %q, want the client ID %q", fmt.Sprintf("%v", cfg), want)
@@ -196,7 +228,7 @@ func TestConfig_Redacted(t *testing.T) {
 }
 
 func TestLoadConfig_ErrorHidesClientSecret(t *testing.T) {
-	env := validEnv()
+	env := validEnv(t)
 	env["WEB_BASE_URL"] = "localhost"
 	_, err := loadConfig(nil, getenvFrom(env))
 	if err == nil {
@@ -208,7 +240,7 @@ func TestLoadConfig_ErrorHidesClientSecret(t *testing.T) {
 }
 
 func TestLoadConfig_RequiresDatabaseURL(t *testing.T) {
-	env := validEnv()
+	env := validEnv(t)
 	delete(env, "DATABASE_URL")
 	_, err := loadConfig(nil, getenvFrom(env))
 	if err == nil {
@@ -220,9 +252,9 @@ func TestLoadConfig_RequiresDatabaseURL(t *testing.T) {
 }
 
 func TestConfig_RedactsDatabaseURL(t *testing.T) {
-	cfg, err := loadConfig(nil, getenvFrom(validEnv()))
+	cfg, err := loadConfig(nil, getenvFrom(validEnv(t)))
 	if err != nil {
-		t.Fatalf("loadConfig(nil, validEnv()) error = %v", err)
+		t.Fatalf("loadConfig(nil, validEnv(t)) error = %v", err)
 	}
 	var buf bytes.Buffer
 	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "config", cfg)
@@ -234,5 +266,28 @@ func TestConfig_RedactsDatabaseURL(t *testing.T) {
 		if strings.Contains(out, "dev-only-cmd-web-test-db") {
 			t.Errorf("output %q of config contains the database password", out)
 		}
+	}
+}
+
+func TestLoadConfig_SecretIDFile(t *testing.T) {
+	tests := []struct {
+		name string
+		path func(t *testing.T) string
+	}{
+		{"missing", func(t *testing.T) string { return filepath.Join(t.TempDir(), "absent") }},
+		{"empty", func(t *testing.T) string { return writeSecretID(t, " \n") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv(t)
+			env["BAO_SECRET_ID_FILE"] = tt.path(t)
+			_, err := loadConfig(nil, getenvFrom(env))
+			if err == nil {
+				t.Fatalf("loadConfig() with a %s secret-id file error = nil, want an error", tt.name)
+			}
+			if !strings.Contains(err.Error(), "BAO_SECRET_ID_FILE") {
+				t.Errorf("loadConfig() with a %s secret-id file error = %q, want it to name BAO_SECRET_ID_FILE", tt.name, err)
+			}
+		})
 	}
 }
