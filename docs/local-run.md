@@ -31,7 +31,12 @@ docker compose up --build -d
 - macOS에서는 Docker가 공유하는 경로(보통 홈 폴더 아래)여야 한다. `/tmp` 같은 경로는 컨테이너에서 빈 폴더로 보인다.
 - 프로젝트를 등록할 때의 경로는 `SE_WORKSPACE` 기준의 상대 경로다. 예를 들어 `$HOME/work/shop`을 스캔하려면 `shop`으로 등록한다.
 - worker는 uid 65532로 실행된다. Linux 호스트의 Docker(네이티브)에서는 bind mount가 호스트 소유권을 그대로 유지하므로, 스캔할 파일과 폴더를 uid 65532가 읽을 수 있어야 한다. 읽을 수 없는 파일과 폴더(예: `0700` 폴더, `0600` 개인키나 `.env`)는 오류 없이 건너뛰고 건너뛴 수를 센다. macOS의 colima나 Docker Desktop에서는 소유권이 바뀌어 보이므로 이 문제가 생기지 않는다.
-- worker는 큐에 쌓인 스캔을 하나씩 실행한다. 지금은 일반 파일 수를 세어 스캔 화면에 보여 줄 뿐이다. 실패하면 화면에는 정해진 사유만 보이고 자세한 오류는 `docker compose logs worker`에 남는다.
+- worker는 큐에 쌓인 스캔을 하나씩 실행한다. 파일마다 UTF-8이나 EUC-KR 텍스트로 읽고, betterleaks, opengrep, 키 파일 탐지기를 돌려 찾은 값을 항목으로 저장한다. postgres에는 값의 지문, 가린 미리보기, 위치, 가린 주변 줄만 남고, 비밀 값의 원본은 OpenBao에 보관한다. 고객정보는 원본을 보관하지 않고 주변 줄도 남기지 않는다. 실패하면 화면에는 정해진 사유만 보이고 자세한 오류는 `docker compose logs worker`에 남는다.
+- 스캔 하나는 30분을 넘기면 `scan took longer than the time limit`으로 실패한다. 20MiB가 넘는 파일, 바이너리 파일, UTF-8도 EUC-KR도 아닌 파일은 텍스트로 스캔하지 않고 건너뛴 수에 센다. 키 저장소(`.jks`, `.p12` 등)는 바이너리라도 키 파일 항목이 된다.
+- 프로젝트 폴더 맨 위에 `.gitleaksignore`나 `.betterleaksignore`가 있으면 스캔하지 않고 `project has a scanner ignore file (.gitleaksignore or .betterleaksignore); remove it and scan again`으로 실패한다. betterleaks가 이 파일에 적힌 결과를 숨기고, 이를 끄는 옵션이 없기 때문이다. 작업 폴더에서 파일을 지우거나 이름을 바꾼 뒤 다시 스캔한다. 하위 폴더에 있는 같은 이름의 파일은 betterleaks가 읽지 않으므로 상관없다.
+- EUC-KR 파일은 스캔하는 동안 UTF-8 사본을 worker의 `/tmp`(tmpfs, 1GiB)에 두고 스캔이 끝나면 지운다. EUC-KR 파일이 1GiB 가까이 되는 프로젝트를 스캔하려면 `compose.yaml`에서 크기를 늘린다. tmpfs는 호스트 메모리를 쓴다.
+- OpenBao에 닿지 않으면 스캔은 `the secret store could not be reached; see the worker log`로 실패하고 아무것도 저장하지 않는다.
+- 커밋 해시는 프로젝트 폴더가 git 저장소 안에 있을 때만 기록한다. 저장소가 아니거나 커밋이 없으면 비워 둔다.
 - worker가 스캔 중에 멈추면 임대(2분)가 끝난 뒤 다시 실행한다. 세 번 멈추면 스캔이 `failed`로 끝난다.
 
 ## OpenBao
@@ -111,8 +116,15 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 | `BAO_ADDR` | 예 | OpenBao 주소. compose에서는 `http://openbao:8200` |
 | `BAO_ROLE_ID` | 예 | AppRole role-id. compose에서는 `se-worker` |
 | `BAO_SECRET_ID_FILE` | 예 | AppRole secret-id가 든 파일. 앞뒤 공백은 뗀다. compose에서는 `openbao-secrets` 볼륨의 `worker` 폴더만 `/run/secrets/openbao`에 읽기 전용으로 마운트하고 `/run/secrets/openbao/secret-id`를 쓴다. secret-id는 로그와 오류 메시지에 남지 않는다 |
+| `BETTERLEAKS_BIN` | 예 | betterleaks 실행 파일의 절대 경로. compose에서는 `/usr/local/bin/betterleaks` |
+| `OPENGREP_BIN` | 예 | opengrep 실행 파일의 절대 경로. compose에서는 `/usr/local/bin/opengrep` |
+| `RULES_DIR` | 예 | 탐지 규칙 폴더의 절대 경로. `betterleaks.toml` 파일과 `opengrep` 폴더가 있어야 한다. compose에서는 `/rules` |
+| `SCAN_TEMP_DIR` | 예 | 스캐너의 HOME(`home`)과 TMPDIR(`tmp`), 스캔마다의 EUC-KR 사본(`copies/<스캔 ID>`)을 두는 폴더의 절대 경로. 없으면 worker가 만든다. tmpfs 위에 둔다. compose에서는 `/tmp/scan` |
+| `GIT_BIN` | | 커밋 해시를 읽는 git 실행 파일. 비우면 `/usr/bin/git`이 있을 때 그것을 쓰고, 없으면 커밋 해시를 기록하지 않는다 |
 
-확인 간격(2초), 임대(2분), 연장 간격(30초)은 환경 변수로 바꾸지 않는다.
+실행 파일이나 규칙 폴더가 없으면 worker가 기동하지 않는다. 기동할 때 규칙 버전을 계산해 로그에 남긴다.
+
+확인 간격(2초), 임대(2분), 연장 간격(30초), 스캔 제한 시간(30분), 파일 크기 한도(20MiB)는 환경 변수로 바꾸지 않는다.
 
 ## Safari 제약
 

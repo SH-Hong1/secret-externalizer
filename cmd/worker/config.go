@@ -24,15 +24,31 @@ type config struct {
 	heartbeat time.Duration
 	baoAddr   string
 	baoCreds  bao.Credentials
+	// betterleaksBin and opengrepBin are the scanner executables, and
+	// rulesDir holds betterleaks.toml and the opengrep rule folder.
+	betterleaksBin string
+	opengrepBin    string
+	rulesDir       string
+	// gitBin is the git executable, or empty when there is none and commit
+	// hashes are not read.
+	gitBin string
+	// scanTempDir is the folder under which the worker keeps the scanners'
+	// home and temporary folders and the per-scan copies of EUC-KR files.
+	scanTempDir string
 }
+
+// defaultGitBin is where the worker image has git.
+const defaultGitBin = "/usr/bin/git"
 
 // String returns every setting with the database URL and the secret-id
 // redacted.
 func (c config) String() string {
 	// c.dsn and the secret-id are arguments of their own, so fmt calls their
 	// Format methods.
-	return fmt.Sprintf("{database_url:%v workspace_root:%s poll:%s lease:%s heartbeat:%s bao_addr:%s bao_role_id:%s bao_secret_id:%v}",
-		c.dsn, c.root, c.poll, c.lease, c.heartbeat, c.baoAddr, c.baoCreds.RoleID, c.baoCreds.SecretID)
+	return fmt.Sprintf("{database_url:%v workspace_root:%s poll:%s lease:%s heartbeat:%s bao_addr:%s bao_role_id:%s bao_secret_id:%v"+
+		" betterleaks_bin:%s opengrep_bin:%s rules_dir:%s git_bin:%s scan_temp_dir:%s}",
+		c.dsn, c.root, c.poll, c.lease, c.heartbeat, c.baoAddr, c.baoCreds.RoleID, c.baoCreds.SecretID,
+		c.betterleaksBin, c.opengrepBin, c.rulesDir, c.gitBin, c.scanTempDir)
 }
 
 // Format prints the form String returns for every fmt verb, including %#v,
@@ -53,6 +69,11 @@ func (c config) LogValue() slog.Value {
 		slog.String("bao_addr", c.baoAddr),
 		slog.String("bao_role_id", c.baoCreds.RoleID),
 		slog.Any("bao_secret_id", c.baoCreds.SecretID),
+		slog.String("betterleaks_bin", c.betterleaksBin),
+		slog.String("opengrep_bin", c.opengrepBin),
+		slog.String("rules_dir", c.rulesDir),
+		slog.String("git_bin", c.gitBin),
+		slog.String("scan_temp_dir", c.scanTempDir),
 	)
 }
 
@@ -73,6 +94,10 @@ func loadConfig(getenv func(string) string) (config, error) {
 	baoAddr := required("BAO_ADDR")
 	roleID := required("BAO_ROLE_ID")
 	secretIDFile := required("BAO_SECRET_ID_FILE")
+	betterleaksBin := required("BETTERLEAKS_BIN")
+	opengrepBin := required("OPENGREP_BIN")
+	rulesDir := required("RULES_DIR")
+	scanTempDir := required("SCAN_TEMP_DIR")
 	if len(missing) > 0 {
 		return config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
@@ -90,6 +115,27 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if err != nil {
 		return config{}, fmt.Errorf("reading BAO_SECRET_ID_FILE: %w", err)
 	}
+	if err := checkExecutable(betterleaksBin); err != nil {
+		return config{}, fmt.Errorf("checking BETTERLEAKS_BIN: %w", err)
+	}
+	if err := checkExecutable(opengrepBin); err != nil {
+		return config{}, fmt.Errorf("checking OPENGREP_BIN: %w", err)
+	}
+	gitBin := getenv("GIT_BIN")
+	switch {
+	case gitBin != "":
+		if err := checkExecutable(gitBin); err != nil {
+			return config{}, fmt.Errorf("checking GIT_BIN: %w", err)
+		}
+	case checkExecutable(defaultGitBin) == nil:
+		gitBin = defaultGitBin
+	}
+	if err := checkRulesDir(rulesDir); err != nil {
+		return config{}, fmt.Errorf("checking RULES_DIR: %w", err)
+	}
+	if !filepath.IsAbs(scanTempDir) {
+		return config{}, fmt.Errorf("checking SCAN_TEMP_DIR: %q is not an absolute path", scanTempDir)
+	}
 	return config{
 		dsn:       dsn,
 		root:      root,
@@ -98,7 +144,53 @@ func loadConfig(getenv func(string) string) (config, error) {
 		heartbeat: 30 * time.Second,
 		baoAddr:   baoAddr,
 		baoCreds:  bao.Credentials{RoleID: roleID, SecretID: secretID},
+
+		betterleaksBin: betterleaksBin,
+		opengrepBin:    opengrepBin,
+		rulesDir:       rulesDir,
+		gitBin:         gitBin,
+		scanTempDir:    scanTempDir,
 	}, nil
+}
+
+// checkExecutable fails unless p is an absolute path to a regular file that
+// someone may execute.
+func checkExecutable(p string) error {
+	if !filepath.IsAbs(p) {
+		return fmt.Errorf("%q is not an absolute path", p)
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return fmt.Errorf("%q is not an executable file", p)
+	}
+	return nil
+}
+
+// checkRulesDir fails unless dir is an absolute path to a folder that holds
+// the betterleaks rule file betterleaks.toml and the opengrep rule folder
+// opengrep.
+func checkRulesDir(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("%q is not an absolute path", dir)
+	}
+	toml, err := os.Stat(filepath.Join(dir, "betterleaks.toml"))
+	if err != nil {
+		return err
+	}
+	if !toml.Mode().IsRegular() {
+		return fmt.Errorf("%q holds no betterleaks.toml file", dir)
+	}
+	og, err := os.Stat(filepath.Join(dir, "opengrep"))
+	if err != nil {
+		return err
+	}
+	if !og.IsDir() {
+		return fmt.Errorf("%q holds no opengrep folder", dir)
+	}
+	return nil
 }
 
 // readSecretID reads an AppRole secret-id from the file at path, without

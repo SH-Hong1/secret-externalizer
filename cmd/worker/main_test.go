@@ -3,23 +3,117 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"io"
+	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 )
 
 func noEnv(string) string { return "" }
 
+// fakeValue is the value fakeScanner finds. It is not a real secret.
+const fakeValue = "dev-only-fake-worker-value"
+
+// fingerprintOf returns the fingerprint fakeSecrets gives v.
+func fingerprintOf(v string) string {
+	sum := sha256.Sum256([]byte(v))
+	return hex.EncodeToString(sum[:])
+}
+
+// fakeSecrets stands in for OpenBao: it fingerprints values with SHA-256
+// and keeps pending originals in memory.
+type fakeSecrets struct {
+	mu      sync.Mutex
+	pending map[string][]byte
+}
+
+func (*fakeSecrets) Fingerprints(_ context.Context, values [][]byte) ([]string, error) {
+	out := make([]string, len(values))
+	for i, v := range values {
+		out[i] = fingerprintOf(string(v))
+	}
+	return out, nil
+}
+
+func (f *fakeSecrets) PutPending(_ context.Context, _ int64, fingerprint string, value []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.pending[fingerprint] = bytes.Clone(value)
+	return nil
+}
+
+func (f *fakeSecrets) ListPending(context.Context, int64) ([]string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Collect(maps.Keys(f.pending)), nil
+}
+
+func (f *fakeSecrets) DeletePending(_ context.Context, _ int64, fingerprint string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.pending, fingerprint)
+	return nil
+}
+
+func (f *fakeSecrets) get(fingerprint string) []byte {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.pending[fingerprint]
+}
+
+// fakeScanner reports, by byte offsets, every place fakeValue appears in the
+// files of the scanned folder.
+type fakeScanner struct{}
+
+func (fakeScanner) Name() string { return "fake" }
+
+func (fakeScanner) Version(context.Context) (string, error) { return "fake-1", nil }
+
+func (fakeScanner) Scan(_ context.Context, dir string) ([]scan.Raw, error) {
+	var raws []scan.Raw
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		data, err := os.ReadFile(p) //nolint:gosec // G304: a test file under the test's own folder
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(dir, p)
+		if err != nil {
+			return err
+		}
+		if i := bytes.Index(data, []byte(fakeValue)); i >= 0 {
+			raws = append(raws, scan.Raw{
+				Tool: "fake", Rule: "fake-value", Category: finding.CategoryOther, Kind: finding.KindOther,
+				File: filepath.ToSlash(rel), Offset: i, EndOffset: i + len(fakeValue),
+			})
+		}
+		return nil
+	})
+	return raws, err
+}
+
+// writeFile writes a file with fake content at name, making its folder.
 func writeFile(t *testing.T, name string) {
 	t.Helper()
+	if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
+		t.Fatalf("MkdirAll(%q) error = %v", filepath.Dir(name), err)
+	}
 	if err := os.WriteFile(name, []byte("fake content"), 0o600); err != nil {
 		t.Fatalf("WriteFile(%q) error = %v", name, err)
 	}
@@ -94,8 +188,11 @@ func TestRun_RunsQueuedScanUntilCancelled(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o700); err != nil {
 		t.Fatalf("MkdirAll error = %v", err)
 	}
-	for _, f := range []string{"a.txt", "b.txt", "sub/c.txt"} {
+	for _, f := range []string{"a.txt", "b.txt"} {
 		writeFile(t, filepath.Join(dir, f))
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "c.txt"), []byte("password="+fakeValue+"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
 	}
 
 	store, err := db.Open(ctx, db.DSN(databaseURL))
@@ -125,9 +222,13 @@ func TestRun_RunsQueuedScanUntilCancelled(t *testing.T) {
 	}
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
+	secrets := &fakeSecrets{pending: map[string][]byte{}}
+	deps := func(config) (scanDeps, error) { //nolint:unparam // the signature is the one runWith takes
+		return scanDeps{fingerprints: secrets, originals: secrets, scanners: []scan.Scanner{fakeScanner{}}}, nil
+	}
 	done := make(chan error, 1)
 	go func() {
-		done <- runWith(runCtx, []string{"worker"}, getenv, io.Discard, io.Discard, tune)
+		done <- runWith(runCtx, []string{"worker"}, getenv, io.Discard, io.Discard, tune, deps)
 	}()
 
 	ticker := time.NewTicker(20 * time.Millisecond)
@@ -149,9 +250,19 @@ func TestRun_RunsQueuedScanUntilCancelled(t *testing.T) {
 		case <-ticker.C:
 		}
 	}
-	if got.Status != scan.StatusSucceeded || got.Files != 3 {
-		t.Errorf("Scan(%d) = status %q, files %d, failure %q; want succeeded with 3 files",
-			scanID, got.Status, got.Files, got.FailureReason)
+	if got.Status != scan.StatusSucceeded || got.Files != 3 || got.Findings != 1 {
+		t.Errorf("Scan(%d) = status %q, files %d, findings %d, failure %q; want succeeded with 3 files and 1 finding",
+			scanID, got.Status, got.Files, got.Findings, got.FailureReason)
+	}
+	findings, err := store.FindingsByScan(ctx, scanID)
+	if err != nil {
+		t.Fatalf("FindingsByScan(%d) error = %v", scanID, err)
+	}
+	if len(findings) != 1 || findings[0].File != "sub/c.txt" || findings[0].Fingerprint != fingerprintOf(fakeValue) {
+		t.Errorf("FindingsByScan(%d) = %+v, want the fake value in sub/c.txt", scanID, findings)
+	}
+	if v := secrets.get(fingerprintOf(fakeValue)); string(v) != fakeValue {
+		t.Errorf("pending original = %q, want the fake value", v)
 	}
 
 	stop()

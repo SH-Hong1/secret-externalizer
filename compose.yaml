@@ -224,6 +224,13 @@ services:
       BAO_ADDR: http://openbao:8200
       BAO_ROLE_ID: se-worker
       BAO_SECRET_ID_FILE: /run/secrets/openbao/secret-id
+      # The scanners and rules the worker image holds.
+      BETTERLEAKS_BIN: /usr/local/bin/betterleaks
+      OPENGREP_BIN: /usr/local/bin/opengrep
+      RULES_DIR: /rules
+      # On the /tmp tmpfs: the scanners' home and temporary folders and the
+      # UTF-8 copies of a scan's EUC-KR files, removed when the scan ends.
+      SCAN_TEMP_DIR: /tmp/scan
     volumes:
       # The workspace is read-only: scans read it and never change it.
       - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace:ro
@@ -238,7 +245,9 @@ services:
     user: "65532:65532"
     read_only: true
     tmpfs:
-      - /tmp
+      # Holds the UTF-8 copies of the EUC-KR files of the scan that is
+      # running, so it must fit those; it counts against the host's memory.
+      - /tmp:size=1g
     cap_drop:
       - ALL
     security_opt:
