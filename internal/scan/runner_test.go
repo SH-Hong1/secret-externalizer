@@ -880,9 +880,11 @@ func TestHandle_ContextMasksUnplacedValues(t *testing.T) {
 		if got.Dropped != 1 || len(got.Findings) != 1 {
 			t.Fatalf("Handle() = %+v, want the password found and the misplaced value dropped", got)
 		}
-		want := []string{"a.password=****", "b.secret=****"}
-		if diff := cmp.Diff(want, got.Findings[0].Locations[0].Context); diff != "" {
-			t.Errorf("surrounding lines of the password (-want +got):\n%s", diff)
+		if l := got.Findings[0].Locations[0]; l.Context != nil {
+			t.Errorf("surrounding lines of the password = %q, want none in a file with a result that cannot be placed", l.Context)
+		}
+		if dump := fmt.Sprintf("%+v", got); strings.Contains(dump, other) {
+			t.Errorf("Handle() saved a result that holds %q:\n%s", other, dump)
 		}
 	})
 	t.Run("opengrep range off a character boundary", func(t *testing.T) {
@@ -903,9 +905,11 @@ func TestHandle_ContextMasksUnplacedValues(t *testing.T) {
 		if got.Dropped != 1 || len(got.Findings) != 1 {
 			t.Fatalf("Handle() = %+v, want the password found and the misplaced range dropped", got)
 		}
-		want := []string{"a.password=****", "b=****"}
-		if diff := cmp.Diff(want, got.Findings[0].Locations[0].Context); diff != "" {
-			t.Errorf("surrounding lines of the password (-want +got):\n%s", diff)
+		if l := got.Findings[0].Locations[0]; l.Context != nil {
+			t.Errorf("surrounding lines of the password = %q, want none in a file with a result that cannot be placed", l.Context)
+		}
+		if dump := fmt.Sprintf("%+v", got); strings.Contains(dump, "비밀값") {
+			t.Errorf("Handle() saved a result that holds the misplaced range:\n%s", dump)
 		}
 	})
 	t.Run("whole-file result in a text file", func(t *testing.T) {
@@ -955,6 +959,37 @@ func TestHandle_UnlocatableValueDropsContext(t *testing.T) {
 	}
 	if l := got.Findings[0].Locations[0]; l.Context != nil || l.ContextFirstLine != 0 {
 		t.Errorf("Handle() password location = %+v, want no surrounding lines", l)
+	}
+	if dump := fmt.Sprintf("%+v", got); strings.Contains(dump, encodedBlob) {
+		t.Errorf("Handle() saved a result that holds the encoded text:\n%s", dump)
+	}
+}
+
+func TestHandle_MisplacedValueAlsoInPlainText(t *testing.T) {
+	// The value is reported at line 2, where only encodedBlob is; it also
+	// appears in plain text on line 3, where it is placed.
+	e := newEnv(t, map[string]string{propsFile: "a.user=dev\nblob=" + encodedBlob + "\njdbc.password=" + password + "\nx=1\n"})
+	misplaced := &needleScanner{
+		tool: "betterleaks", rule: "generic-password", category: finding.CategoryOther, kind: finding.KindOther, needle: "no such value",
+		extra: []scan.Raw{{
+			Tool: "betterleaks", Rule: "generic-password", Category: finding.CategoryOther, Kind: finding.KindOther,
+			File: propsFile, Offset: -1, EndOffset: -1, Line: 2, ByteCol: 6, Value: scan.Value(password),
+		}},
+	}
+	user := &needleScanner{tool: "opengrep", rule: "properties-user", category: finding.CategoryStorage, kind: finding.KindAccount, needle: "dev\n"}
+	if err := e.handle(t.Context(), passwordOG(), user, misplaced); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t)
+	if got.Dropped != 1 || len(got.Findings) != 2 {
+		t.Fatalf("Handle() = %+v, want two findings and the misplaced value dropped", got)
+	}
+	for _, f := range got.Findings {
+		for _, l := range f.Locations {
+			if l.Context != nil || l.ContextFirstLine != 0 {
+				t.Errorf("%s location = %+v, want no surrounding lines", f.Kind, l)
+			}
+		}
 	}
 	if dump := fmt.Sprintf("%+v", got); strings.Contains(dump, encodedBlob) {
 		t.Errorf("Handle() saved a result that holds the encoded text:\n%s", dump)

@@ -38,16 +38,17 @@ type placedFile struct {
 	// hash is the SHA-256 of the file's bytes on disk.
 	hash  string
 	spots []spot
-	// unplaced holds the ranges of the values of results that could not be
-	// placed, so that surrounding lines mask them too.
-	unplaced []finding.Span
 	// noContext is true when no surrounding lines may be shown for any
 	// finding in the file: the file is text and a scanner reported the whole
-	// file as a key, so every line of it is part of a value, or a result
-	// could not be placed and where its value is cannot be told (betterleaks
-	// reports a value it decoded from base64, for example, which the text
-	// holds only in encoded form).
+	// file as a key, so every line of it is part of a value, or a result in
+	// the file could not be placed, so the place of its value is not known
+	// (betterleaks reports a value it decoded from base64, for example,
+	// which the text holds only in encoded form). It is only ever set.
 	noContext bool
+	// unplaced holds the ranges where the values of results that could not
+	// be placed may be. They are masked as well, in case surrounding lines
+	// are ever shown for such a file.
+	unplaced []finding.Span
 }
 
 // locate re-reads every file that raws refer to and places each result in
@@ -93,7 +94,7 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 	var original []byte
 	for _, raw := range raws {
 		if raw.wholeFile() {
-			pf.noContext = src.text
+			pf.noContext = pf.noContext || src.text
 			if original == nil {
 				data, hash, err := readOriginal(dir, rel, maxBytes)
 				if err != nil || (src.text && hash != src.hash) {
@@ -107,13 +108,11 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 		}
 		span, ok := place(pf.file, bom, raw)
 		if !ok {
-			masks := unplacedSpans(pf.file.Text, bom, raw)
-			if len(masks) == 0 {
-				// Where the value is cannot be told, so no line of the file
-				// is known to be free of it.
-				pf.noContext = true
-			}
-			pf.unplaced = append(pf.unplaced, masks...)
+			// Where the value is, or in what form, cannot be told, so no
+			// line of the file is known to be free of it. The masks are a
+			// second layer.
+			pf.noContext = true
+			pf.unplaced = append(pf.unplaced, unplacedSpans(pf.file.Text, bom, raw)...)
 			dropped++
 			continue
 		}

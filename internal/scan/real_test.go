@@ -114,8 +114,12 @@ func TestHandle_RealScannersEncodedValue(t *testing.T) {
 		t.Fatalf("Abs(rules) error = %v", err)
 	}
 	blob := base64.StdEncoding.EncodeToString([]byte(`password = "dev-only-fake-encoded-pw-7"`))
+	// The same password in plain text and base64-encoded: the decoded value
+	// is found in the text, but not at the place betterleaks reports.
+	mixedBlob := base64.StdEncoding.EncodeToString([]byte(`password = "` + password + `"`))
 	e := newEnv(t, map[string]string{
-		"conf/app.properties": "a.user=dev\nblob=" + blob + "\njdbc.password=" + password + "\n",
+		"conf/app.properties":   "a.user=dev\nblob=" + blob + "\njdbc.password=" + password + "\n",
+		"conf/mixed.properties": "a.user=dev\nblob=" + mixedBlob + "\njdbc.password=" + password + "\nx=1\n",
 	})
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 	bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
@@ -125,8 +129,8 @@ func TestHandle_RealScannersEncodedValue(t *testing.T) {
 		t.Fatalf("Handle() error = %v", err)
 	}
 	got := e.result(t)
-	if got.Dropped != 1 || len(got.Findings) == 0 {
-		t.Fatalf("Handle() = %+v, want the password found and the decoded value dropped", got)
+	if got.Dropped != 2 || len(got.Findings) == 0 {
+		t.Fatalf("Handle() = %+v, want the passwords found and both decoded values dropped", got)
 	}
 	for _, f := range got.Findings {
 		for _, l := range f.Locations {
@@ -140,7 +144,7 @@ func TestHandle_RealScannersEncodedValue(t *testing.T) {
 		t.Fatalf("json.Marshal(result) error = %v", err)
 	}
 	for _, dump := range []string{fmt.Sprintf("%+v", got), string(encoded)} {
-		if v := containsAny(dump, blob, "dev-only-fake-encoded-pw-7"); v != "" {
+		if v := containsAny(dump, blob, mixedBlob, "dev-only-fake-encoded-pw-7"); v != "" {
 			t.Errorf("Handle() saved a result that holds %q:\n%s", v, dump)
 		}
 	}
