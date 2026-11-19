@@ -255,7 +255,9 @@ Sources: Effective Go; Go Code Review Comments; Practical Go.
 - `gosec` rule G204 is turned off in `.golangci.yml`. It reports every
   `exec.CommandContext` call whose arguments are not constants, which is the
   form the Security section requires.
-- Tool versions are pinned in `Makefile`. Change them there and nowhere else.
+- Tool versions are pinned in `Makefile`, and the scanner versions and their
+  checksums in `deploy/worker/scanners.lock`. Change them there and nowhere
+  else.
 - Add a dependency only when the standard library cannot reasonably do the
   job, and record the reason in `docs/decisions/`.
 

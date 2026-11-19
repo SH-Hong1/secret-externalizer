@@ -1,0 +1,9 @@
+# A rule for the test that runs the real betterleaks executable.
+title = "test rules"
+
+[[rules]]
+id = "test-password-assign"
+description = "a password assigned in source"
+regex = '''(?i)password\s*=\s*"([a-z0-9-]{8,})"'''
+secretGroup = 1
+tags = ["category:storage-credential", "kind:password"]

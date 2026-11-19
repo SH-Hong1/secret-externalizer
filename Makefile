@@ -2,7 +2,7 @@ GOFUMPT_VERSION := v0.12.0
 GOLANGCI_LINT_VERSION := v2.15.0
 BIN := $(CURDIR)/bin
 
-.PHONY: tools fmt lint vet test test-integration hooks check
+.PHONY: tools scanners fmt lint vet test test-integration hooks scanners-test check
 
 tools:
 	GOBIN=$(BIN) go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
@@ -10,6 +10,10 @@ tools:
 
 $(BIN)/gofumpt $(BIN)/golangci-lint:
 	$(MAKE) tools
+
+# The scanner versions and checksums are pinned in deploy/worker/scanners.lock.
+scanners:
+	sh deploy/worker/fetch-scanners.sh "$$(go env GOOS)" "$$(go env GOARCH)" $(BIN)
 
 fmt: $(BIN)/gofumpt $(BIN)/golangci-lint
 	$(BIN)/golangci-lint fmt ./...
@@ -32,4 +36,7 @@ test-integration:
 hooks: $(BIN)/gofumpt $(BIN)/golangci-lint
 	bash .claude/hooks/hooks_test.sh
 
-check: lint vet test hooks
+scanners-test:
+	sh deploy/worker/fetch-scanners_test.sh
+
+check: lint vet test hooks scanners-test

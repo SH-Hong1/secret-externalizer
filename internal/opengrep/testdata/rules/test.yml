@@ -1,0 +1,15 @@
+# A rule for the test that runs the real opengrep executable.
+rules:
+  - id: test-password-field
+    languages: [java]
+    severity: WARNING
+    message: a password field with a literal value
+    metadata:
+      category: storage-credential
+      kind: password
+    patterns:
+      - pattern: String $X = "$V";
+      - metavariable-regex:
+          metavariable: $X
+          regex: (?i)password
+      - focus-metavariable: $V

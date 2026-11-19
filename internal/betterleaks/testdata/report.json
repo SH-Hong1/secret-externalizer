@@ -1,0 +1,158 @@
+[
+ {
+  "RuleID": "fake-multiline",
+  "Description": "",
+  "StartLine": 2,
+  "EndLine": 3,
+  "StartColumn": 3,
+  "EndColumn": 30,
+  "Match": "password: |\n    dev-only-fake-multiline-pw",
+  "Secret": "dev-only-fake-multiline-pw",
+  "Attributes": {
+   "path": "/scan/config/multi.yml",
+   "resource": "fs.content"
+  },
+  "Tags": [
+   "category:other-secret",
+   "kind:password"
+  ],
+  "Fingerprint": "/scan/config/multi.yml:fake-multiline:2",
+  "File": "/scan/config/multi.yml",
+  "SymlinkFile": "",
+  "Commit": "",
+  "Entropy": 3.8731406,
+  "Author": "",
+  "Email": "",
+  "Date": "",
+  "Message": ""
+ },
+ {
+  "RuleID": "fake-password-assign",
+  "Description": "",
+  "StartLine": 4,
+  "EndLine": 4,
+  "StartColumn": 31,
+  "EndColumn": 66,
+  "Match": "password = \"dev-only-fake-hangul-pw\"",
+  "Secret": "dev-only-fake-hangul-pw",
+  "Attributes": {
+   "path": "/scan/src/main/java/shop/Db.java",
+   "resource": "fs.content"
+  },
+  "Tags": [
+   "category:storage-credential",
+   "kind:password"
+  ],
+  "Fingerprint": "/scan/src/main/java/shop/Db.java:fake-password-assign:4",
+  "File": "/scan/src/main/java/shop/Db.java",
+  "SymlinkFile": "",
+  "Commit": "",
+  "Entropy": 3.8279097,
+  "Author": "",
+  "Email": "",
+  "Date": "",
+  "Message": ""
+ },
+ {
+  "RuleID": "fake-password-assign",
+  "Description": "",
+  "StartLine": 2,
+  "EndLine": 2,
+  "StartColumn": 4,
+  "EndColumn": 37,
+  "Match": "password=dev-only-fake-db-password",
+  "Secret": "dev-only-fake-db-password",
+  "Attributes": {
+   "path": "/scan/src/main/resources/application.properties",
+   "resource": "fs.content"
+  },
+  "Tags": [
+   "category:storage-credential",
+   "kind:password"
+  ],
+  "Fingerprint": "/scan/src/main/resources/application.properties:fake-password-assign:2",
+  "File": "/scan/src/main/resources/application.properties",
+  "SymlinkFile": "",
+  "Commit": "",
+  "Entropy": 3.8136606,
+  "Author": "",
+  "Email": "",
+  "Date": "",
+  "Message": ""
+ },
+ {
+  "RuleID": "fake-generic",
+  "Description": "",
+  "StartLine": 3,
+  "EndLine": 3,
+  "StartColumn": 1,
+  "EndColumn": 28,
+  "Match": "apikey=dev-only-fake-api-key",
+  "Secret": "dev-only-fake-api-key",
+  "Attributes": {
+   "path": "/scan/src/main/resources/application.properties",
+   "resource": "fs.content"
+  },
+  "Tags": [],
+  "Fingerprint": "/scan/src/main/resources/application.properties:fake-generic:3",
+  "File": "/scan/src/main/resources/application.properties",
+  "SymlinkFile": "",
+  "Commit": "",
+  "Entropy": 3.4992275,
+  "Author": "",
+  "Email": "",
+  "Date": "",
+  "Message": ""
+ },
+ {
+  "RuleID": "fake-private-key",
+  "Description": "",
+  "StartLine": 1,
+  "EndLine": 1,
+  "StartColumn": 1,
+  "EndColumn": 32,
+  "Match": "-----BEGIN FAKE PRIVATE KEY-----",
+  "Secret": "-----BEGIN FAKE PRIVATE KEY-----",
+  "Attributes": {
+   "path": "/scan/config/fake.key",
+   "resource": "fs.content"
+  },
+  "Tags": [],
+  "Fingerprint": "/scan/config/fake.key:fake-private-key:1",
+  "File": "/scan/config/fake.key",
+  "SymlinkFile": "",
+  "Commit": "",
+  "Entropy": 3.3758073,
+  "Author": "",
+  "Email": "",
+  "Date": "",
+  "Message": ""
+ },
+ {
+  "RuleID": "fake-password-assign",
+  "Description": "",
+  "StartLine": 2,
+  "EndLine": 2,
+  "StartColumn": 10,
+  "EndColumn": 45,
+  "Match": "password = \"dev-only-fake-broken-pw\"",
+  "Secret": "dev-only-fake-broken-pw",
+  "Attributes": {
+   "path": "/scan/src/main/java/shop/Broken.java",
+   "resource": "fs.content"
+  },
+  "Tags": [
+   "category:storage-credential",
+   "kind:password"
+  ],
+  "Fingerprint": "/scan/src/main/java/shop/Broken.java:fake-password-assign:2",
+  "File": "/scan/src/main/java/shop/Broken.java",
+  "SymlinkFile": "",
+  "Commit": "",
+  "Entropy": 3.708132,
+  "Author": "",
+  "Email": "",
+  "Date": "",
+  "Message": ""
+ }
+]

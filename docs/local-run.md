@@ -120,6 +120,23 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 
 `curl`로 확인할 때도 같은 점을 알아 둔다. 이 저장소에서 확인한 curl 8.7.1은 `localhost`를 안전한 곳으로 보고 쿠키 파일(`-c`, `-b`)의 `Secure` 쿠키를 `http://localhost`로 보냈다. 이렇게 하지 않는 curl이라면 `-H 'Cookie: se_session=…'`로 쿠키를 직접 넣는다.
 
+## 스캐너 실행 파일
+
+worker는 betterleaks와 opengrep을 외부 명령으로 실행한다. 두 도구의 버전과 운영체제·아키텍처별 내려받기 주소, SHA-256 체크섬은 `deploy/worker/scanners.lock`에 고정되어 있다. worker 이미지는 빌드할 때 이 파일대로 이미지의 플랫폼에 맞는 실행 파일을 받아 `/usr/local/bin`에 넣는다.
+
+호스트에서 스캐너를 직접 실행해 보려면 현재 플랫폼의 실행 파일을 `bin/`에 받는다. lint 도구가 있는 폴더와 같다.
+
+```sh
+make scanners      # bin/betterleaks, bin/opengrep
+bin/betterleaks version
+bin/opengrep --version
+```
+
+- `deploy/worker/fetch-scanners.sh <os> <arch> <폴더>`가 내려받고 체크섬을 확인한다. 하나라도 맞지 않으면 아무것도 설치하지 않고 실패한다.
+- 이 스크립트의 테스트(`make scanners-test`)는 `make check`에 들어 있고, 실제로 내려받지 않는다.
+- 버전을 올릴 때는 그 도구의 모든 줄을 바꾸고, 체크섬은 릴리스 페이지(betterleaks는 `checksums.txt`, opengrep은 자산의 digest)에서 가져온다.
+- opengrep 실행 파일은 플랫폼마다 160MB가 넘는다.
+
 ## 통합 테스트
 
 valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이, OpenBao가 필요한 테스트는 `TEST_BAO_ADDR`가 없으면 건너뛴다. `make test-integration`은 셋 다 요구한다. OpenBao 테스트는 원본을 보관하는 `openbao`가 아니라 `test` 프로필의 `openbao-test`를 쓰고, 테스트가 개발용 루트 토큰으로 transit, KV, AppRole을 직접 만든다. compose의 서비스로 실행하려면 다음과 같이 한다. 새 셸에서는 compose 명령마다 `SE_WORKSPACE`가 설정되어 있어야 한다. 없으면 compose가 파일을 읽다가 멈춘다(worker를 띄우지 않는 명령도 같다).
