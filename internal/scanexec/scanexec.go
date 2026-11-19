@@ -5,14 +5,14 @@
 package scanexec
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
@@ -55,44 +55,36 @@ type Command struct {
 	WaitDelay time.Duration
 }
 
-// errTooLarge stops the copy of standard output once the limit is passed.
-var errTooLarge = errors.New("output too large")
-
-// limitBuffer collects output up to max bytes. Past that it keeps nothing
-// more, calls stop once, and fails every write.
-type limitBuffer struct {
-	max  int
-	stop func()
-
-	mu       sync.Mutex
-	buf      bytes.Buffer
+// output is what was read from a scanner's standard output.
+type output struct {
+	data     []byte
 	exceeded bool
 }
 
-func (b *limitBuffer) Write(p []byte) (int, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.exceeded {
-		return 0, errTooLarge
+// readOutput reads r until end of file or until more than max bytes have
+// come, and then calls stop and keeps none of it.
+func readOutput(r io.Reader, maxOutput int, stop func()) output {
+	data, err := io.ReadAll(io.LimitReader(r, int64(maxOutput)+1))
+	if len(data) > maxOutput {
+		stop()
+		return output{exceeded: true}
 	}
-	if b.buf.Len()+len(p) > b.max {
-		b.exceeded = true
-		b.buf = bytes.Buffer{}
-		b.stop()
-		return 0, errTooLarge
+	if err != nil {
+		// Only a pipe that Run closed itself fails to read; Run already
+		// treats that run as failed.
+		return output{}
 	}
-	return b.buf.Write(p)
-}
-
-func (b *limitBuffer) result() (out []byte, exceeded bool) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.Bytes(), b.exceeded
+	return output{data: data}
 }
 
 // Run runs c and returns what it wrote to standard output. The scanner runs
-// in its own process group, and when ctx ends or the output passes the limit
-// the whole group is killed.
+// in its own process group. When ctx ends or the output passes the limit the
+// whole group is killed, and once the scanner has exited whatever is left
+// of its group is killed too, so no process of the scanner outlives Run.
+//
+// The run fails when standard output is still open WaitDelay after the
+// scanner has exited, because a process it left behind holds it; the output
+// read until then is not returned.
 //
 // When ctx ends Run returns an error that wraps ctx.Err(). Every other
 // failure wraps scan.ErrScannerFailed and says only the tool, and its exit
@@ -112,26 +104,50 @@ func Run(ctx context.Context, c Command) ([]byte, error) {
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, c.Bin, c.Args...)
 	cmd.Env = []string{"PATH=" + c.Env.Path, "HOME=" + c.Env.Home, "TMPDIR=" + c.Env.TmpDir}
-	stdout := &limitBuffer{max: maxOutput, stop: cancel}
-	cmd.Stdout = stdout
 	cmd.Stderr = nil // the null device
 	cmd.WaitDelay = waitDelay
 	ownGroup(cmd)
 
-	if err := cmd.Start(); err != nil {
-		// Nothing has run yet, so the error holds no output, only the path.
+	// The pipe is made here rather than by exec, so that Run sees whether
+	// standard output reached end of file: exec hides a forced close when the
+	// exit code is not 0.
+	pr, pw, err := os.Pipe()
+	if err != nil {
 		return nil, fmt.Errorf("starting %s: %w: %w", c.Tool, scan.ErrScannerFailed, err)
 	}
-	waitErr := cmd.Wait()
-	if errors.Is(waitErr, exec.ErrWaitDelay) {
-		killGroup(cmd)
+	defer func() {
+		_ = pr.Close() // a second close after a forced one fails harmlessly
+	}()
+	cmd.Stdout = pw
+	startErr := cmd.Start()
+	_ = pw.Close() // the child has its own copy; closing ours lets end of file arrive
+	if startErr != nil {
+		// Nothing has run yet, so the error holds no output, only the path.
+		return nil, fmt.Errorf("starting %s: %w: %w", c.Tool, scan.ErrScannerFailed, startErr)
 	}
-	out, exceeded := stdout.result()
+	read := make(chan output, 1)
+	go func() { read <- readOutput(pr, maxOutput, cancel) }()
+
+	waitErr := cmd.Wait()
+	timer := time.NewTimer(waitDelay)
+	defer timer.Stop()
+	var out output
+	forced := false
+	select {
+	case out = <-read:
+	case <-timer.C:
+		forced = true
+	}
+	killGroup(cmd)
+	if forced {
+		_ = pr.Close() // ends the read of a pipe that a process outside the group may still hold
+		<-read
+	}
 
 	if ctx.Err() != nil {
 		return nil, fmt.Errorf("running %s: %w", c.Tool, ctx.Err())
 	}
-	if exceeded {
+	if out.exceeded {
 		return nil, fmt.Errorf("running %s: output too large: %w", c.Tool, scan.ErrScannerFailed)
 	}
 	code := cmd.ProcessState.ExitCode()
@@ -146,12 +162,10 @@ func Run(ctx context.Context, c Command) ([]byte, error) {
 		return nil, fmt.Errorf("%s exited with code %d: %w", c.Tool, code, scan.ErrScannerFailed)
 	}
 	var exitErr *exec.ExitError
-	if waitErr != nil && !errors.As(waitErr, &exitErr) {
-		// The exit code was fine, but the output did not close in time or
-		// could not be copied.
+	if forced || (waitErr != nil && !errors.As(waitErr, &exitErr)) {
 		return nil, fmt.Errorf("running %s: output did not close: %w", c.Tool, scan.ErrScannerFailed)
 	}
-	return out, nil
+	return out.data, nil
 }
 
 // Version runs c, which asks a scanner for its version, and returns the

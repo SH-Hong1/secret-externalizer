@@ -23,8 +23,10 @@ func ownGroup(cmd *exec.Cmd) {
 	}
 }
 
-// killGroup kills what is left of the process group of cmd, which has
-// exited, such as a child process that still holds its output open.
+// killGroup kills what is left of the process group of cmd once cmd has
+// exited, such as a child that still runs or holds its output open. The
+// group keeps its ID while any member lives, so the signal reaches only the
+// scanner's processes; ESRCH means none is left.
 func killGroup(cmd *exec.Cmd) {
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // ESRCH means the group is already gone, which is the goal
 }

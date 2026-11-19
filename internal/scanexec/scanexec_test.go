@@ -3,9 +3,11 @@
 package scanexec_test
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,12 +61,50 @@ func TestHelperProcess(*testing.T) {
 		time.Sleep(time.Hour)
 		os.Exit(0)
 	case "orphan":
-		child := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestHelperProcess$", "--", "block", args[0]) //nolint:gosec // G702: reruns this test binary with a path from the test
-		child.Stdout = os.Stdout
+		// orphan <fifo> <code> <stdout|none>: start a child that outlives
+		// this process, holding standard output open or not, print
+		// something, and exit with code.
+		child := exec.CommandContext(context.Background(), os.Args[0], "-test.run=^TestHelperProcess$", "--", "hold", args[0]) //nolint:gosec // G702: reruns this test binary with a path from the test
+		if args[2] == "stdout" {
+			child.Stdout = os.Stdout
+		}
+		// Wait until the child is running and known to the test before
+		// exiting, since the scanner's exit kills the child's group.
+		ready, readyW, err := os.Pipe()
+		if err != nil {
+			os.Exit(2)
+		}
+		child.ExtraFiles = []*os.File{readyW}
 		if err := child.Start(); err != nil {
 			os.Exit(2)
 		}
+		_ = readyW.Close() // the child has its own copy
+		if _, err := ready.Read(make([]byte, 1)); err != nil {
+			os.Exit(2)
+		}
+		code, err := strconv.Atoi(args[1])
+		if err != nil {
+			os.Exit(2)
+		}
 		fmt.Println("partial")
+		os.Exit(code)
+	case "hold":
+		// hold <fifo>: write the process ID to the FIFO and keep it open
+		// until the process dies, so the reader sees end of file only then;
+		// then tell the parent through descriptor 3 that it is running.
+		f, err := os.OpenFile(args[0], os.O_WRONLY, 0) //nolint:gosec // G703: the path is a FIFO of the test
+		if err != nil {
+			os.Exit(2)
+		}
+		if _, err := fmt.Fprintln(f, os.Getpid()); err != nil {
+			os.Exit(2)
+		}
+		ready := os.NewFile(3, "ready") // from the orphan mode's ExtraFiles
+		if _, err := ready.Write([]byte{1}); err != nil {
+			os.Exit(2)
+		}
+		_ = ready.Close() // the parent has read the byte
+		time.Sleep(time.Hour)
 		os.Exit(0)
 	}
 	os.Exit(2)
@@ -198,26 +238,109 @@ func TestRun_ContextCancelled(t *testing.T) {
 	checkGone(t, pid)
 }
 
-func TestRun_ChildHoldsOutput(t *testing.T) {
-	fifo := filepath.Join(t.TempDir(), "child")
+// childFIFO makes a FIFO for an orphan child of the fake scanner and
+// returns its path and a function that reads the child's process ID from it.
+// After that, gone reports whether the child has died, waiting at most ten
+// seconds: the FIFO reaches end of file once the child's descriptors are
+// closed by its death.
+func childFIFO(t *testing.T) (fifo string, pid func() int, gone func() bool) {
+	t.Helper()
+	fifo = filepath.Join(t.TempDir(), "child")
 	if err := syscall.Mkfifo(fifo, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	c := helper(t, "orphan", fifo)
-	c.WaitDelay = 100 * time.Millisecond
+	var r *bufio.Reader
+	var f *os.File
+	pid = func() int {
+		var err error
+		f, err = os.Open(fifo) //nolint:gosec // G304: the path is a temporary FIFO of the test
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = f.Close() }) // read only
+		r = bufio.NewReader(f)
+		line, err := r.ReadString('\n')
+		if err != nil {
+			t.Fatalf("reading the child's pid: %v", err)
+		}
+		n, err := strconv.Atoi(strings.TrimSpace(line))
+		if err != nil {
+			t.Fatalf("reading the child's pid from %q: %v", line, err)
+		}
+		t.Cleanup(func() { _ = syscall.Kill(n, syscall.SIGKILL) }) // in case the test failed; ESRCH is expected
+		return n
+	}
+	gone = func() bool {
+		eof := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(io.Discard, r) // returns at end of file, or when the cleanup closes f
+			close(eof)
+		}()
+		timer := time.NewTimer(10 * time.Second)
+		defer timer.Stop()
+		select {
+		case <-eof:
+			return true
+		case <-timer.C:
+			return false
+		}
+	}
+	return fifo, pid, gone
+}
+
+func TestRun_ChildHoldsOutput(t *testing.T) {
+	tests := []struct {
+		name    string
+		code    string
+		okCodes []int
+	}{
+		{"Exit0", "0", nil},
+		{"AcceptedExit3", "3", []int{0, 3}},
+		{"FailingExit1", "1", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			fifo, pid, gone := childFIFO(t)
+			c := helper(t, "orphan", fifo, tt.code, "stdout")
+			c.OKCodes = tt.okCodes
+			c.WaitDelay = 100 * time.Millisecond
+			done := make(chan error, 1)
+			var out []byte
+			go func() {
+				var err error
+				out, err = scanexec.Run(t.Context(), c)
+				done <- err
+			}()
+			child := pid()
+			err := <-done
+			if !errors.Is(err, scan.ErrScannerFailed) || out != nil {
+				t.Errorf("Run(orphan exiting %s) = %q, %v, want no output and ErrScannerFailed", tt.code, out, err)
+			}
+			if !gone() {
+				t.Errorf("Run(orphan exiting %s) returned, but its child %d still runs", tt.code, child)
+			}
+		})
+	}
+}
+
+func TestRun_ChildOutlivesScanner(t *testing.T) {
+	fifo, pid, gone := childFIFO(t)
+	c := helper(t, "orphan", fifo, "3", "none")
+	c.OKCodes = []int{3}
 	done := make(chan error, 1)
+	var out []byte
 	go func() {
-		_, err := scanexec.Run(t.Context(), c)
+		var err error
+		out, err = scanexec.Run(t.Context(), c)
 		done <- err
 	}()
-	child := readPID(t, fifo)
-	err := <-done
-	if !errors.Is(err, scan.ErrScannerFailed) {
-		t.Errorf("Run(orphan) error = %v, want ErrScannerFailed", err)
+	child := pid()
+	if err := <-done; err != nil || string(out) != "partial\n" {
+		t.Errorf("Run(orphan without stdout) = %q, %v, want \"partial\\n\" and no error", out, err)
 	}
-	// The child is not ours to reap, so whether it is gone cannot be checked
-	// without waiting; kill it in case the process group kill missed it.
-	_ = syscall.Kill(child, syscall.SIGKILL) // cleanup only; the child is normally gone already
+	if !gone() {
+		t.Errorf("Run(orphan without stdout) returned, but its child %d still runs", child)
+	}
 }
 
 func TestRun_Env(t *testing.T) {

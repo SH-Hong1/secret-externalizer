@@ -60,7 +60,7 @@ scan --config=<rulesDir> --json --quiet --no-git-ignore --x-ignore-semgrepignore
 - `internal/scanexec`가 두 도구의 실행을 한 곳에서 맡는다. `exec.CommandContext`와 인자 슬라이스로 실행하고 셸을 거치지 않는다.
 - 환경 변수는 `PATH`, `HOME`, `TMPDIR` 셋만 넘긴다. 값은 `run`에서 읽어 생성자로 받는다(`scanexec.Env`).
 - 표준 출력은 메모리에만 받고 256MiB를 넘으면 프로세스를 죽이고 실패한다. 표준 오류는 null 장치로 보낸다. 파일에 쓰지 않는다.
-- 스캐너는 자기 프로세스 그룹에서 실행한다. `ctx`가 끝나거나 출력이 한도를 넘으면 그룹 전체를 죽인다. 스캐너가 끝난 뒤에도 자식 프로세스가 표준 출력을 쥐고 있으면 `WaitDelay`(5초) 뒤에 파이프를 닫고 그룹을 죽이고 실패로 본다.
+- 스캐너는 자기 프로세스 그룹에서 실행한다. `ctx`가 끝나거나 출력이 한도를 넘으면 그룹 전체를 죽이고, 스캐너가 끝나면 종료 코드와 상관없이 그룹에 남은 프로세스를 모두 죽인다. 스캐너가 끝난 뒤 5초 안에 표준 출력이 닫히지 않으면(남은 프로세스가 쥐고 있으면) 파이프를 닫고, 그때까지 읽은 출력은 버리고 실패로 본다. 종료 코드가 정상(betterleaks의 3 포함)이어도 같다.
 - 오류에는 도구 이름과 종료 코드 또는 정해진 사유("output too large", "output is not a valid report" 등)만 넣는다. `*exec.ExitError`나 JSON 디코더의 오류처럼 출력의 내용을 담을 수 있는 오류는 감싸지 않는다. `ctx`가 끝나서 멈춘 경우는 `ctx.Err()`를 감싼다.
 
 ### 출력 읽기
@@ -86,7 +86,7 @@ scan --config=<rulesDir> --json --quiet --no-git-ignore --x-ignore-semgrepignore
 
 ## 검토한 다른 방법
 
-- 표준 출력을 `StdoutPipe`로 직접 읽기: 자식 프로세스가 파이프를 쥐고 있으면 읽기가 끝나지 않고 `WaitDelay`도 적용되지 않아 `cmd.Stdout`에 한도가 있는 버퍼를 주는 쪽을 택했다.
+- `cmd.Stdout`에 한도가 있는 버퍼를 주고 exec의 `WaitDelay`에 맡기기: 종료 코드가 0이 아니면 `Wait`가 `*ExitError`만 돌려주고 `ErrWaitDelay`를 버려서(Go 1.27 `os/exec`의 `Wait`), 파이프가 강제로 닫혔는지 알 수 없다. 그래서 파이프를 `os.Pipe`로 직접 만들고, 끝(EOF)을 직접 기다린다. `StdoutPipe`는 `Wait`가 파이프를 닫으므로 같은 판단을 할 수 없다.
 - opengrep의 `--x-ignore-semgrepignore-files` 대신 빈 `.semgrepignore`를 `--semgrepignore-filename`으로 지정: 내부용 옵션을 피할 수 있지만 대상 폴더의 `.semgrepignore`는 여전히 읽힌다. 내부용 옵션은 실행 때 경고만 내고 동작하므로 쓰고, 버전을 올릴 때 확인한다.
 - betterleaks 2.0.0-rc: 정식 버전이 아니어서 쓰지 않는다.
 - worker 기반 이미지를 glibc 이미지로 바꾸기: 두 실행 파일이 정적 링크라 필요 없다.
