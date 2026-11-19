@@ -136,7 +136,7 @@
 - [x] **Step 3:** 테스트가 실패하는지 확인한다. `go test ./internal/web/ -run 'TestStatic|TestAsset|TestLayout|TestNoInline'`
 - [x] **Step 4:** `static.go`를 쓴다. `//go:embed static`으로 넣고, `handleStatic() http.Handler`가 파일 이름 하나만 받는다. `securityHeaders`의 `no-store`는 이 handler가 덮어쓴다. `parseTemplates`는 `template.New(...).Funcs`로 `asset`을 넣는다.
 - [x] **Step 5:** `layout.html`에 `<link rel="stylesheet">`, `<script src defer>`, `<meta name="htmx-config">`, 머리와 내비게이션을 넣고, 모든 쪽 템플릿을 시안대로 다시 쓴다(frontend-design 스킬). `assets/app.css`에 `docs/design/README.md`의 값을 테마로 옮긴다. IBM Plex Sans KR(400, 600, 700)과 D2Coding(400, 700)의 woff2 파일과 라이선스 전문을 `internal/web/static/fonts/`에 넣고 `@font-face`로 불러온다(결정 기록 0029). 글꼴 파일은 배포처의 공식 릴리스에서 받아 체크섬을 `Makefile`에 적는다. `make css`로 `static/app.css`를 만든다.
-- [ ] **Step 6:** `make check`가 통과하는지 확인한다. `docker compose up --build`로 띄워 Chromium에서 로그인, 프로젝트 목록, 등록, 스캔 화면이 시안과 같은지 보고, 콘솔에 CSP 위반이 없는지 확인한다.
+- [x] **Step 6:** `make check`가 통과하는지 확인한다. `docker compose up --build`로 띄워 Chromium에서 로그인, 프로젝트 목록, 등록, 스캔 화면이 시안과 같은지 보고, 콘솔에 CSP 위반이 없는지 확인한다. 실제 화면 확인은 2026-11-20에 했다.
 - [x] **Step 7:** `CHANGELOG.md`와 결정 기록 0025(standalone CLI, 만든 CSS를 저장소에 두는 이유, htmx를 쓰는 범위)를 쓰고 커밋한다. `feat(web): add the stylesheet, htmx and the shared page frame`
 
 ### Task 3: 접속 정보를 구성 요소로 나누기
@@ -489,8 +489,8 @@
 **Files:**
 - Modify: `docs/next-steps.md`, `docs/local-run.md`, `CHANGELOG.md`
 
-- [ ] **Step 1:** `docker compose down -v` 뒤 `docker compose up --build`로 새로 띄우고, 계획 3의 예제 소스 프로젝트를 등록해 스캔한다.
-- [ ] **Step 2:** Chromium에서 아래 표를 확인하고 결과를 PR 본문에 적는다.
+- [x] **Step 1:** `docker compose down -v` 뒤 `docker compose up --build`로 새로 띄우고, 계획 3의 예제 소스 프로젝트를 등록해 스캔한다. `down -v`는 하지 않았다. 기존 볼륨을 그대로 두고 이미지를 다시 만들어 띄웠다.
+- [x] **Step 2:** Chromium에서 아래 표를 확인하고 결과를 PR 본문에 적는다. 2026-11-20에 14개 모두 확인했다.
 
   | 번호 | 확인 |
   |---|---|
@@ -509,7 +509,7 @@
   | 13 | 스크립트를 끈 채로 2, 4, 6이 쪽 전체 새로 고침으로 된다 |
   | 14 | 스캔 화면에서 건너뛴 파일 이름이 펼쳐진다 |
 
-- [ ] **Step 3:** `docs/next-steps.md`를 고친다. 표의 계획 4를 완료로 바꾸고, "계획 4에 필요한 계획 3의 남은 일"에서 끝난 것을 지우고, 이 계획이 계획 5로 넘기는 일(오탐의 임시 원본 지우기, 한 파일 안의 같은 값을 따로 이름 붙이기, 호스트·포트·계정의 자동 묶기)을 적는다.
+- [x] **Step 3:** `docs/next-steps.md`를 고친다. 표의 계획 4를 완료로 바꾸고, "계획 4에 필요한 계획 3의 남은 일"에서 끝난 것을 지우고, 이 계획이 계획 5로 넘기는 일(오탐의 임시 원본 지우기, 한 파일 안의 같은 값을 따로 이름 붙이기, 호스트·포트·계정의 자동 묶기)을 적는다.
 - [ ] **Step 4:** `superpowers:requesting-code-review`로 브랜치 전체를 검토받고 PR 2를 올린다.
 
 ## 이 계획이 하지 않는 것
