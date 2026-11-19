@@ -1,14 +1,22 @@
-{{define "title"}}{{.Name}}{{end}}
+{{define "title"}}{{.Project.Name}}{{end}}
 {{define "body"}}<main>
-<h1>{{.Name}}</h1>
-<p>경로: {{.Path}}</p>
+<h1>{{.Project.Name}}</h1>
+<p>경로: {{.Project.Path}}</p>
 <p>제외할 경로:</p>
-{{if .Excludes}}<ul>
-{{range .Excludes}}<li>{{.}}</li>
+{{if .Project.Excludes}}<ul>
+{{range .Project.Excludes}}<li>{{.}}</li>
 {{end}}</ul>
 {{else}}<p>없음</p>
-{{end}}<form method="post" action="/projects/{{.ID}}/scans">
+{{end}}<form method="post" action="/projects/{{.Project.ID}}/scans">
 <button type="submit">스캔 시작</button>
 </form>
-<p><a href="/projects">목록</a></p>
+<h2>스캔</h2>
+{{if .Scans}}<table>
+<thead><tr><th>요청 시각</th><th>상태</th><th>발견 항목</th><th></th></tr></thead>
+<tbody>
+{{range .Scans}}<tr><td>{{.RequestedAt}}</td><td>{{.StatusLabel}}</td><td>{{if .Succeeded}}{{.Findings}}건{{end}}</td><td><a href="/scans/{{.ID}}">보기</a></td></tr>
+{{end}}</tbody>
+</table>
+{{else}}<p>스캔한 적이 없습니다.</p>
+{{end}}<p><a href="/projects">목록</a></p>
 </main>{{end}}

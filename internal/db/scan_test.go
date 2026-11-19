@@ -148,8 +148,8 @@ func TestRequestScan_AfterFinish(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimJob() error = %v", err)
 	}
-	if err := s.FinishEmptyScan(ctx, j.ID, "worker-a", first, 0, 0); err != nil {
-		t.Fatalf("FinishEmptyScan() error = %v", err)
+	if err := s.SaveResult(ctx, j.ID, "worker-a", first, scan.Result{}); err != nil {
+		t.Fatalf("SaveResult() error = %v", err)
 	}
 	second, err := s.RequestScan(ctx, pid, "fake-subject")
 	if err != nil || second == first {

@@ -188,3 +188,16 @@ func requireRole(logger *slog.Logger, rd *renderer, role auth.Role) func(http.Ha
 		})
 	}
 }
+
+// timeLimit gives the request's context a deadline limit from now, so that
+// the handler's calls to the database end with an error instead of hanging
+// when the database does not answer.
+func timeLimit(limit time.Duration) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx, cancel := context.WithTimeout(r.Context(), limit)
+			defer cancel()
+			next.ServeHTTP(w, r.WithContext(ctx))
+		})
+	}
+}

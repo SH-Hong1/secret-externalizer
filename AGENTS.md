@@ -249,13 +249,16 @@ Sources: Effective Go; Go Code Review Comments; Practical Go.
 - Format with `make fmt`, which runs gofumpt and goimports. Do not format by
   hand and do not argue with the formatter.
 - `make check` runs the linters, `go vet`, the tests with the race detector,
-  and the hook script tests. It must pass before a task is finished.
+  the hook script tests, and the scanner fetch-script test
+  (`make scanners-test`). It must pass before a task is finished.
 - Fix a lint finding. Do not suppress it. Where suppression really is correct,
   write `//nolint:<linter> // <reason>` on that line.
 - `gosec` rule G204 is turned off in `.golangci.yml`. It reports every
   `exec.CommandContext` call whose arguments are not constants, which is the
   form the Security section requires.
-- Tool versions are pinned in `Makefile`. Change them there and nowhere else.
+- Tool versions are pinned in `Makefile`, and the scanner versions and their
+  checksums in `deploy/worker/scanners.lock`. Change them there and nowhere
+  else.
 - Add a dependency only when the standard library cannot reasonably do the
   job, and record the reason in `docs/decisions/`.
 

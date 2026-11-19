@@ -87,28 +87,61 @@ func (s *Store) ExtendJob(ctx context.Context, jobID int64, workerID string, lea
 	return nil
 }
 
+// ReleaseJob gives back a job the worker holds but did not finish, in one
+// transaction: the job is queued again without its lease, the attempt it
+// used is given back (never going below zero), and its scan is queued again
+// with no start time. It returns job.ErrLeaseLost, changing nothing, when the
+// job is not running or is leased to another worker.
+func (s *Store) ReleaseJob(ctx context.Context, jobID int64, workerID string) (err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer rollback(ctx, tx, &err)
+
+	var scanID int64
+	err = tx.QueryRow(ctx, `
+		UPDATE job SET state = 'queued', attempts = greatest(attempts - 1, 0),
+			locked_by = NULL, locked_until = NULL
+		WHERE id = $1 AND state = 'running' AND locked_by = $2
+		RETURNING scan_id`,
+		jobID, workerID).Scan(&scanID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("releasing job %d: %w", jobID, job.ErrLeaseLost)
+	}
+	if err != nil {
+		return fmt.Errorf("releasing job %d: %w", jobID, err)
+	}
+	if _, err := tx.Exec(ctx, `
+		UPDATE scan SET status = 'queued', started_at = NULL
+		WHERE id = $1 AND status IN ('queued', 'running')`, scanID); err != nil {
+		return fmt.Errorf("requeuing scan %d: %w", scanID, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing release of job %d: %w", jobID, err)
+	}
+	return nil
+}
+
 // FailScan marks the job and its scan failed, in one transaction. The reason
 // is stored and shown as given, so it must be fixed wording and never text
 // from an error. It returns job.ErrLeaseLost, changing nothing, when the
 // worker does not hold the job.
 func (s *Store) FailScan(ctx context.Context, jobID int64, workerID string, id scan.ID, reason string) error {
-	return s.closeJob(ctx, jobID, workerID, id, "failed", `
-		UPDATE scan SET status = 'failed', finished_at = now(), failure_reason = $2
-		WHERE id = $1`, reason)
+	return s.closeJob(ctx, jobID, workerID, id, "failed", func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			UPDATE scan SET status = 'failed', finished_at = now(), failure_reason = $2
+			WHERE id = $1`, id, reason); err != nil {
+			return fmt.Errorf("failing scan %d: %w", id, err)
+		}
+		return nil
+	})
 }
 
-// FinishEmptyScan marks the scan succeeded with the given counts and no
-// findings, and the job done, in one transaction. It returns job.ErrLeaseLost,
-// changing nothing, when the worker does not hold the job.
-func (s *Store) FinishEmptyScan(ctx context.Context, jobID int64, workerID string, id scan.ID, files, skipped int) error {
-	return s.closeJob(ctx, jobID, workerID, id, "done", `
-		UPDATE scan SET status = 'succeeded', finished_at = now(), files = $2, skipped = $3
-		WHERE id = $1`, files, skipped)
-}
-
-// closeJob moves the job the worker holds to state and runs scanSQL, which
-// takes the scan ID as $1 and args as $2 onward, in one transaction.
-func (s *Store) closeJob(ctx context.Context, jobID int64, workerID string, id scan.ID, state, scanSQL string, args ...any) (err error) {
+// closeJob moves the job the worker holds to state and then runs write, in
+// one transaction. Nothing is written, and it returns job.ErrLeaseLost, when
+// the worker does not hold the job; an error from write undoes everything.
+func (s *Store) closeJob(ctx context.Context, jobID int64, workerID string, id scan.ID, state string, write func(pgx.Tx) error) (err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
@@ -125,8 +158,8 @@ func (s *Store) closeJob(ctx context.Context, jobID int64, workerID string, id s
 	if tag.RowsAffected() == 0 {
 		return fmt.Errorf("closing job %d: %w", jobID, job.ErrLeaseLost)
 	}
-	if _, err := tx.Exec(ctx, scanSQL, append([]any{id}, args...)...); err != nil {
-		return fmt.Errorf("closing scan %d: %w", id, err)
+	if err := write(tx); err != nil {
+		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("committing close of job %d: %w", jobID, err)

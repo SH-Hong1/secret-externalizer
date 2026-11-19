@@ -1,0 +1,109 @@
+{
+ "version": "2.0.0",
+ "results": [
+  {
+   "check_id": "java-password-field",
+   "path": "/scan/src/main/java/shop/Db.java",
+   "start": {
+    "line": 4,
+    "col": 43,
+    "offset": 68
+   },
+   "end": {
+    "line": 4,
+    "col": 66,
+    "offset": 91
+   },
+   "extra": {
+    "metavars": {
+     "$X": {
+      "start": {
+       "line": 4,
+       "col": 31,
+       "offset": 56
+      },
+      "end": {
+       "line": 4,
+       "col": 39,
+       "offset": 64
+      },
+      "abstract_content": "password"
+     },
+     "$V": {
+      "start": {
+       "line": 4,
+       "col": 43,
+       "offset": 68
+      },
+      "end": {
+       "line": 4,
+       "col": 66,
+       "offset": 91
+      },
+      "abstract_content": "dev-only-fake-hangul-pw"
+     }
+    },
+    "message": "password field",
+    "metadata": {
+     "category": "storage-credential",
+     "kind": "password"
+    },
+    "severity": "WARNING",
+    "fingerprint": "1bd56788363156b639b3deec0767121d9d4e7d1ad37b6fb43b707811146cf7f1d78fc6751fbc9cfbf75c989928efa644e2e056a0d3bef2dfafddda1ee06a4563_0",
+    "lines": "    /* 비밀번호 */ String password = \"dev-only-fake-hangul-pw\";",
+    "is_ignored": false,
+    "validation_state": "NO_VALIDATOR",
+    "engine_kind": "Opengrep"
+   }
+  }
+ ],
+ "errors": [
+  {
+   "code": 3,
+   "level": "warn",
+   "type": [
+    "PartialParsing",
+    [
+     {
+      "path": "/scan/src/main/java/shop/Broken.java",
+      "start": {
+       "line": 1,
+       "col": 1,
+       "offset": 0
+      },
+      "end": {
+       "line": 2,
+       "col": 47,
+       "offset": 65
+      }
+     }
+    ]
+   ],
+   "message": "Syntax error at line /scan/src/main/java/shop/Broken.java:1:\n `class Broken {{{ (\n  String password = \"dev-only-fake-broken-pw\";` was unexpected",
+   "path": "/scan/src/main/java/shop/Broken.java",
+   "spans": [
+    {
+     "file": "/scan/src/main/java/shop/Broken.java",
+     "start": {
+      "line": 1,
+      "col": 1,
+      "offset": 0
+     },
+     "end": {
+      "line": 2,
+      "col": 47,
+      "offset": 65
+     }
+    }
+   ]
+  }
+ ],
+ "paths": {
+  "scanned": [
+   "/scan/src/main/java/shop/Broken.java",
+   "/scan/src/main/java/shop/Db.java"
+  ]
+ },
+ "interfile_languages_used": [],
+ "skipped_rules": []
+}

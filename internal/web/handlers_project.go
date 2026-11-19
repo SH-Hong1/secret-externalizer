@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
@@ -71,6 +72,11 @@ func handleProjectCreate(logger *slog.Logger, rd *renderer, projects ProjectStor
 			rd.page(w, r, logger, http.StatusBadRequest, "project_new.html", form)
 			return
 		}
+		if !validText(form.Name) {
+			form.Error = "이름에는 제어 문자나 깨진 문자를 쓸 수 없습니다."
+			rd.page(w, r, logger, http.StatusBadRequest, "project_new.html", form)
+			return
+		}
 		var err error
 		if p.Path, err = project.ParsePath(form.Path); err != nil {
 			form.Error = "경로는 작업 공간 루트 기준의 상대 경로여야 하고 루트 밖으로 나갈 수 없습니다."
@@ -96,6 +102,11 @@ func handleProjectCreate(logger *slog.Logger, rd *renderer, projects ProjectStor
 	})
 }
 
+// validText reports whether s is valid UTF-8 without control characters.
+func validText(s string) bool {
+	return utf8.ValidString(s) && !strings.ContainsFunc(s, unicode.IsControl)
+}
+
 // parseExcludes splits text into one path per line, drops blank lines, and
 // checks each remaining line with project.ParsePath.
 func parseExcludes(text string) ([]string, error) {
@@ -114,8 +125,8 @@ func parseExcludes(text string) ([]string, error) {
 	return out, nil
 }
 
-// handleProject shows one project.
-func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore) http.Handler {
+// handleProject shows one project and its scans, newest first.
+func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 		if err != nil || n < 1 {
@@ -131,6 +142,14 @@ func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore) htt
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading project: %w", err))
 			return
 		}
-		rd.page(w, r, logger, http.StatusOK, "project.html", p)
+		list, err := scans.ScansByProject(r.Context(), p.ID)
+		if err != nil {
+			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("listing scans: %w", err))
+			return
+		}
+		rd.page(w, r, logger, http.StatusOK, "project.html", struct {
+			Project project.Project
+			Scans   []scanRow
+		}{p, newScanRows(list)})
 	})
 }

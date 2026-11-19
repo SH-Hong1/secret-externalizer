@@ -41,18 +41,27 @@ func (d DSN) Reveal() string { return string(d) }
 // pingTimeout bounds the connection check in Open.
 const pingTimeout = 10 * time.Second
 
+// connectTimeout bounds each new connection to postgres when the DSN sets
+// no connect_timeout, so that a database that accepts connections and does
+// not answer makes calls fail instead of hang.
+const connectTimeout = 3 * time.Second
+
 // Store is the application database. It is safe for concurrent use.
 type Store struct {
 	pool *pgxpool.Pool
 }
 
 // Open creates a connection pool for dsn and checks that the database
-// answers. No error it returns contains the DSN.
+// answers. A new connection gives up after connectTimeout unless the DSN
+// sets connect_timeout. No error it returns contains the DSN.
 func Open(ctx context.Context, dsn DSN) (*Store, error) {
 	cfg, err := pgxpool.ParseConfig(dsn.Reveal())
 	if err != nil {
 		// The parser's message can quote part of the URL, so it is dropped.
 		return nil, errors.New("parsing database url: the value is not a valid postgres url or connection string")
+	}
+	if cfg.ConnConfig.ConnectTimeout == 0 {
+		cfg.ConnConfig.ConnectTimeout = connectTimeout
 	}
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {

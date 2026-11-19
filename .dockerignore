@@ -1,9 +1,13 @@
-# The web and worker images need only the Go module and the source they
-# copy in; everything else stays out of the build context.
+# The web and worker images need only the Go module, the source they copy
+# in, the worker's scanner lock file and the script that reads it, and the
+# worker's detection rules; everything else stays out of the build context.
 *
 !go.mod
 !go.sum
 !cmd/
 !internal/
+!deploy/worker/fetch-scanners.sh
+!deploy/worker/scanners.lock
+!rules/
 **/*_test.go
 **/testdata/

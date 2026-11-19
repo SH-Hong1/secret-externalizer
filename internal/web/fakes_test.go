@@ -10,6 +10,7 @@ import (
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
@@ -227,16 +228,19 @@ func (f *fakeProjects) all() []project.Project {
 // the database does. A non-nil error field makes the matching method return
 // that error.
 type fakeScans struct {
-	requestErr error
-	getErr     error
+	requestErr  error
+	getErr      error
+	listErr     error
+	findingsErr error
 
-	mu    sync.Mutex
-	scans map[scan.ID]scan.Scan
-	next  scan.ID
+	mu       sync.Mutex
+	scans    map[scan.ID]scan.Scan
+	findings map[scan.ID][]finding.Finding
+	next     scan.ID
 }
 
 func newFakeScans() *fakeScans {
-	return &fakeScans{scans: make(map[scan.ID]scan.Scan)}
+	return &fakeScans{scans: make(map[scan.ID]scan.Scan), findings: make(map[scan.ID][]finding.Finding)}
 }
 
 func (f *fakeScans) RequestScan(_ context.Context, projectID project.ID, requestedBy string) (scan.ID, error) {
@@ -268,6 +272,38 @@ func (f *fakeScans) Scan(_ context.Context, id scan.ID) (scan.Scan, error) {
 	return sc, nil
 }
 
+func (f *fakeScans) ScansByProject(_ context.Context, projectID project.ID) ([]scan.Scan, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []scan.Scan
+	for _, sc := range f.scans {
+		if sc.ProjectID == projectID {
+			out = append(out, sc)
+		}
+	}
+	slices.SortFunc(out, func(a, b scan.Scan) int { return cmp.Compare(b.ID, a.ID) })
+	return out, nil
+}
+
+func (f *fakeScans) FindingsByScan(_ context.Context, id scan.ID) ([]finding.Finding, error) {
+	if f.findingsErr != nil {
+		return nil, f.findingsErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.findings[id]), nil
+}
+
+// putFindings stores the findings that FindingsByScan returns for id.
+func (f *fakeScans) putFindings(id scan.ID, fs ...finding.Finding) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.findings[id] = fs
+}
+
 // put stores sc under its ID.
 func (f *fakeScans) put(sc scan.Scan) {
 	f.mu.Lock()
@@ -285,4 +321,59 @@ func (f *fakeScans) all() []scan.Scan {
 	}
 	slices.SortFunc(out, func(a, b scan.Scan) int { return cmp.Compare(a.ID, b.ID) })
 	return out
+}
+
+// blockingStore is a project and scan store whose every call waits until
+// its context ends. It records whether each call's context had a deadline.
+type blockingStore struct {
+	mu        sync.Mutex
+	calls     int
+	deadlines int
+}
+
+func (b *blockingStore) wait(ctx context.Context) error {
+	b.mu.Lock()
+	b.calls++
+	if _, ok := ctx.Deadline(); ok {
+		b.deadlines++
+	}
+	b.mu.Unlock()
+	<-ctx.Done()
+	return ctx.Err()
+}
+
+// counts returns the number of calls and of calls whose context had a
+// deadline.
+func (b *blockingStore) counts() (calls, deadlines int) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.calls, b.deadlines
+}
+
+func (b *blockingStore) CreateProject(ctx context.Context, _ project.Project) (project.ID, error) {
+	return 0, b.wait(ctx)
+}
+
+func (b *blockingStore) Project(ctx context.Context, _ project.ID) (project.Project, error) {
+	return project.Project{}, b.wait(ctx)
+}
+
+func (b *blockingStore) Projects(ctx context.Context) ([]project.Project, error) {
+	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) RequestScan(ctx context.Context, _ project.ID, _ string) (scan.ID, error) {
+	return 0, b.wait(ctx)
+}
+
+func (b *blockingStore) Scan(ctx context.Context, _ scan.ID) (scan.Scan, error) {
+	return scan.Scan{}, b.wait(ctx)
+}
+
+func (b *blockingStore) ScansByProject(ctx context.Context, _ project.ID) ([]scan.Scan, error) {
+	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) FindingsByScan(ctx context.Context, _ scan.ID) ([]finding.Finding, error) {
+	return nil, b.wait(ctx)
 }

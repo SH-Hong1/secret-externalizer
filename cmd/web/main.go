@@ -107,13 +107,18 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 		return fmt.Errorf("migrating database: %w", err)
 	}
 
-	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store, database, database))
+	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store, database, database, databaseLimit))
 }
 
+// databaseLimit bounds the database calls of one request, so that a page
+// shows the error page instead of hanging when postgres does not answer.
+const databaseLimit = 5 * time.Second
+
 // valkeyOption configures the valkey client so that a command fails within a
-// few seconds when valkey is gone. Request contexts carry no deadline, and
-// without a limit the client would retry a read until valkey came back, so a
-// page would hang instead of showing the 503 page.
+// few seconds when valkey is gone. Sessions are read under a request context
+// that carries no deadline, and without a limit the client would retry a
+// read until valkey came back, so a page would hang instead of showing the
+// 503 page.
 func valkeyOption(addr string) valkey.ClientOption {
 	return valkey.ClientOption{
 		InitAddress: []string{addr},

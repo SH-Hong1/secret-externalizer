@@ -5,8 +5,10 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -36,14 +38,22 @@ func (b *syncBuffer) String() string {
 // fakeQueue hands out the jobs it holds, one claim at a time, and then
 // reports that none is left. claimErrs are returned by the first claims,
 // before any job is handed out.
+//
+// extendErrs are returned by the first renewals, and extendErr by the rest.
+// releaseErr is what ReleaseJob returns, and onRelease, when set, runs with
+// the context of each ReleaseJob call.
 type fakeQueue struct {
-	extendErr error
-	extended  chan struct{}
+	extendErr  error
+	extended   chan struct{}
+	releaseErr error
+	onRelease  func(ctx context.Context)
 
-	mu        sync.Mutex
-	jobs      []job.Job
-	claimErrs []error
-	claims    int
+	mu         sync.Mutex
+	jobs       []job.Job
+	claimErrs  []error
+	claims     int
+	extendErrs []error
+	releases   []int64
 }
 
 func newFakeQueue(jobs ...job.Job) *fakeQueue {
@@ -72,7 +82,31 @@ func (q *fakeQueue) ExtendJob(_ context.Context, _ int64, _ string, _ time.Durat
 	case q.extended <- struct{}{}:
 	default:
 	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.extendErrs) > 0 {
+		err := q.extendErrs[0]
+		q.extendErrs = q.extendErrs[1:]
+		return err
+	}
 	return q.extendErr
+}
+
+func (q *fakeQueue) ReleaseJob(ctx context.Context, jobID int64, _ string) error {
+	if q.onRelease != nil {
+		q.onRelease(ctx)
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.releases = append(q.releases, jobID)
+	return q.releaseErr
+}
+
+// released returns the IDs of the jobs ReleaseJob was called for.
+func (q *fakeQueue) released() []int64 {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return slices.Clone(q.releases)
 }
 
 // runInBackground starts job.Run and returns a function that cancels it and
@@ -288,5 +322,174 @@ func TestRun_RejectsBadOptions(t *testing.T) {
 				t.Errorf("Run(%+v) = nil, want an error", opts)
 			}
 		})
+	}
+}
+
+func TestRun_ReleasesJobOnCancel(t *testing.T) {
+	q := newFakeQueue(job.Job{ID: 4, ScanID: 4, Attempts: 1})
+	var handlerReturned atomic.Bool
+	type call struct {
+		afterHandler bool
+		ctxErr       error
+		hasDeadline  bool
+	}
+	calls := make(chan call, 2)
+	q.onRelease = func(ctx context.Context) {
+		_, ok := ctx.Deadline()
+		calls <- call{afterHandler: handlerReturned.Load(), ctxErr: ctx.Err(), hasDeadline: ok}
+	}
+	started := make(chan struct{})
+	stop := runInBackground(t, q, func(ctx context.Context, _ job.Job) error {
+		close(started)
+		<-ctx.Done()
+		defer handlerReturned.Store(true)
+		return ctx.Err()
+	}, discardLogger())
+
+	<-started
+	if err := stop(); err != nil {
+		t.Errorf("Run() after cancel = %v, want nil", err)
+	}
+	if got := q.released(); !slices.Equal(got, []int64{4}) {
+		t.Fatalf("Run() released jobs %v on cancel, want [4]", got)
+	}
+	c := <-calls
+	if !c.afterHandler || c.ctxErr != nil || !c.hasDeadline {
+		t.Errorf("ReleaseJob() call = %+v, want it after the handler returned, with a live context that has a deadline", c)
+	}
+}
+
+func TestRun_NoReleaseWhenLeaseLost(t *testing.T) {
+	q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+	q.extendErr = job.ErrLeaseLost
+	cancelled := make(chan struct{})
+	stop := runInBackground(t, q, func(ctx context.Context, _ job.Job) error {
+		<-ctx.Done()
+		close(cancelled)
+		return ctx.Err()
+	}, discardLogger())
+
+	<-cancelled
+	if err := stop(); err != nil {
+		t.Errorf("Run() after cancel = %v, want nil", err)
+	}
+	if got := q.released(); len(got) != 0 {
+		t.Errorf("Run() released jobs %v after the lease was lost, want none", got)
+	}
+}
+
+func TestRun_NoReleaseWhenHandlerFinished(t *testing.T) {
+	tests := []struct {
+		name string
+		// handler runs as the job's handler; started is closed when it runs.
+		handler func(started chan struct{}) job.Handler
+	}{
+		{"returned before the stop", func(started chan struct{}) job.Handler {
+			return func(context.Context, job.Job) error {
+				close(started)
+				return nil
+			}
+		}},
+		{"finished the job after the stop", func(started chan struct{}) job.Handler {
+			return func(ctx context.Context, _ job.Job) error {
+				close(started)
+				<-ctx.Done()
+				return nil
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+			started := make(chan struct{})
+			stop := runInBackground(t, q, tt.handler(started), discardLogger())
+			<-started
+			if err := stop(); err != nil {
+				t.Errorf("Run() after cancel = %v, want nil", err)
+			}
+			if got := q.released(); len(got) != 0 {
+				t.Errorf("Run() released jobs %v after the handler finished the job, want none", got)
+			}
+		})
+	}
+}
+
+func TestRun_ReleaseErrorIsLoggedOnce(t *testing.T) {
+	q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+	q.releaseErr = errors.New("fake release failure")
+	var logs syncBuffer
+	started := make(chan struct{})
+	stop := runInBackground(t, q, func(ctx context.Context, _ job.Job) error {
+		close(started)
+		<-ctx.Done()
+		return ctx.Err()
+	}, slog.New(slog.NewJSONHandler(&logs, nil)))
+
+	<-started
+	if err := stop(); err != nil {
+		t.Errorf("Run() after a failed release = %v, want nil", err)
+	}
+	if n := strings.Count(logs.String(), "fake release failure"); n != 1 {
+		t.Errorf("Run() logged the release error %d times, want 1; log:\n%s", n, logs.String())
+	}
+}
+
+// leaseExpiry runs one job in a synctest bubble with a lease of one minute
+// renewed every 20 seconds, and returns how long after the start the
+// handler's context was cancelled, and the jobs released.
+func leaseExpiry(t *testing.T, q *fakeQueue) (time.Duration, []int64) {
+	t.Helper()
+	var elapsed time.Duration
+	var released []int64
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		opts := job.Options{WorkerID: "fake-worker", Poll: time.Hour, Lease: time.Minute, Heartbeat: 20 * time.Second}
+		start := time.Now()
+		cancelled := make(chan time.Duration, 1)
+		returned := make(chan error, 1)
+		go func() {
+			returned <- job.Run(ctx, discardLogger(), q, func(ctx context.Context, _ job.Job) error {
+				// A handler that is never cancelled gives up after ten
+				// minutes, so a failure is reported rather than hanging.
+				select {
+				case <-ctx.Done():
+				case <-time.After(10 * time.Minute):
+				}
+				cancelled <- time.Since(start)
+				return ctx.Err()
+			}, opts)
+		}()
+		elapsed = <-cancelled
+		cancel()
+		if err := <-returned; err != nil {
+			t.Errorf("Run() after cancel = %v, want nil", err)
+		}
+		released = q.released()
+	})
+	return elapsed, released
+}
+
+func TestRun_CancelsHandlerWhenLeaseExpiresLocally(t *testing.T) {
+	q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+	q.extendErr = errors.New("fake connection refused")
+	elapsed, released := leaseExpiry(t, q)
+	if elapsed != time.Minute {
+		t.Errorf("Run() with failing renewals cancelled the handler %v after the claim, want at the lease of 1m0s", elapsed)
+	}
+	if len(released) != 0 {
+		t.Errorf("Run() released jobs %v after the lease ran out, want none", released)
+	}
+}
+
+func TestRun_RenewalAfterFailureKeepsHandler(t *testing.T) {
+	q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+	// The renewal at 20s fails, the one at 40s succeeds, and every later one
+	// fails, so the lease runs out one minute after the 40s renewal.
+	q.extendErrs = []error{errors.New("fake connection refused"), nil}
+	q.extendErr = errors.New("fake connection refused")
+	elapsed, _ := leaseExpiry(t, q)
+	if want := 40*time.Second + time.Minute; elapsed != want {
+		t.Errorf("Run() cancelled the handler %v after the claim, want %v, one lease after the last renewal", elapsed, want)
 	}
 }

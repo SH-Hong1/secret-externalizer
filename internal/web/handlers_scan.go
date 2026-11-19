@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 )
@@ -35,8 +36,8 @@ func handleScanCreate(logger *slog.Logger, rd *renderer, scans ScanStore) http.H
 	})
 }
 
-// handleScan shows the status of one scan. The page refreshes itself while
-// the scan is queued or running.
+// handleScan shows one scan. The page refreshes itself while the scan is
+// queued or running, and lists the findings once it has succeeded.
 func handleScan(logger *slog.Logger, rd *renderer, scans ScanStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -53,6 +54,13 @@ func handleScan(logger *slog.Logger, rd *renderer, scans ScanStore) http.Handler
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading scan: %w", err))
 			return
 		}
-		rd.page(w, r, logger, http.StatusOK, "scan.html", sc)
+		var fs []finding.Finding
+		if sc.Status == scan.StatusSucceeded {
+			if fs, err = scans.FindingsByScan(r.Context(), sc.ID); err != nil {
+				rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading findings: %w", err))
+				return
+			}
+		}
+		rd.page(w, r, logger, http.StatusOK, "scan.html", newScanPage(sc, fs))
 	})
 }

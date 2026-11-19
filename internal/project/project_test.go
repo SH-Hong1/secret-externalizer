@@ -29,6 +29,10 @@ func TestParsePath(t *testing.T) {
 		{"escapes through parent", "a/../../b", "", project.ErrInvalidPath},
 		{"backslash", `a\b`, "", project.ErrInvalidPath},
 		{"nul", "a\x00b", "", project.ErrInvalidPath},
+		{"newline", "a\nb", "", project.ErrInvalidPath},
+		{"tab", "a\tb", "", project.ErrInvalidPath},
+		{"carriage return", "a\rb", "", project.ErrInvalidPath},
+		{"delete", "a\x7fb", "", project.ErrInvalidPath},
 		{"too long", strings.Repeat("a", 1025), "", project.ErrInvalidPath},
 	}
 	for _, tt := range tests {

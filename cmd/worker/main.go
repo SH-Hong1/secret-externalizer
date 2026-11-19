@@ -10,13 +10,22 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
+	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/bao"
+	"github.com/SH-Hong1/secret-externalizer/internal/betterleaks"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
+	"github.com/SH-Hong1/secret-externalizer/internal/keyfile"
+	"github.com/SH-Hong1/secret-externalizer/internal/opengrep"
+	"github.com/SH-Hong1/secret-externalizer/internal/ruleset"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
+	"github.com/SH-Hong1/secret-externalizer/internal/scanexec"
 )
 
 // version identifies the build. It is set at link time with -ldflags -X and
@@ -37,16 +46,58 @@ func main() {
 //
 // A flag error is returned and not printed, so the caller reports it once.
 // Asking for help prints the usage to stdout and is not an error. Otherwise it
-// reads the configuration, opens and migrates the database, and runs queued
+// reads the configuration, prepares the OpenBao client and the scanners,
+// reads the rules version, opens and migrates the database, and runs queued
 // scans until SIGINT, SIGTERM or cancellation of ctx.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
-	return runWith(ctx, args, getenv, stdout, stderr, nil)
+	return runWith(ctx, args, getenv, stdout, stderr, nil, newScanDeps)
 }
 
+// scanDeps are what a scan runs with besides the database.
+type scanDeps struct {
+	fingerprints scan.Fingerprinter
+	originals    scan.Originals
+	scanners     []scan.Scanner
+}
+
+// scannerPath is the PATH the scanners run with.
+const scannerPath = "/usr/local/bin:/usr/bin:/bin"
+
+// newScanDeps returns the OpenBao client and the three scanners that cfg
+// describes. The client does not contact OpenBao until it is first used.
+func newScanDeps(cfg config) (scanDeps, error) {
+	client, err := bao.New(cfg.baoAddr, cfg.baoCreds, &http.Client{Timeout: 10 * time.Second})
+	if err != nil {
+		return scanDeps{}, fmt.Errorf("preparing openbao client: %w", err)
+	}
+	env := scanexec.Env{Path: scannerPath, Home: scanHome(cfg), TmpDir: scanTmp(cfg)}
+	return scanDeps{
+		fingerprints: client,
+		originals:    client,
+		scanners: []scan.Scanner{
+			betterleaks.New(cfg.betterleaksBin, filepath.Join(cfg.rulesDir, "betterleaks.toml"), env),
+			// The wrapper always excludes .git, target, build, and
+			// node_modules. Project excludes are applied by the runner,
+			// which leaves out results for files it did not list.
+			opengrep.New(cfg.opengrepBin, filepath.Join(cfg.rulesDir, "opengrep"), nil, env),
+			keyfile.New(),
+		},
+	}, nil
+}
+
+// The folders under cfg.scanTempDir: the scanners' home and temporary
+// folders, and the folder that holds each scan's copies.
+func scanHome(cfg config) string   { return filepath.Join(cfg.scanTempDir, "home") }
+func scanTmp(cfg config) string    { return filepath.Join(cfg.scanTempDir, "tmp") }
+func scanCopies(cfg config) string { return filepath.Join(cfg.scanTempDir, "copies") }
+
 // runWith is run with a function that adjusts the configuration after it is
-// loaded, so tests can shorten the queue intervals. A nil tune changes
-// nothing.
-func runWith(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer, tune func(*config)) error {
+// loaded, so tests can shorten the queue intervals, and a function that
+// builds the fingerprinter, the originals store, and the scanners, so tests
+// can replace them. A nil tune changes nothing.
+func runWith(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer,
+	tune func(*config), deps func(config) (scanDeps, error),
+) error {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	showVersion := flags.Bool("version", false, "print the version and exit")
@@ -73,6 +124,19 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	if tune != nil {
 		tune(&cfg)
 	}
+	sd, err := deps(cfg)
+	if err != nil {
+		return err
+	}
+	rulesVersion, err := ruleset.Version(cfg.rulesDir)
+	if err != nil {
+		return fmt.Errorf("reading rules version: %w", err)
+	}
+	for _, d := range []string{scanHome(cfg), scanTmp(cfg), scanCopies(cfg)} {
+		if err := os.MkdirAll(d, 0o700); err != nil {
+			return fmt.Errorf("making scan folder: %w", err)
+		}
+	}
 	workerID, err := newWorkerID()
 	if err != nil {
 		return fmt.Errorf("naming the worker: %w", err)
@@ -91,8 +155,16 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 		return fmt.Errorf("migrating database: %w", err)
 	}
 
-	logger.InfoContext(ctx, "worker started", "worker_id", workerID, "config", cfg)
-	runner := scan.NewRunner(logger, database, cfg.root, workerID)
+	logger.InfoContext(ctx, "worker started", "worker_id", workerID, "rules_version", rulesVersion, "config", cfg)
+	runner := scan.NewRunner(logger, database, sd.fingerprints, sd.originals, sd.scanners, scan.Options{
+		WorkerID:     workerID,
+		Root:         cfg.root,
+		RulesVersion: rulesVersion,
+		TempDir:      scanCopies(cfg),
+		Git:          cfg.gitBin,
+		MaxFileBytes: scan.DefaultMaxFileBytes,
+		TimeLimit:    scan.DefaultTimeLimit,
+	})
 	opts := job.Options{WorkerID: workerID, Poll: cfg.poll, Lease: cfg.lease, Heartbeat: cfg.heartbeat}
 	if err := job.Run(ctx, logger, database, runner.Handle, opts); err != nil {
 		return fmt.Errorf("running jobs: %w", err)

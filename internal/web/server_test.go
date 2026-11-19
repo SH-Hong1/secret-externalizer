@@ -9,15 +9,17 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/web"
 )
 
 func newTestServer(t *testing.T, logOut io.Writer) *httptest.Server {
 	t.Helper()
 	logger := slog.New(slog.NewJSONHandler(logOut, nil))
-	srv := httptest.NewServer(web.NewServer(logger, &fakeAuthenticator{}, newFakeSessions(), newFakeAttempts(), newFakeProjects(), newFakeScans()))
+	srv := httptest.NewServer(web.NewServer(logger, &fakeAuthenticator{}, newFakeSessions(), newFakeAttempts(), newFakeProjects(), newFakeScans(), time.Minute))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -142,5 +144,54 @@ func TestRequestLog(t *testing.T) {
 		if strings.Contains(line, bad) {
 			t.Errorf("log line %q contains %q, want it left out", line, bad)
 		}
+	}
+}
+
+func TestStoreCallsHaveTimeLimit(t *testing.T) {
+	const limit = 3 * time.Second
+	tests := []struct {
+		method, target, body string
+	}{
+		{http.MethodGet, "/projects", ""},
+		{http.MethodPost, "/projects", "name=shop&path=shop"},
+		{http.MethodGet, "/projects/1", ""},
+		{http.MethodPost, "/projects/1/scans", ""},
+		{http.MethodGet, "/scans/1", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.method+" "+tt.target, func(t *testing.T) {
+			// Inside the bubble the clock moves only when every goroutine
+			// waits, so the request takes exactly as long as the limit.
+			synctest.Test(t, func(t *testing.T) {
+				var logs bytes.Buffer
+				logger := slog.New(slog.NewJSONHandler(&logs, nil))
+				sessions := newFakeSessions()
+				id, err := sessions.Create(t.Context(), auth.User{Subject: "fake-subject", Name: "Fake User", Roles: []auth.Role{auth.RoleUser}})
+				if err != nil {
+					t.Fatalf("fakeSessions.Create() error = %v", err)
+				}
+				store := &blockingStore{}
+				h := web.NewServer(logger, &fakeAuthenticator{}, sessions, newFakeAttempts(), store, store, limit)
+
+				req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, strings.NewReader(tt.body))
+				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+				req.Header.Set("Sec-Fetch-Site", "same-origin")
+				req.Header.Set("Cookie", "se_session="+string(id))
+				rec := httptest.NewRecorder()
+				start := time.Now()
+				h.ServeHTTP(rec, req)
+				elapsed := time.Since(start)
+
+				if rec.Code != http.StatusInternalServerError || elapsed != limit {
+					t.Errorf("%s %s with a hung store = %d after %v, want 500 after %v", tt.method, tt.target, rec.Code, elapsed, limit)
+				}
+				if calls, deadlines := store.counts(); calls != 1 || deadlines != 1 {
+					t.Errorf("%s %s made %d store calls, %d with a deadline, want 1 and 1", tt.method, tt.target, calls, deadlines)
+				}
+				if n := strings.Count(logs.String(), `"msg":"request failed"`); n != 1 {
+					t.Errorf("%s %s logged %d failures, want 1; log:\n%s", tt.method, tt.target, n, logs.String())
+				}
+			})
+		})
 	}
 }

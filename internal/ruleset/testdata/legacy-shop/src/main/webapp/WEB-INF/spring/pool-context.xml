@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:p="http://www.springframework.org/schema/p">
+  <bean id="hikariConfig" class="com.zaxxer.hikari.HikariConfig">
+    <property name="jdbcUrl" value="jdbc:mysql://db.example.invalid:3306/shop"/>
+    <property name="username" value="hikari_app"/>
+    <property name="password" value="dev-only-fake-hikari-password"/>
+  </bean>
+  <bean id="reportPool" class="com.mchange.v2.c3p0.ComboPooledDataSource">
+    <property name="jdbcUrl" value="jdbc:oracle:thin:@report.example.invalid:1521:RPT"/>
+    <property name="user" value="report_app"/>
+    <property name="password">
+      <value>dev-only-fake-c3p0-password</value>
+    </property>
+  </bean>
+  <bean id="legacyDataSource" class="org.apache.commons.dbcp.BasicDataSource"
+        p:url="jdbc:oracle:thin:@legacy.example.invalid:1521:OLD" p:username="legacy_app" p:password="dev-only-fake-p-password"/>
+  <bean id="mailSender" class="org.springframework.mail.javamail.JavaMailSenderImpl">
+    <property name="host" value="smtp.example.invalid"/>
+    <property name="username" value="mailer"/>
+    <property name="password" value="dev-only-fake-mail-password"/>
+  </bean>
+</beans>
