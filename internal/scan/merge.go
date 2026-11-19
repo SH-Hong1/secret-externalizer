@@ -27,10 +27,11 @@ type mergedLocation struct {
 // maps each value to its fingerprint.
 //
 // It also returns the originals to keep, by fingerprint: the value of every
-// finding that is not customer data. A customer data finding gets no
-// surrounding lines, and neither does any finding in a file marked
-// noContext (see placedFile). Surrounding lines mask every placed value of
-// the file and every place an unplaced result's value may be.
+// finding that is not customer data. No finding in a file marked noContext
+// gets surrounding lines (see placedFile); that covers every file with a
+// customer data finding and every file on a customer data path. Surrounding
+// lines mask every placed value of the file and every place an unplaced
+// result's value may be.
 //
 // A location's end is the line and column of the value's last character.
 // Findings are ordered by file, first location, and fingerprint; locations

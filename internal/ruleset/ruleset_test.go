@@ -8,7 +8,6 @@ import (
 	"io/fs"
 	"maps"
 	"os"
-	"path"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -300,21 +299,59 @@ func TestRules_IgnoredAndTestDirsAreScanned(t *testing.T) {
 	}
 }
 
-// dataPath reports whether rel is a file the customer-data rules apply to:
-// a log or sample-data extension, or a file under a log or sample-data
-// folder.
-func dataPath(rel string) bool {
-	switch strings.ToLower(path.Ext(rel)) {
-	case ".log", ".csv", ".tsv", ".txt", ".sql", ".dat", ".json":
-		return true
-	}
-	for _, dir := range strings.Split(path.Dir(rel), "/") {
-		switch strings.ToLower(dir) {
-		case "log", "logs", "sample", "samples", "data", "dump":
-			return true
+var tomlPath = regexp.MustCompile(`^path = '''(.*)'''$`)
+
+// TestRules_CustomerDataPathMatchesGo checks that every customer-data rule
+// in betterleaks.toml limits itself to the same files that
+// finding.CustomerDataPath names, which the scan uses to leave out the
+// surrounding lines of every finding in such a file.
+func TestRules_CustomerDataPathMatchesGo(t *testing.T) {
+	var id string
+	patterns := map[string]string{}
+	scanLines(t, repoPath(t, "rules/betterleaks.toml"), func(line string) {
+		if line == "[[rules]]" {
+			id = ""
+		}
+		if m := tomlID.FindStringSubmatch(line); m != nil {
+			id = m[1]
+		}
+		if m := tomlPath.FindStringSubmatch(line); m != nil {
+			patterns[id] = m[1]
+		}
+	})
+	var customer []string
+	for _, r := range readRules(t) {
+		if r.file == "betterleaks.toml" && r.category == string(finding.CategoryCustomerData) {
+			customer = append(customer, r.id)
 		}
 	}
-	return false
+	if len(customer) == 0 {
+		t.Fatal("betterleaks.toml has no customer-data rule")
+	}
+	paths := []string{
+		"app.log", "logs/app.log", "export/orders.CSV", "a.tsv", "readme.txt", "db/init.sql", "x.dat",
+		"conf/settings.json", "log/x.properties", "logs/x.java", "a/b/Sample/x.xml", "samples/x.yml",
+		"data/x.properties", "deep/er/dump/x", "LOGS/x", "src/main/java/A.java", "conf/db.properties",
+		"web.xml", "app.log.1", "catalina.out", "logs", "data", "logsx/a.java", "mydata/a.java",
+		"data.properties", "src/log.java", "a.jsonp", "a.LoG", "dumps/x.java", "x/datas/y.java",
+	}
+	for _, rule := range customer {
+		p, ok := patterns[rule]
+		if !ok {
+			t.Errorf("betterleaks.toml: customer-data rule %q has no path line", rule)
+			continue
+		}
+		re, err := regexp.Compile(p)
+		if err != nil {
+			t.Errorf("betterleaks.toml: rule %q path %q: %v", rule, p, err)
+			continue
+		}
+		for _, rel := range paths {
+			if got, want := re.MatchString(rel), finding.CustomerDataPath(rel); got != want {
+				t.Errorf("betterleaks.toml: rule %q path matches %q = %v, but CustomerDataPath(%q) = %v", rule, rel, got, rel, want)
+			}
+		}
+	}
 }
 
 func TestRules_CustomerDataOnlyInDataFiles(t *testing.T) {
@@ -324,7 +361,7 @@ func TestRules_CustomerDataOnlyInDataFiles(t *testing.T) {
 		if r.Category != finding.CategoryCustomerData {
 			continue
 		}
-		if !dataPath(r.File) {
+		if !finding.CustomerDataPath(r.File) {
 			t.Errorf("scanning legacy-shop: %s %s reported customer data %s in %s line %d, want none outside log and sample data", r.Tool, r.Rule, r.Kind, r.File, r.Line)
 		}
 		if r.File == "logs/app-2026-11-01.log" && r.Kind == finding.KindPhone {

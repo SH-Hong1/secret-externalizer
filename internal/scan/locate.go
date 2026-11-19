@@ -44,8 +44,10 @@ type placedFile struct {
 	// the file could not be placed, so the place of its value is not known
 	// (betterleaks reports a value it decoded from base64, for example,
 	// which the text holds only in encoded form), or a scanner dropped a
-	// result in the file or a result whose file it could not name. It is
-	// only ever set.
+	// result in the file or a result whose file it could not name, or the
+	// file may hold customer data that no rule reported: it is on a
+	// customer data path (finding.CustomerDataPath), or a rule reported
+	// customer data in it. It is only ever set.
 	noContext bool
 	// unplaced holds the ranges where the values of results that could not
 	// be placed may be. They are masked as well, in case surrounding lines
@@ -91,7 +93,12 @@ func dropContext(placed []*placedFile, files fileList, d drops) {
 
 // placeFile places the results raws of the listed file rel.
 func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*placedFile, int) {
-	pf := &placedFile{rel: rel, hash: src.hash}
+	pf := &placedFile{rel: rel, hash: src.hash, noContext: finding.CustomerDataPath(rel)}
+	for _, raw := range raws {
+		if raw.Category == finding.CategoryCustomerData {
+			pf.noContext = true
+		}
+	}
 	bom := 0
 	if src.text {
 		f, err := textfile.Read(filepath.Join(dir, filepath.FromSlash(rel)), maxBytes)
