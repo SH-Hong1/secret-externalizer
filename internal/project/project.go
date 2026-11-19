@@ -42,6 +42,9 @@ var (
 // maxPathLen is the longest path, in bytes, that ParsePath accepts.
 const maxPathLen = 1024
 
+// isControl reports whether r is an ASCII control character or DEL.
+func isControl(r rune) bool { return r < 0x20 || r == 0x7f }
+
 // ParsePath checks the shape of a path relative to the workspace root and
 // returns it in clean form. It does not touch the file system.
 func ParsePath(raw string) (string, error) {
@@ -50,8 +53,8 @@ func ParsePath(raw string) (string, error) {
 		return "", fmt.Errorf("%w: empty", ErrInvalidPath)
 	case len(raw) > maxPathLen:
 		return "", fmt.Errorf("%w: longer than %d bytes", ErrInvalidPath, maxPathLen)
-	case strings.ContainsRune(raw, 0):
-		return "", fmt.Errorf("%w: contains a NUL byte", ErrInvalidPath)
+	case strings.IndexFunc(raw, isControl) >= 0:
+		return "", fmt.Errorf("%w: contains a control character", ErrInvalidPath)
 	case strings.ContainsRune(raw, '\\'):
 		return "", fmt.Errorf("%w: contains a backslash", ErrInvalidPath)
 	case strings.HasPrefix(raw, "/"):
