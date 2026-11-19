@@ -8,11 +8,13 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 // Authenticator runs the login with the identity provider.
@@ -39,10 +41,12 @@ type AttemptStore interface {
 // ProjectStore keeps the registered projects. CreateProject fails with an
 // error matching db.ErrDuplicate when the name or path is taken, and Project
 // with one matching db.ErrNotFound when the ID is unknown.
+// ProjectSummaries returns every project ordered by name, with its newest
+// scan and the bundle counts of its newest succeeded scan.
 type ProjectStore interface {
 	CreateProject(ctx context.Context, p project.Project) (project.ID, error)
 	Project(ctx context.Context, id project.ID) (project.Project, error)
-	Projects(ctx context.Context) ([]project.Project, error)
+	ProjectSummaries(ctx context.Context) ([]project.Summary, error)
 }
 
 // ScanStore keeps the scans. RequestScan returns the ID of the project's
@@ -59,16 +63,41 @@ type ScanStore interface {
 	FindingsByScan(ctx context.Context, id scan.ID) ([]finding.Finding, error)
 }
 
+// TriageStore keeps the bundles of a project and the verdicts users give
+// them. LatestScan returns the project's newest succeeded scan, or an error
+// matching db.ErrNotFound. Entries returns one page of the triage list of a
+// scan; a page past the last gives the last. Bundle returns a bundle with
+// the members the scan found, or an error matching db.ErrNotFound.
+// CustomerGroup returns the customer data a key names, with no bundles when
+// it names nothing. Decide and MoveFinding record a user's choice; UsedNames
+// and PastDecision feed suggestions.
+type TriageStore interface {
+	LatestScan(ctx context.Context, projectID project.ID) (scan.Scan, error)
+	Entries(ctx context.Context, projectID project.ID, scanID scan.ID, f triage.Filter) (triage.Page, error)
+	Bundle(ctx context.Context, projectID project.ID, scanID scan.ID, id triage.BundleID) (triage.Bundle, error)
+	CustomerGroup(ctx context.Context, projectID project.ID, scanID scan.ID, key triage.GroupKey) (triage.Group, error)
+	Decide(ctx context.Context, projectID project.ID, ids []triage.BundleID, d triage.Decision, by audit.Actor) error
+	MoveFinding(ctx context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (triage.BundleID, error)
+	UsedNames(ctx context.Context, projectID project.ID) ([]triage.Name, error)
+	PastDecision(ctx context.Context, fingerprint string, except triage.BundleID) (triage.Decision, bool, error)
+}
+
+// Suggester proposes a verdict and a name for a bundle that has no verdict.
+// A suggestion is shown, never stored.
+type Suggester interface {
+	Suggest(ctx context.Context, b triage.Bundle) (triage.Suggestion, error)
+}
+
 // NewServer returns the complete handler, including middleware. From the
 // outside in, a request passes panic recovery, the request log, the security
 // headers, and cross-origin protection before it reaches its route. A route
-// that calls projects or scans runs under a deadline storeLimit from the
-// moment it is reached; the session is read before that deadline starts.
-func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, storeLimit time.Duration) http.Handler {
+// that calls projects, scans or triage runs under a deadline storeLimit from
+// the moment it is reached; the session is read before that deadline starts.
+func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, triage TriageStore, suggester Suggester, storeLimit time.Duration) http.Handler {
 	mux := http.NewServeMux()
 	a := loadAssets(staticFiles())
 	rd := newRenderer(a)
-	addRoutes(mux, logger, rd, a, authn, sessions, attempts, projects, scans, storeLimit)
+	addRoutes(mux, logger, rd, a, authn, sessions, attempts, projects, scans, triage, suggester, storeLimit)
 
 	return chain(mux,
 		recoverPanic(logger, rd),

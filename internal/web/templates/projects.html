@@ -6,10 +6,15 @@
 <a class="btn btn-primary btn-lg" href="/projects/new">프로젝트 등록</a>
 </div>
 {{if .Projects}}<div class="table-wrap">
-<table class="table min-w-[480px]">
-<thead><tr><th>이름</th><th>경로</th></tr></thead>
+<table class="table min-w-[720px]">
+<thead><tr><th>이름</th><th>경로</th><th>마지막 스캔</th><th class="num">미판정</th><th class="num">전체</th></tr></thead>
 <tbody>
-{{range .Projects}}<tr><td><a class="row-link" href="/projects/{{.ID}}">{{.Name}}</a></td><td class="code-cell">{{.Path}}</td></tr>
+{{range .Projects}}<tr>
+<td><a class="row-link" href="/projects/{{.Project.ID}}">{{.Project.Name}}</a></td>
+<td class="code-cell">{{.Project.Path}}</td>
+<td>{{if .LastScanID}}<span class="mono">{{.ScanAt}}</span> <span class="badge badge-{{.Status}}">{{.StatusLabel}}</span>{{else}}<span class="muted">스캔 없음</span>{{end}}</td>
+{{if .HasResult}}<td class="num font-semibold">{{.Undecided}}</td><td class="num muted">{{.Total}}</td>{{else}}<td class="num muted">—</td><td class="num muted">—</td>{{end}}
+</tr>
 {{end}}</tbody>
 </table>
 </div>

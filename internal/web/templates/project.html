@@ -9,10 +9,14 @@
 <form method="post" action="/projects/{{.Project.ID}}/scans">
 <button class="btn btn-secondary btn-lg" type="submit">스캔 시작</button>
 </form>
-</div>
+{{with .Tiles}}<a class="btn btn-primary btn-lg" href="{{$.Triage}}">판정하기 · 미판정 {{(index . 0).N}}</a>
+{{end}}</div>
 <p class="lede mt-1.5">제외 경로: {{if .Project.Excludes}}{{range $i, $e := .Project.Excludes}}{{if $i}}, {{end}}<span class="mono text-2">{{$e}}</span>{{end}}{{else}}없음{{end}}</p>
 </div>
-<section>
+{{with .Tiles}}<section class="tiles" aria-label="판정 현황">
+{{range .}}<a class="tile tile-{{.Class}}" href="{{.Href}}"><span class="tile-label">{{.Label}}</span><span class="tile-figure">{{.N}}</span></a>
+{{end}}</section>
+{{end}}<section>
 <h2 class="section-title">스캔</h2>
 {{if .Scans}}<div class="table-wrap">
 <table class="table min-w-[680px]">
@@ -21,7 +25,7 @@
 {{range .Scans}}<tr>
 <td><a class="row-link" href="/scans/{{.ID}}">#{{.ID}}</a></td>
 <td><span class="mono">{{.RequestedAt}}</span> · <span class="text-2">{{.RequestedBy}}</span></td>
-<td><span class="badge badge-{{.Status}}">{{.StatusLabel}}</span></td>
+<td><span class="badge badge-{{.Status}}">{{.StatusLabel}}</span>{{if .Basis}} <span class="muted text-xs">판정 기준</span>{{end}}</td>
 <td class="code-cell">{{if .Commit}}{{.Commit}}{{else}}<span class="muted">—</span>{{end}}</td>
 <td class="num">{{if .Succeeded}}{{.Findings}}건{{else}}<span class="muted">—</span>{{end}}</td>
 </tr>

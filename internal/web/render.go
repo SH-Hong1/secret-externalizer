@@ -122,6 +122,23 @@ func (rd *renderer) page(w http.ResponseWriter, r *http.Request, logger *slog.Lo
 	rd.write(w, r, logger, status, &buf)
 }
 
+// fragment renders the template tmpl of the named page with data, without
+// the layout, and writes it with status. Like page, it renders into a buffer
+// first.
+func (rd *renderer) fragment(w http.ResponseWriter, r *http.Request, logger *slog.Logger, status int, name, tmpl string, data any) {
+	t, ok := rd.pages[name]
+	if !ok {
+		rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("unknown template %q", name))
+		return
+	}
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, tmpl, data); err != nil {
+		rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("rendering template %q of %q: %w", tmpl, name, err))
+		return
+	}
+	rd.write(w, r, logger, status, &buf)
+}
+
 // fail renders the error page for status. It logs err once when the status is
 // 500 or higher and never shows err on the page. The page shows the menu when
 // the request has a signed-in user.

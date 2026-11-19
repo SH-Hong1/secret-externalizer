@@ -28,6 +28,23 @@ type Project struct {
 	CreatedAt time.Time
 }
 
+// Summary is a project with the state of its scans. LastScanID,
+// LastScanStatus and LastScanAt describe the newest scan in any state; they
+// are zero when the project was never scanned. HasResult is true when a
+// scan has succeeded, and Undecided and Total then count the bundles the
+// newest succeeded scan found that have no verdict, and all of them.
+// LastScanStatus holds a scan status by its stored name, because the scan
+// package depends on this one.
+type Summary struct {
+	Project        Project
+	LastScanID     int64
+	LastScanStatus string
+	LastScanAt     time.Time
+	HasResult      bool
+	Undecided      int
+	Total          int
+}
+
 var (
 	// ErrInvalidPath means a path is empty, absolute, too long, has a
 	// character that is not allowed, or leaves the workspace root.

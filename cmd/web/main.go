@@ -107,7 +107,7 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 		return fmt.Errorf("migrating database: %w", err)
 	}
 
-	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store, database, database, databaseLimit))
+	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store, database, database, database, web.NewHistorySuggester(database), databaseLimit))
 }
 
 // databaseLimit bounds the database calls of one request, so that a page

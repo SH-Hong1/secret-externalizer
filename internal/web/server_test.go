@@ -19,7 +19,8 @@ import (
 func newTestServer(t *testing.T, logOut io.Writer) *httptest.Server {
 	t.Helper()
 	logger := slog.New(slog.NewJSONHandler(logOut, nil))
-	srv := httptest.NewServer(web.NewServer(logger, &fakeAuthenticator{}, newFakeSessions(), newFakeAttempts(), newFakeProjects(), newFakeScans(), time.Minute))
+	tr := newFakeTriage()
+	srv := httptest.NewServer(web.NewServer(logger, &fakeAuthenticator{}, newFakeSessions(), newFakeAttempts(), newFakeProjects(), newFakeScans(), tr, web.NewHistorySuggester(tr), time.Minute))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -157,6 +158,7 @@ func TestStoreCallsHaveTimeLimit(t *testing.T) {
 		{http.MethodGet, "/projects/1", ""},
 		{http.MethodPost, "/projects/1/scans", ""},
 		{http.MethodGet, "/scans/1", ""},
+		{http.MethodGet, "/projects/1/triage", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.target, func(t *testing.T) {
@@ -171,7 +173,7 @@ func TestStoreCallsHaveTimeLimit(t *testing.T) {
 					t.Fatalf("fakeSessions.Create() error = %v", err)
 				}
 				store := &blockingStore{}
-				h := web.NewServer(logger, &fakeAuthenticator{}, sessions, newFakeAttempts(), store, store, limit)
+				h := web.NewServer(logger, &fakeAuthenticator{}, sessions, newFakeAttempts(), store, store, store, web.NewHistorySuggester(store), limit)
 
 				req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, strings.NewReader(tt.body))
 				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

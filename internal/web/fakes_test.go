@@ -3,17 +3,20 @@ package web_test
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"slices"
 	"sync"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 // fakeSessions keeps sessions in memory. A non-nil error field makes the
@@ -164,9 +167,10 @@ type fakeProjects struct {
 	getErr    error
 	listErr   error
 
-	mu       sync.Mutex
-	projects map[project.ID]project.Project
-	next     project.ID
+	mu        sync.Mutex
+	projects  map[project.ID]project.Project
+	summaries map[project.ID]project.Summary
+	next      project.ID
 }
 
 func newFakeProjects() *fakeProjects {
@@ -210,6 +214,35 @@ func (f *fakeProjects) Projects(context.Context) ([]project.Project, error) {
 	}
 	slices.SortFunc(out, func(a, b project.Project) int { return cmp.Compare(a.Name, b.Name) })
 	return out, nil
+}
+
+// ProjectSummaries returns every project ordered by name, with the summary
+// that putSummary stored for it, or an empty one.
+func (f *fakeProjects) ProjectSummaries(context.Context) ([]project.Summary, error) {
+	if f.listErr != nil {
+		return nil, f.listErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make([]project.Summary, 0, len(f.projects))
+	for _, p := range f.projects {
+		s := f.summaries[p.ID]
+		s.Project = p
+		out = append(out, s)
+	}
+	slices.SortFunc(out, func(a, b project.Summary) int { return cmp.Compare(a.Project.Name, b.Project.Name) })
+	return out, nil
+}
+
+// putSummary stores the scan and verdict state ProjectSummaries returns for
+// s.Project.ID.
+func (f *fakeProjects) putSummary(s project.Summary) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.summaries == nil {
+		f.summaries = make(map[project.ID]project.Summary)
+	}
+	f.summaries[s.Project.ID] = s
 }
 
 // all returns every stored project ordered by ID.
@@ -358,7 +391,7 @@ func (b *blockingStore) Project(ctx context.Context, _ project.ID) (project.Proj
 	return project.Project{}, b.wait(ctx)
 }
 
-func (b *blockingStore) Projects(ctx context.Context) ([]project.Project, error) {
+func (b *blockingStore) ProjectSummaries(ctx context.Context) ([]project.Summary, error) {
 	return nil, b.wait(ctx)
 }
 
@@ -376,4 +409,193 @@ func (b *blockingStore) ScansByProject(ctx context.Context, _ project.ID) ([]sca
 
 func (b *blockingStore) FindingsByScan(ctx context.Context, _ scan.ID) ([]finding.Finding, error) {
 	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) LatestScan(ctx context.Context, _ project.ID) (scan.Scan, error) {
+	return scan.Scan{}, b.wait(ctx)
+}
+
+func (b *blockingStore) Entries(ctx context.Context, _ project.ID, _ scan.ID, _ triage.Filter) (triage.Page, error) {
+	return triage.Page{}, b.wait(ctx)
+}
+
+func (b *blockingStore) Bundle(ctx context.Context, _ project.ID, _ scan.ID, _ triage.BundleID) (triage.Bundle, error) {
+	return triage.Bundle{}, b.wait(ctx)
+}
+
+func (b *blockingStore) CustomerGroup(ctx context.Context, _ project.ID, _ scan.ID, _ triage.GroupKey) (triage.Group, error) {
+	return triage.Group{}, b.wait(ctx)
+}
+
+func (b *blockingStore) Decide(ctx context.Context, _ project.ID, _ []triage.BundleID, _ triage.Decision, _ audit.Actor) error {
+	return b.wait(ctx)
+}
+
+func (b *blockingStore) MoveFinding(ctx context.Context, _ project.ID, _ finding.ID, _ triage.BundleID, _ audit.Actor) (triage.BundleID, error) {
+	return 0, b.wait(ctx)
+}
+
+func (b *blockingStore) UsedNames(ctx context.Context, _ project.ID) ([]triage.Name, error) {
+	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) PastDecision(ctx context.Context, _ string, _ triage.BundleID) (triage.Decision, bool, error) {
+	return triage.Decision{}, false, b.wait(ctx)
+}
+
+// fakeTriage keeps the triage state of projects in memory. Entries filters
+// and pages entries the way the database does, and returns counts as given.
+// A non-nil error field makes the matching method return that error.
+type fakeTriage struct {
+	entriesErr error
+	bundleErr  error
+	pastErr    error
+
+	mu      sync.Mutex
+	latest  map[project.ID]scan.Scan
+	entries map[project.ID][]triage.Entry
+	counts  map[project.ID]map[triage.Verdict]int
+	bundles map[triage.BundleID]triage.Bundle
+	groups  map[triage.GroupKey]triage.Group
+	past    map[string]triage.Decision
+	used    []triage.Name
+	filters []triage.Filter
+}
+
+func newFakeTriage() *fakeTriage {
+	return &fakeTriage{
+		latest:  make(map[project.ID]scan.Scan),
+		entries: make(map[project.ID][]triage.Entry),
+		counts:  make(map[project.ID]map[triage.Verdict]int),
+		bundles: make(map[triage.BundleID]triage.Bundle),
+		groups:  make(map[triage.GroupKey]triage.Group),
+		past:    make(map[string]triage.Decision),
+	}
+}
+
+func (f *fakeTriage) LatestScan(_ context.Context, projectID project.ID) (scan.Scan, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	sc, ok := f.latest[projectID]
+	if !ok {
+		return scan.Scan{}, db.ErrNotFound
+	}
+	return sc, nil
+}
+
+func (f *fakeTriage) Entries(_ context.Context, projectID project.ID, _ scan.ID, filter triage.Filter) (triage.Page, error) {
+	if f.entriesErr != nil {
+		return triage.Page{}, f.entriesErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.filters = append(f.filters, filter)
+	var match []triage.Entry
+	for _, e := range f.entries[projectID] {
+		if filter.Category != "" && e.Category != filter.Category {
+			continue
+		}
+		switch filter.Status {
+		case triage.StatusAll:
+		case triage.StatusUndecided:
+			if e.Verdict != "" {
+				continue
+			}
+		default:
+			if string(e.Verdict) != filter.Status {
+				continue
+			}
+		}
+		match = append(match, e)
+	}
+	p := triage.Page{Total: len(match), Counts: map[triage.Verdict]int{}}
+	for v, n := range f.counts[projectID] {
+		p.Counts[v] = n
+	}
+	p.Pages = max(1, (p.Total+triage.PageSize-1)/triage.PageSize)
+	p.Page = min(max(filter.Page, 1), p.Pages)
+	start := (p.Page - 1) * triage.PageSize
+	p.Entries = slices.Clone(match[start:min(start+triage.PageSize, len(match))])
+	return p, nil
+}
+
+func (f *fakeTriage) Bundle(_ context.Context, projectID project.ID, _ scan.ID, id triage.BundleID) (triage.Bundle, error) {
+	if f.bundleErr != nil {
+		return triage.Bundle{}, f.bundleErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	b, ok := f.bundles[id]
+	if !ok || b.ProjectID != projectID {
+		return triage.Bundle{}, db.ErrNotFound
+	}
+	return b, nil
+}
+
+func (f *fakeTriage) CustomerGroup(_ context.Context, _ project.ID, _ scan.ID, key triage.GroupKey) (triage.Group, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	g, ok := f.groups[key]
+	if !ok {
+		return triage.Group{Key: key}, nil
+	}
+	return g, nil
+}
+
+func (f *fakeTriage) Decide(context.Context, project.ID, []triage.BundleID, triage.Decision, audit.Actor) error {
+	return errors.New("fakeTriage.Decide is not used by these tests")
+}
+
+func (f *fakeTriage) MoveFinding(context.Context, project.ID, finding.ID, triage.BundleID, audit.Actor) (triage.BundleID, error) {
+	return 0, errors.New("fakeTriage.MoveFinding is not used by these tests")
+}
+
+func (f *fakeTriage) UsedNames(context.Context, project.ID) ([]triage.Name, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.used), nil
+}
+
+func (f *fakeTriage) PastDecision(_ context.Context, fingerprint string, _ triage.BundleID) (triage.Decision, bool, error) {
+	if f.pastErr != nil {
+		return triage.Decision{}, false, f.pastErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.past[fingerprint]
+	return d, ok, nil
+}
+
+// putBundle stores b, so Bundle returns it.
+func (f *fakeTriage) putBundle(b triage.Bundle) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.bundles[b.ID] = b
+}
+
+// putGroup stores g under its key, so CustomerGroup returns it.
+func (f *fakeTriage) putGroup(g triage.Group) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.groups[g.Key] = g
+}
+
+// setScan makes sc the latest succeeded scan of its project, with entries
+// as its triage list and counts as its bundle counts.
+func (f *fakeTriage) setScan(sc scan.Scan, counts map[triage.Verdict]int, entries ...triage.Entry) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.latest[sc.ProjectID] = sc
+	f.entries[sc.ProjectID] = entries
+	f.counts[sc.ProjectID] = counts
+}
+
+// lastFilter returns the filter of the last Entries call.
+func (f *fakeTriage) lastFilter() (triage.Filter, bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if len(f.filters) == 0 {
+		return triage.Filter{}, false
+	}
+	return f.filters[len(f.filters)-1], true
 }

@@ -29,6 +29,7 @@ type testEnv struct {
 	attempts *fakeAttempts
 	projects *fakeProjects
 	scans    *fakeScans
+	triage   *fakeTriage
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -40,9 +41,10 @@ func newTestEnv(t *testing.T) *testEnv {
 		attempts: newFakeAttempts(),
 		projects: newFakeProjects(),
 		scans:    newFakeScans(),
+		triage:   newFakeTriage(),
 	}
 	logger := slog.New(slog.NewJSONHandler(e.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
-	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts, e.projects, e.scans, time.Minute)
+	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts, e.projects, e.scans, e.triage, web.NewHistorySuggester(e.triage), time.Minute)
 	return e
 }
 

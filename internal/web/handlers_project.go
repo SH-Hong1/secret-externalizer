@@ -13,6 +13,8 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/scan"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 const (
@@ -41,20 +43,38 @@ type projectForm struct {
 	ExcludesError string
 }
 
-// handleProjectList lists every project.
+// handleProjectList lists every project with its newest scan and the
+// number of its bundles that have no verdict.
 func handleProjectList(logger *slog.Logger, rd *renderer, projects ProjectStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
-		list, err := projects.Projects(r.Context())
+		list, err := projects.ProjectSummaries(r.Context())
 		if err != nil {
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("listing projects: %w", err))
 			return
 		}
 		rd.page(w, r, logger, http.StatusOK, "projects.html", struct {
 			User     auth.User
-			Projects []project.Project
-		}{u, list})
+			Projects []projectRow
+		}{u, newProjectRows(list)})
 	})
+}
+
+// projectRow is one line of the project list.
+type projectRow struct {
+	project.Summary
+	Status      scan.Status
+	StatusLabel string
+	ScanAt      string
+}
+
+func newProjectRows(list []project.Summary) []projectRow {
+	out := make([]projectRow, 0, len(list))
+	for _, s := range list {
+		st := scan.Status(s.LastScanStatus)
+		out = append(out, projectRow{Summary: s, Status: st, StatusLabel: statusLabel(st), ScanAt: formatTime(s.LastScanAt)})
+	}
+	return out
 }
 
 // handleProjectNew shows the empty registration form.
@@ -141,8 +161,9 @@ func parseExcludes(text string) ([]string, error) {
 	return out, nil
 }
 
-// handleProject shows one project and its scans, newest first.
-func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore) http.Handler {
+// handleProject shows one project, the verdict counts of its newest
+// succeeded scan, and its scans, newest first.
+func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore, store TriageStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
 		n, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -164,10 +185,31 @@ func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, sca
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("listing scans: %w", err))
 			return
 		}
+		var tiles []verdictTile
+		sc, err := store.LatestScan(r.Context(), p.ID)
+		switch {
+		case errors.Is(err, db.ErrNotFound):
+		case err != nil:
+			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading latest scan: %w", err))
+			return
+		default:
+			page, err := store.Entries(r.Context(), p.ID, sc.ID, triage.Filter{Status: triage.StatusUndecided, Page: 1})
+			if err != nil {
+				rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("counting verdicts: %w", err))
+				return
+			}
+			tiles = newVerdictTiles(p.ID, page.Counts)
+		}
+		rows := newScanRows(list)
+		for i := range rows {
+			rows[i].Basis = tiles != nil && rows[i].ID == sc.ID
+		}
 		rd.page(w, r, logger, http.StatusOK, "project.html", struct {
 			User    auth.User
 			Project project.Project
 			Scans   []scanRow
-		}{u, p, newScanRows(list)})
+			Tiles   []verdictTile
+			Triage  string
+		}{u, p, rows, tiles, triagePath(p.ID)})
 	})
 }

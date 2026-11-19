@@ -384,7 +384,7 @@
 - Consumes: Task 4의 `Store` 메서드, Task 5의 `Suggestion`
 - Produces: `GET /projects/{id}/triage?category=&status=&page=&sel=`. `sel`은 `b<묶음 ID>` 또는 `c.<종류>.<파일 경로>`다(고객정보 한 무리, 판정은 `status`를 따른다). `status`의 기본값은 `undecided`다. 요청 머리에 `HX-Request: true`와 `HX-Target: detail`이 있으면 `<section id="detail">` 조각만 돌려준다. `TriageStore`는 Task 4의 메서드 여덟 개를 갖는 인터페이스이고 `internal/web/server.go`에 둔다. `NewServer`의 매개변수에 `triage TriageStore`, `suggester Suggester`를 더한다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다.** 손으로 쓴 fake `TriageStore`를 쓴다.
+- [x] **Step 1: 실패하는 테스트를 쓴다.** 손으로 쓴 fake `TriageStore`를 쓴다.
   - `TestTriagePage`: 목록에 묶음마다 분류, 위치 수, 이름이나 첫 위치가 보인다. `sel`이 없으면 첫 줄이 골라진 상세가 함께 보인다. 상세에 파일과 줄, 탐지 도구와 규칙, 가린 주변 줄(탐지된 줄 표시), 같은 값의 다른 위치, 이름 입력란(제안한 이름), 허용된 판정 버튼만 있다.
   - `TestTriageCustomerData`: 고객정보 상세에 종류, 파일, 건수, 줄 번호, 형식 미리보기가 있고 주변 줄, 이름 입력란, 원본 보기 단추가 없다.
   - `TestTriageSuggestion`: 과거 판정이 있는 묶음의 상세에 "제안" 표시와 그 판정이 미리 골라져 있고, 목록의 상태는 여전히 미판정이다.
@@ -393,10 +393,10 @@
   - `TestTriageBadInput`: 모르는 `category`, `status`, 숫자가 아닌 `page`, 형식이 틀린 `sel`은 400이다. 없는 묶음의 `sel`은 404다. 없는 프로젝트는 404다.
   - `TestTriageEscapes`: 주변 줄과 파일 경로의 `<script>`가 이스케이프되어 나온다.
   - `TestTriageRequiresLogin`: 세션이 없으면 로그인으로 보낸다.
-- [ ] **Step 2:** 실패를 확인한다.
-- [ ] **Step 3:** handler와 템플릿을 시안대로 쓴다(frontend-design 스킬). 목록의 줄은 `<a href="?...&sel=...">`이고 `hx-get`, `hx-target="#detail"`, `hx-push-url="true"`를 갖는다. `Suggester`의 구현은 `cmd/web`이 조립한다: 과거 판정(`PastDecision`)이 있으면 그것을 쓰고, 없으면 `triage.Default`다. `Suggester`가 오류를 내면 제안 없이 그리고 오류를 한 번 로그에 남긴다.
-- [ ] **Step 4:** 프로젝트 화면에 판정 화면으로 가는 링크와 상태별 건수를 넣는다. 프로젝트 목록에는 시안대로 마지막 스캔(시각과 상태), 미판정 수, 전체 수 열을 넣는다. 이를 위해 `*db.Store`에 `ProjectSummaries(ctx) ([]project.Summary, error)`를 더하고 쿼리 하나로 읽는다.
-- [ ] **Step 5:** `make check`가 통과하는지 확인하고 커밋한다. `feat(web): show the triage list and detail`
+- [x] **Step 2:** 실패를 확인한다.
+- [x] **Step 3:** handler와 템플릿을 시안대로 쓴다(frontend-design 스킬). 목록의 줄은 `<a href="?...&sel=...">`이고 `hx-get`, `hx-target="#detail"`, `hx-push-url="true"`를 갖는다. `Suggester`의 구현은 `cmd/web`이 조립한다: 과거 판정(`PastDecision`)이 있으면 그것을 쓰고, 없으면 `triage.Default`다. `Suggester`가 오류를 내면 제안 없이 그리고 오류를 한 번 로그에 남긴다.
+- [x] **Step 4:** 프로젝트 화면에 판정 화면으로 가는 링크와 상태별 건수를 넣는다. 프로젝트 목록에는 시안대로 마지막 스캔(시각과 상태), 미판정 수, 전체 수 열을 넣는다. 이를 위해 `*db.Store`에 `ProjectSummaries(ctx) ([]project.Summary, error)`를 더하고 쿼리 하나로 읽는다.
+- [x] **Step 5:** `make check`가 통과하는지 확인하고 커밋한다. `feat(web): show the triage list and detail`
 
 ### Task 7: 판정하기, 묶음 옮기기
 

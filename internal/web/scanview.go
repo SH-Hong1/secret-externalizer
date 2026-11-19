@@ -83,6 +83,7 @@ type scanRow struct {
 	RequestedAt string
 	Succeeded   bool
 	Findings    int
+	Basis       bool
 }
 
 func formatTime(t time.Time) string {

@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/google/go-cmp/cmp"
 
@@ -340,4 +341,52 @@ func TestHome_LinksToProjects(t *testing.T) {
 	if !strings.Contains(res.body, `href="/projects"`) {
 		t.Errorf("GET / body lacks a link to /projects")
 	}
+}
+
+func TestProjectList_ShowsSummaries(t *testing.T) {
+	e := newTestEnv(t)
+	c := e.user(t)
+	for _, p := range []project.Project{{Name: "alpha", Path: "a"}, {Name: "bravo", Path: "b"}, {Name: "charlie", Path: "c"}} {
+		if _, err := e.projects.CreateProject(t.Context(), p); err != nil {
+			t.Fatalf("CreateProject() error = %v", err)
+		}
+	}
+	at := time.Date(2026, 11, 19, 5, 12, 0, 0, time.UTC)
+	e.projects.putSummary(project.Summary{Project: project.Project{ID: 1}, LastScanID: 12, LastScanStatus: "succeeded", LastScanAt: at, HasResult: true, Undecided: 96, Total: 128})
+	e.projects.putSummary(project.Summary{Project: project.Project{ID: 2}, LastScanID: 13, LastScanStatus: "failed", LastScanAt: at})
+
+	res := e.do(t, http.MethodGet, "/projects", nil, c)
+	if res.status != http.StatusOK {
+		t.Fatalf("GET /projects status = %d, want 200", res.status)
+	}
+	wantIn(t, "project list", res.body,
+		"<th>마지막 스캔</th>", `<th class="num">미판정</th>`, `<th class="num">전체</th>`,
+		"2026-11-19 05:12:00 UTC", `<span class="badge badge-succeeded">완료</span>`, ">96<", ">128<",
+		`<span class="badge badge-failed">실패</span>`, "스캔 없음",
+	)
+}
+
+func TestProject_ShowsVerdictCounts(t *testing.T) {
+	e := triageEnv(t)
+	res := e.do(t, http.MethodGet, "/projects/1", nil, e.user(t))
+	if res.status != http.StatusOK {
+		t.Fatalf("GET /projects/1 status = %d, want 200", res.status)
+	}
+	wantIn(t, "project page", res.body,
+		`href="/projects/1/triage"`, "판정하기 · 미판정 3",
+		`href="/projects/1/triage?status=externalize"`, "외부화", ">18<",
+		`href="/projects/1/triage?status=hold"`,
+	)
+}
+
+func TestProject_NoVerdictCountsWithoutScan(t *testing.T) {
+	e := newTestEnv(t)
+	if _, err := e.projects.CreateProject(t.Context(), project.Project{Name: "shop", Path: "shop"}); err != nil {
+		t.Fatalf("CreateProject() error = %v", err)
+	}
+	res := e.do(t, http.MethodGet, "/projects/1", nil, e.user(t))
+	if res.status != http.StatusOK {
+		t.Fatalf("GET /projects/1 status = %d, want 200", res.status)
+	}
+	wantNotIn(t, "project page without a scan", res.body, "판정하기", "/triage?status=")
 }
