@@ -7,9 +7,11 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"unicode/utf8"
@@ -64,6 +66,36 @@ type File struct {
 	// Hash is the hex-encoded SHA-256 of the bytes exactly as they are on
 	// disk, including any byte order mark and the original line endings.
 	Hash string
+}
+
+// String returns the encoding, the size of the text and the hash. The text
+// can hold secret values, so it is never printed.
+func (f File) String() string {
+	return fmt.Sprintf("{encoding:%s text:[redacted %d bytes] hash:%s}", f.Encoding, len(f.Text), f.Hash)
+}
+
+// Format prints the form String returns for every fmt verb, including %#v
+// and %x, which would otherwise print the text.
+func (f File) Format(s fmt.State, _ rune) {
+	_, _ = io.WriteString(s, f.String()) // a failed write to a fmt buffer has no one to report to
+}
+
+// LogValue returns the encoding, the size of the text and the hash.
+func (f File) LogValue() slog.Value {
+	return slog.GroupValue(
+		slog.String("encoding", f.Encoding.String()),
+		slog.Int("text_bytes", len(f.Text)),
+		slog.String("hash", f.Hash),
+	)
+}
+
+// MarshalJSON encodes the encoding, the size of the text and the hash.
+func (f File) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Encoding  string `json:"encoding"`
+		TextBytes int    `json:"text_bytes"`
+		Hash      string `json:"hash"`
+	}{f.Encoding.String(), len(f.Text), f.Hash})
 }
 
 // Read reads the regular file at path and returns it as UTF-8. It never
