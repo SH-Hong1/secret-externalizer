@@ -995,3 +995,62 @@ func TestHandle_MisplacedValueAlsoInPlainText(t *testing.T) {
 		t.Errorf("Handle() saved a result that holds the encoded text:\n%s", dump)
 	}
 }
+
+func TestHandle_ScannerDroppedResultDropsContext(t *testing.T) {
+	const other = "conf/other.properties"
+	e := newEnv(t, map[string]string{
+		propsFile: "a.user=dev\njdbc.password=" + password + "\n",
+		other:     "b.user=dev\njdbc.password=" + password + "\n",
+	})
+	// The scanner dropped a result in propsFile; where its value is cannot
+	// be told.
+	dropper := &needleScanner{
+		tool: "betterleaks", rule: "generic-password", category: finding.CategoryOther, kind: finding.KindOther, needle: "no such value",
+		dropped: 1, droppedFiles: []string{propsFile},
+	}
+	if err := e.handle(t.Context(), passwordOG(), dropper); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t)
+	if got.Dropped != 1 || len(got.Findings) != 2 {
+		t.Fatalf("Handle() = %+v, want two findings and one dropped", got)
+	}
+	for _, f := range got.Findings {
+		l := f.Locations[0]
+		switch f.File {
+		case propsFile:
+			if l.Context != nil || l.ContextFirstLine != 0 {
+				t.Errorf("Handle() %s location = %+v, want no surrounding lines in a file with a dropped result", f.File, l)
+			}
+		case other:
+			if l.Context == nil {
+				t.Errorf("Handle() %s location = %+v, want surrounding lines", f.File, l)
+			}
+		}
+	}
+}
+
+func TestHandle_ScannerDroppedUnknownFileDropsAllContext(t *testing.T) {
+	e := newEnv(t, map[string]string{
+		propsFile:               "jdbc.password=" + password + "\n",
+		"conf/other.properties": "jdbc.password=" + password + "\n",
+	})
+	dropper := &needleScanner{
+		tool: "betterleaks", rule: "generic-password", category: finding.CategoryOther, kind: finding.KindOther, needle: "no such value",
+		dropped: 1,
+	}
+	if err := e.handle(t.Context(), passwordOG(), dropper); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t)
+	if len(got.Findings) != 2 {
+		t.Fatalf("Handle() = %+v, want two findings", got)
+	}
+	for _, f := range got.Findings {
+		for _, l := range f.Locations {
+			if l.Context != nil || l.ContextFirstLine != 0 {
+				t.Errorf("Handle() %s location = %+v, want no surrounding lines when a dropped result has no known file", f.File, l)
+			}
+		}
+	}
+}

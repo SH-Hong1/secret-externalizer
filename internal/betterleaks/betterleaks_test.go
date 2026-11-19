@@ -69,8 +69,8 @@ func TestParse_Betterleaks(t *testing.T) {
 	if diff := cmp.Diff(want, got, bytesComparer); diff != "" {
 		t.Errorf("Parse(report.json) mismatch (-want +got):\n%s", diff)
 	}
-	if counts != (scan.Counts{}) {
-		t.Errorf("Parse(report.json) counts = %+v, want zero", counts)
+	if diff := cmp.Diff(scan.Counts{}, counts); diff != "" {
+		t.Errorf("Parse(report.json) counts mismatch (-want +got):\n%s", diff)
 	}
 }
 
@@ -156,6 +156,36 @@ func TestParse_Betterleaks_Dropped(t *testing.T) {
 			}
 			if len(got) != 1 || got[0].File != "b" || counts.Dropped != 1 {
 				t.Errorf("Parse(%+v) = %d results, dropped %d, want only b and dropped 1", tt.leak, len(got), counts.Dropped)
+			}
+		})
+	}
+}
+
+func TestParse_Betterleaks_DroppedPaths(t *testing.T) {
+	tags := []string{"category:storage-credential", "kind:password"}
+	tests := []struct {
+		name string
+		leak leak
+		want []string
+	}{
+		{"SecretNotInMatch", leak{RuleID: "r", StartLine: 1, StartColumn: 1, Match: "password = xyz", Secret: "abc", File: "/scan/conf/a.properties", Tags: tags}, []string{"conf/a.properties"}},
+		{"RelativeFile", leak{RuleID: "r", StartLine: 0, StartColumn: 1, Match: "abc", Secret: "abc", File: "conf/a.properties", Tags: tags}, []string{"conf/a.properties"}},
+		{"NoColumn", leak{RuleID: "r", StartLine: 1, StartColumn: 0, Match: "abc", Secret: "abc", File: "/scan/a", Tags: tags}, []string{"a"}},
+		{"FileEscapesDir", leak{RuleID: "r", StartLine: 1, StartColumn: 1, Match: "x", Secret: "abc", File: "/scan/../a", Tags: tags}, nil},
+		{"NoFile", leak{RuleID: "r", StartLine: 1, StartColumn: 1, Match: "x", Secret: "abc", File: "", Tags: tags}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			kept := leak{RuleID: "r", StartLine: 1, StartColumn: 1, Match: "abc", Secret: "abc", File: "/scan/b", Tags: tags}
+			got, counts, err := betterleaks.Parse(report(t, tt.leak, kept), "/scan")
+			if err != nil {
+				t.Fatalf("Parse(%+v) error = %v", tt.leak, err)
+			}
+			if len(got) != 1 || counts.Dropped != 1 {
+				t.Errorf("Parse(%+v) = %d results, dropped %d, want 1 and 1", tt.leak, len(got), counts.Dropped)
+			}
+			if diff := cmp.Diff(tt.want, counts.DroppedFiles); diff != "" {
+				t.Errorf("Parse(%+v) DroppedFiles mismatch (-want +got):\n%s", tt.leak, diff)
 			}
 		})
 	}
@@ -296,7 +326,7 @@ func TestScan_Args(t *testing.T) {
 	}
 	s := betterleaks.New(bin, "/rules/betterleaks.toml", env)
 	got, counts, err := s.ScanWithCounts(t.Context(), dir)
-	if err != nil || len(got) != 0 || counts != (scan.Counts{}) {
+	if err != nil || len(got) != 0 || !cmp.Equal(counts, scan.Counts{}) {
 		t.Fatalf("ScanWithCounts() = %v, %+v, %v, want no results and no error", got, counts, err)
 	}
 	args, err := os.ReadFile(filepath.Join(env.Home, "args"))

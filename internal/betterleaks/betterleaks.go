@@ -107,7 +107,8 @@ type leak struct {
 // Parse reads a betterleaks JSON report of a scan of dir. Each result is
 // placed at the first place its value appears in the matched text. A result
 // whose value is not in the matched text, or whose file is not inside dir,
-// is dropped and counted.
+// is dropped and counted, and the file of a dropped result that is inside
+// dir is listed in Counts.DroppedFiles.
 //
 // Parse fails with scan.ErrScannerFailed when the report is not valid JSON
 // or a result's rule has a category or kind tag that is missing or unknown.
@@ -135,6 +136,7 @@ func Parse(out []byte, dir string) ([]scan.Raw, scan.Counts, error) {
 		line, col, ok := locate(l)
 		if !ok {
 			counts.Dropped++
+			counts.DroppedFiles = append(counts.DroppedFiles, file)
 			continue
 		}
 		raws = append(raws, scan.Raw{

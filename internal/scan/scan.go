@@ -125,9 +125,15 @@ type Raw struct {
 // placed: a file outside the scanned folder, or a value that is not inside
 // the text the scanner says it matched. Errors is the number of errors the
 // scanner reported for files it could analyse only in part.
+//
+// DroppedFiles holds, for each dropped result whose file is inside the
+// scanned folder, that file's path as RelPath gives it, once per result. The
+// other Dropped - len(DroppedFiles) results have no known file. Nothing else
+// about a dropped result is kept.
 type Counts struct {
-	Dropped int
-	Errors  int
+	Dropped      int
+	DroppedFiles []string
+	Errors       int
 }
 
 // Scanner runs one detection tool over a folder.

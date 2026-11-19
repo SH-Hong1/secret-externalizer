@@ -35,8 +35,8 @@ func TestParse_Opengrep(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Parse(report.json) mismatch (-want +got):\n%s", diff)
 	}
-	if want := (scan.Counts{Errors: 1}); counts != want {
-		t.Errorf("Parse(report.json) counts = %+v, want %+v", counts, want)
+	if diff := cmp.Diff(scan.Counts{Errors: 1}, counts); diff != "" {
+		t.Errorf("Parse(report.json) counts mismatch (-want +got):\n%s", diff)
 	}
 	// The report holds the matched value in extra.lines and extra.metavars,
 	// and source text in the error message. None of it is kept.
@@ -104,6 +104,32 @@ func TestParse_Opengrep_Dropped(t *testing.T) {
 			got, counts, err := opengrep.Parse(result(goodMetadata, tt.path, tt.start, tt.end), "/scan")
 			if err != nil || len(got) != 0 || counts.Dropped != 1 {
 				t.Errorf("Parse(%s) = %d results, %+v, %v, want none, dropped 1, no error", tt.name, len(got), counts, err)
+			}
+		})
+	}
+}
+
+func TestParse_Opengrep_DroppedPaths(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		start, end string
+		want       []string
+	}{
+		{"EndBeforeStart", "/scan/conf/a.java", end20, start10, []string{"conf/a.java"}},
+		{"NegativeOffset", "conf/a.java", `{"offset":-1}`, end20, []string{"conf/a.java"}},
+		{"NoOffset", "/scan/a.java", `{"line":1,"col":1}`, end20, []string{"a.java"}},
+		{"FileEscapesDir", "/scan/../a.java", end20, start10, nil},
+		{"NoFile", "", end20, start10, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, counts, err := opengrep.Parse(result(goodMetadata, tt.path, tt.start, tt.end), "/scan")
+			if err != nil || counts.Dropped != 1 {
+				t.Fatalf("Parse(%s) = %+v, %v, want dropped 1, no error", tt.name, counts, err)
+			}
+			if diff := cmp.Diff(tt.want, counts.DroppedFiles); diff != "" {
+				t.Errorf("Parse(%s) DroppedFiles mismatch (-want +got):\n%s", tt.name, diff)
 			}
 		})
 	}
@@ -193,7 +219,7 @@ func TestScan_Args(t *testing.T) {
 	s := opengrep.New(bin, "/rules/opengrep", excludes, env)
 	excludes[0] = "changed-after-new"
 	got, counts, err := s.ScanWithCounts(t.Context(), dir)
-	if err != nil || len(got) != 0 || counts != (scan.Counts{Errors: 2}) {
+	if err != nil || len(got) != 0 || !cmp.Equal(counts, scan.Counts{Errors: 2}) {
 		t.Fatalf("ScanWithCounts() = %v, %+v, %v, want no results, 2 errors, no error", got, counts, err)
 	}
 	args, err := os.ReadFile(filepath.Join(env.Home, "args"))

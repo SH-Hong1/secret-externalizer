@@ -132,7 +132,7 @@ func scanExample(t *testing.T, parent string) []result {
 	if err != nil {
 		t.Fatalf("betterleaks ScanWithCounts(legacy-shop) error = %v", err)
 	}
-	if counts != (scan.Counts{}) {
+	if !gocmp.Equal(counts, scan.Counts{}) {
 		t.Errorf("betterleaks ScanWithCounts(legacy-shop) counts = %+v, want zero", counts)
 	}
 	raws = append(raws, bl...)
@@ -140,7 +140,7 @@ func scanExample(t *testing.T, parent string) []result {
 	if err != nil {
 		t.Fatalf("opengrep ScanWithCounts(legacy-shop) error = %v", err)
 	}
-	if counts != (scan.Counts{}) {
+	if !gocmp.Equal(counts, scan.Counts{}) {
 		t.Errorf("opengrep ScanWithCounts(legacy-shop) counts = %+v, want zero", counts)
 	}
 	raws = append(raws, og...)

@@ -133,7 +133,8 @@ type report struct {
 
 // Parse reads an opengrep JSON report of a scan of dir. A result whose file
 // is not inside dir, or whose byte offsets are missing or out of order, is
-// dropped and counted. The errors opengrep reports are counted.
+// dropped and counted, and the file of a dropped result that is inside dir is
+// listed in Counts.DroppedFiles. The errors opengrep reports are counted.
 //
 // Parse fails with scan.ErrScannerFailed when the report is not valid JSON
 // or a result's rule has no known metadata.category and metadata.kind,
@@ -153,8 +154,13 @@ func Parse(out []byte, dir string) ([]scan.Raw, scan.Counts, error) {
 			return nil, scan.Counts{}, fmt.Errorf("reading %s report: a rule has a missing or unknown metadata.category or metadata.kind: %w", name, scan.ErrScannerFailed)
 		}
 		file, ok := scan.RelPath(dir, r.Path)
-		if !ok || r.Start.Offset == nil || r.End.Offset == nil || *r.Start.Offset < 0 || *r.End.Offset < *r.Start.Offset {
+		if !ok {
 			counts.Dropped++
+			continue
+		}
+		if r.Start.Offset == nil || r.End.Offset == nil || *r.Start.Offset < 0 || *r.End.Offset < *r.Start.Offset {
+			counts.Dropped++
+			counts.DroppedFiles = append(counts.DroppedFiles, file)
 			continue
 		}
 		raws = append(raws, scan.Raw{

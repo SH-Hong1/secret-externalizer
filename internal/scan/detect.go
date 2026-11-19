@@ -16,19 +16,42 @@ type counter interface {
 // does.
 func (r Raw) wholeFile() bool { return r.Offset == 0 && r.EndOffset == -1 }
 
+// drops is what the scanners told about the results they dropped
+// themselves.
+type drops struct {
+	// count is the number of results dropped.
+	count int
+	// files holds the files of dropped results whose file is known.
+	files map[string]bool
+	// unknown is true when some dropped result has no known file.
+	unknown bool
+}
+
+// add records the dropped results that c reports.
+func (d *drops) add(c Counts) {
+	d.count += c.Dropped
+	if c.Dropped > len(c.DroppedFiles) {
+		d.unknown = true
+	}
+	for _, f := range c.DroppedFiles {
+		d.files[f] = true
+	}
+}
+
 // detect runs every scanner over the project folder dir and, when there are
 // EUC-KR files, over the folder of copies. It returns the results that refer
-// to files the scan can place them in, the version of each scanner, and how
-// many results the scanners themselves dropped. A scanner that fails is a
-// *toolError.
-func (r *Runner) detect(ctx context.Context, dir, copies string, files fileList) ([]Raw, map[string]string, int, error) {
+// to files the scan can place them in, the version of each scanner, and what
+// the scanners told about the results they dropped themselves. A file in the
+// folder of copies has the same relative path as its original. A scanner
+// that fails is a *toolError.
+func (r *Runner) detect(ctx context.Context, dir, copies string, files fileList) ([]Raw, map[string]string, drops, error) {
 	versions := make(map[string]string, len(r.scanners))
 	var kept []Raw
-	dropped := 0
+	dropped := drops{files: map[string]bool{}}
 	for _, s := range r.scanners {
 		v, err := s.Version(ctx)
 		if err != nil {
-			return nil, nil, 0, &toolError{tool: s.Name(), err: fmt.Errorf("reading version: %w", err)}
+			return nil, nil, drops{}, &toolError{tool: s.Name(), err: fmt.Errorf("reading version: %w", err)}
 		}
 		versions[s.Name()] = v
 
@@ -39,10 +62,10 @@ func (r *Runner) detect(ctx context.Context, dir, copies string, files fileList)
 		for i, folder := range folders {
 			raws, counts, err := scanFolder(ctx, s, folder)
 			if err != nil {
-				return nil, nil, 0, &toolError{tool: s.Name(), err: err}
+				return nil, nil, drops{}, &toolError{tool: s.Name(), err: err}
 			}
 			kept = append(kept, files.keep(raws, i == 1)...)
-			dropped += counts.Dropped
+			dropped.add(counts)
 		}
 	}
 	return kept, versions, dropped, nil

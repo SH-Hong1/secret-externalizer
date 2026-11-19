@@ -43,7 +43,9 @@ type placedFile struct {
 	// file as a key, so every line of it is part of a value, or a result in
 	// the file could not be placed, so the place of its value is not known
 	// (betterleaks reports a value it decoded from base64, for example,
-	// which the text holds only in encoded form). It is only ever set.
+	// which the text holds only in encoded form), or a scanner dropped a
+	// result in the file or a result whose file it could not name. It is
+	// only ever set.
 	noContext bool
 	// unplaced holds the ranges where the values of results that could not
 	// be placed may be. They are masked as well, in case surrounding lines
@@ -73,6 +75,18 @@ func locate(ctx context.Context, dir string, files fileList, raws []Raw, maxByte
 		}
 	}
 	return placed, dropped, nil
+}
+
+// dropContext sets noContext on each placed text file that a scanner
+// dropped a result in, and on every placed file when a scanner dropped a
+// result whose file it could not name: the value of such a result may be in
+// any line of that file.
+func dropContext(placed []*placedFile, files fileList, d drops) {
+	for _, pf := range placed {
+		if d.unknown || (d.files[pf.rel] && files.files[pf.rel].text) {
+			pf.noContext = true
+		}
+	}
 }
 
 // placeFile places the results raws of the listed file rel.

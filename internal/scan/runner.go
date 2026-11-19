@@ -207,7 +207,8 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 	if err != nil {
 		return err
 	}
-	res.Dropped = dropped + notPlaced
+	dropContext(placed, files, dropped)
+	res.Dropped = dropped.count + notPlaced
 
 	fingerprints, err := r.fingerprint(ctx, placed)
 	if err != nil {
