@@ -87,11 +87,13 @@ func (f *fakeIssuer) discovery(w http.ResponseWriter, _ *http.Request) {
 }
 
 // runEnv returns an environment that points run at issuerURL and at the
-// valkey in TEST_VALKEY_ADDR, listening on a free local port.
-func runEnv(issuerURL, valkeyAddr string) func(string) string {
+// valkey in TEST_VALKEY_ADDR and the postgres in TEST_DATABASE_URL, listening
+// on a free local port.
+func runEnv(issuerURL, valkeyAddr, databaseURL string) func(string) string {
 	env := validEnv()
 	env["WEB_ADDR"] = "127.0.0.1:0"
 	env["VALKEY_ADDR"] = valkeyAddr
+	env["DATABASE_URL"] = databaseURL
 	env["OIDC_ISSUER_URL"] = issuerURL
 	delete(env, "OIDC_DISCOVERY_URL")
 	return getenvFrom(env)
@@ -104,6 +106,15 @@ func testValkeyAddr(t *testing.T) string {
 		t.Skip("set TEST_VALKEY_ADDR to run against valkey")
 	}
 	return addr
+}
+
+func testDatabaseURLFromEnv(t *testing.T) string {
+	t.Helper()
+	u := os.Getenv("TEST_DATABASE_URL")
+	if u == "" {
+		t.Skip("set TEST_DATABASE_URL to run against postgres")
+	}
+	return u
 }
 
 // startRun calls runWith in a goroutine and returns the address it logs as
@@ -193,7 +204,7 @@ func TestRun_ErrorHidesClientSecret(t *testing.T) {
 	closed.Close()
 
 	var stderr bytes.Buffer
-	err := runWith(t.Context(), []string{"web"}, runEnv(unreachable, "127.0.0.1:1"), io.Discard, &stderr, fastRetry())
+	err := runWith(t.Context(), []string{"web"}, runEnv(unreachable, "127.0.0.1:1", testDatabaseURL), io.Discard, &stderr, fastRetry())
 	if err == nil {
 		t.Fatalf("runWith() with issuer %s error = nil, want an error", unreachable)
 	}
@@ -209,7 +220,7 @@ func TestRun_GivesUpOnDiscovery(t *testing.T) {
 	issuer := newFakeIssuer(t, -1)
 
 	var stderr bytes.Buffer
-	err := runWith(t.Context(), []string{"web"}, runEnv(issuer.URL(), "127.0.0.1:1"), io.Discard, &stderr, fastRetry())
+	err := runWith(t.Context(), []string{"web"}, runEnv(issuer.URL(), "127.0.0.1:1", testDatabaseURL), io.Discard, &stderr, fastRetry())
 	if err == nil {
 		t.Fatalf("runWith() with issuer %s that always answers 503 error = nil, want an error", issuer.URL())
 	}
@@ -239,11 +250,12 @@ func TestDiscover_GiveUpNamesDiscoveryURL(t *testing.T) {
 
 func TestRun_RetriesDiscovery(t *testing.T) {
 	valkeyAddr := testValkeyAddr(t)
+	databaseURL := testDatabaseURLFromEnv(t)
 	issuer := newFakeIssuer(t, 2)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	_, done := startRun(ctx, t, runEnv(issuer.URL(), valkeyAddr), fastRetry())
+	_, done := startRun(ctx, t, runEnv(issuer.URL(), valkeyAddr, databaseURL), fastRetry())
 	if got := issuer.Requests(); got != 3 {
 		t.Errorf("issuer got %d discovery requests before run listened, want 3", got)
 	}
@@ -256,11 +268,12 @@ func TestRun_RetriesDiscovery(t *testing.T) {
 
 func TestRun_ServesUntilContextIsCancelled(t *testing.T) {
 	valkeyAddr := testValkeyAddr(t)
+	databaseURL := testDatabaseURLFromEnv(t)
 	issuer := newFakeIssuer(t, 0)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 
-	addr, done := startRun(ctx, t, runEnv(issuer.URL(), valkeyAddr), fastRetry())
+	addr, done := startRun(ctx, t, runEnv(issuer.URL(), valkeyAddr, databaseURL), fastRetry())
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "http://"+addr+"/healthz", nil)
 	if err != nil {

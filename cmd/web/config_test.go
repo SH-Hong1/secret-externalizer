@@ -10,10 +10,14 @@ import (
 	"github.com/google/go-cmp/cmp"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/db"
 )
 
 // testClientSecret is an obviously fake client secret.
 const testClientSecret = "dev-only-cmd-web-test-secret" //nolint:gosec // G101: an obviously fake fixture value
+
+// testDatabaseURL is an obviously fake database URL.
+const testDatabaseURL = "postgres://se_app:dev-only-cmd-web-test-db@postgres:5432/secret_externalizer" //nolint:gosec // G101: an obviously fake fixture value
 
 // validEnv returns a complete environment that loadConfig accepts. Tests
 // change or remove one variable at a time.
@@ -21,6 +25,7 @@ func validEnv() map[string]string {
 	return map[string]string{
 		"WEB_BASE_URL":       "http://localhost:8080",
 		"VALKEY_ADDR":        "valkey:6379",
+		"DATABASE_URL":       testDatabaseURL,
 		"OIDC_ISSUER_URL":    "http://localhost:8081/realms/secret-externalizer",
 		"OIDC_DISCOVERY_URL": "http://keycloak:8080/realms/secret-externalizer",
 		"OIDC_CLIENT_ID":     "secret-externalizer-web",
@@ -40,6 +45,7 @@ func TestLoadConfig(t *testing.T) {
 	want := config{
 		addr:       ":8080",
 		valkeyAddr: "valkey:6379",
+		dsn:        db.DSN(testDatabaseURL),
 		oidc: auth.Config{
 			IssuerURL:    "http://localhost:8081/realms/secret-externalizer",
 			DiscoveryURL: "http://keycloak:8080/realms/secret-externalizer",
@@ -90,6 +96,7 @@ func TestLoadConfig_MissingRequired(t *testing.T) {
 	for _, name := range []string{
 		"WEB_BASE_URL",
 		"VALKEY_ADDR",
+		"DATABASE_URL",
 		"OIDC_ISSUER_URL",
 		"OIDC_CLIENT_ID",
 		"OIDC_CLIENT_SECRET",
@@ -197,5 +204,35 @@ func TestLoadConfig_ErrorHidesClientSecret(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), testClientSecret) {
 		t.Errorf("loadConfig() error = %q, contains the client secret", err)
+	}
+}
+
+func TestLoadConfig_RequiresDatabaseURL(t *testing.T) {
+	env := validEnv()
+	delete(env, "DATABASE_URL")
+	_, err := loadConfig(nil, getenvFrom(env))
+	if err == nil {
+		t.Fatal("loadConfig() without DATABASE_URL error = nil, want an error")
+	}
+	if !strings.Contains(err.Error(), "DATABASE_URL") {
+		t.Errorf("loadConfig() without DATABASE_URL error = %q, want it to name DATABASE_URL", err)
+	}
+}
+
+func TestConfig_RedactsDatabaseURL(t *testing.T) {
+	cfg, err := loadConfig(nil, getenvFrom(validEnv()))
+	if err != nil {
+		t.Fatalf("loadConfig(nil, validEnv()) error = %v", err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "config", cfg)
+	outputs := []string{buf.String()}
+	for _, verb := range []string{"%v", "%+v", "%#v", "%s"} {
+		outputs = append(outputs, fmt.Sprintf(verb, cfg), fmt.Sprintf(verb, &cfg))
+	}
+	for _, out := range outputs {
+		if strings.Contains(out, "dev-only-cmd-web-test-db") {
+			t.Errorf("output %q of config contains the database password", out)
+		}
 	}
 }

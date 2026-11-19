@@ -18,6 +18,7 @@ import (
 	"github.com/valkey-io/valkey-go"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
 	"github.com/SH-Hong1/secret-externalizer/internal/web"
 )
@@ -41,7 +42,7 @@ func main() {
 // A flag error is returned and not printed, so the caller reports it once.
 // Asking for help prints the usage to stdout and is not an error. Otherwise it
 // reads the configuration, waits for the identity provider, connects to
-// valkey, and serves HTTP until SIGINT, SIGTERM or cancellation of ctx.
+// valkey, opens and migrates the database, and serves HTTP until SIGINT, SIGTERM or cancellation of ctx.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
 	return runWith(ctx, args, getenv, stdout, stderr, discoveryRetry{interval: 2 * time.Second, limit: 60 * time.Second})
 }
@@ -95,6 +96,15 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	}
 	defer vk.Close()
 	store := session.NewStore(vk, time.Now)
+
+	database, err := db.Open(ctx, cfg.dsn)
+	if err != nil {
+		return fmt.Errorf("opening database: %w", err)
+	}
+	defer database.Close()
+	if err := database.Migrate(ctx); err != nil {
+		return fmt.Errorf("migrating database: %w", err)
+	}
 
 	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store))
 }

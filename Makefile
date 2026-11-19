@@ -25,7 +25,8 @@ test:
 
 test-integration:
 	@test -n "$(TEST_VALKEY_ADDR)" || { echo "set TEST_VALKEY_ADDR to a running valkey, for example TEST_VALKEY_ADDR=127.0.0.1:16379 make test-integration (the compose valkey)" >&2; exit 1; }
-	TEST_VALKEY_ADDR="$(TEST_VALKEY_ADDR)" go test -race -count=1 ./...
+	@test -n "$(TEST_DATABASE_URL)" || { echo "set TEST_DATABASE_URL to a running postgres, for example TEST_DATABASE_URL=postgres://se_app:dev-only-se-app-password@127.0.0.1:15432/secret_externalizer_test make test-integration (the compose postgres)" >&2; exit 1; }
+	TEST_VALKEY_ADDR="$(TEST_VALKEY_ADDR)" TEST_DATABASE_URL="$(TEST_DATABASE_URL)" go test -race -count=1 ./...
 
 hooks: $(BIN)/gofumpt $(BIN)/golangci-lint
 	bash .claude/hooks/hooks_test.sh

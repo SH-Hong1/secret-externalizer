@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
+	"github.com/SH-Hong1/secret-externalizer/internal/db"
 )
 
 // config holds the settings read once at start-up. Its fields are
@@ -18,14 +19,15 @@ import (
 type config struct {
 	addr       string
 	valkeyAddr string
+	dsn        db.DSN
 	oidc       auth.Config
 }
 
 // String returns every setting with the client secret redacted.
 func (c config) String() string {
-	// c.oidc is passed as an argument of its own, so fmt calls the
-	// ClientSecret field's Format method.
-	return fmt.Sprintf("{addr:%s valkey_addr:%s oidc:%+v}", c.addr, c.valkeyAddr, c.oidc)
+	// c.dsn and c.oidc are passed as arguments of their own, so fmt calls the
+	// Format methods of db.DSN and of the ClientSecret field.
+	return fmt.Sprintf("{addr:%s valkey_addr:%s database_url:%v oidc:%+v}", c.addr, c.valkeyAddr, c.dsn, c.oidc)
 }
 
 // Format prints the form String returns for every fmt verb, including %#v,
@@ -39,6 +41,7 @@ func (c config) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.String("addr", c.addr),
 		slog.String("valkey_addr", c.valkeyAddr),
+		slog.Any("database_url", c.dsn),
 		slog.Any("oidc", c.oidc),
 	)
 }
@@ -46,8 +49,8 @@ func (c config) LogValue() slog.Value {
 // loadConfig builds a config from the environment. The flags in args are
 // handled by run, so none of them change the configuration.
 //
-// The client secret is converted to auth.ClientSecret as it is read, and no
-// error returned here contains it.
+// The client secret and the database URL are converted to auth.ClientSecret
+// and db.DSN as they are read, and no error returned here contains them.
 func loadConfig(_ []string, getenv func(string) string) (config, error) {
 	var missing []string
 	required := func(name string) string {
@@ -59,6 +62,7 @@ func loadConfig(_ []string, getenv func(string) string) (config, error) {
 	}
 	baseURL := required("WEB_BASE_URL")
 	valkeyAddr := required("VALKEY_ADDR")
+	dsn := db.DSN(required("DATABASE_URL"))
 	issuerURL := required("OIDC_ISSUER_URL")
 	clientID := required("OIDC_CLIENT_ID")
 	secret := auth.ClientSecret(required("OIDC_CLIENT_SECRET"))
@@ -66,7 +70,7 @@ func loadConfig(_ []string, getenv func(string) string) (config, error) {
 		return config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
 
-	cfg := config{addr: ":8080", valkeyAddr: valkeyAddr}
+	cfg := config{addr: ":8080", valkeyAddr: valkeyAddr, dsn: dsn}
 	if v := getenv("WEB_ADDR"); v != "" {
 		cfg.addr = v
 	}

@@ -14,6 +14,8 @@ docker compose down            # 데이터(postgres 볼륨)는 남긴다
 docker compose down -v         # 볼륨까지 지운다. 다음 기동 때 realm을 새로 가져온다
 ```
 
+`deploy/postgres/init.sql`은 postgres 볼륨을 처음 만들 때만 실행된다. `se_app` 계정과 테스트용 데이터베이스(`secret_externalizer_test`)를 더하기 전에 만든 볼륨에는 이 둘이 없으므로, `docker compose down -v`로 볼륨을 지우고 다시 띄운다. 볼륨을 지우지 않으려면 `init.sql`의 `se_app` 이하 문장을 `docker compose exec -T postgres psql -U postgres`로 한 번 실행한다.
+
 브라우저에서 `http://localhost:8080/`을 열면 Keycloak 로그인 화면으로 넘어간다.
 
 ## 개발용 계정
@@ -37,7 +39,7 @@ realm 설정은 `deploy/keycloak/realm.json`에 있다. Keycloak은 기동할 �
 | web | `http://localhost:8080` | 화면 |
 | keycloak | `http://localhost:8081` | 로그인 화면, 관리 콘솔 |
 | valkey | `127.0.0.1:16379` | 통합 테스트. 로컬에 설치한 redis가 6379를 쓰는 경우가 많아 16379로 연다 |
-| postgres | 없음 | 컨테이너끼리만 쓴다 |
+| postgres | `127.0.0.1:15432` | 통합 테스트. 컨테이너끼리는 `postgres:5432`로 쓴다 |
 
 ## 발급자 주소
 
@@ -52,6 +54,7 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 | `WEB_ADDR` | | 듣는 주소. 기본값 `:8080` |
 | `WEB_BASE_URL` | 예 | 브라우저에서 보는 주소. 콜백 주소(`/auth/callback`)와 로그아웃 뒤 주소(`/`)를 여기서 만든다. `/` 말고 다른 경로, 쿼리, 프래그먼트는 둘 수 없다 |
 | `VALKEY_ADDR` | 예 | 예 `valkey:6379` |
+| `DATABASE_URL` | 예 | postgres 주소. 예 `postgres://se_app:dev-only-se-app-password@postgres:5432/secret_externalizer`. 로그와 오류 메시지에 남지 않는다. web은 기동할 때 마이그레이션을 실행한다 |
 | `OIDC_ISSUER_URL` | 예 | 토큰의 발급자. 예 `http://localhost:8081/realms/secret-externalizer` |
 | `OIDC_DISCOVERY_URL` | | web이 발급자에 닿는 주소. 비우면 `OIDC_ISSUER_URL`을 쓴다. 여기서 읽은 discovery 문서의 `issuer`가 `OIDC_ISSUER_URL`과 다르면 web이 기동하지 않는다 |
 | `OIDC_CLIENT_ID` | 예 | `secret-externalizer-web` |
@@ -65,11 +68,15 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 
 ## 통합 테스트
 
-valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가 없으면 건너뛴다. compose의 valkey로 실행하려면:
+valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이 없으면 건너뛴다. `make test-integration`은 둘 다 요구한다. compose의 valkey와 postgres로 실행하려면:
 
 ```sh
-docker compose up -d valkey
-TEST_VALKEY_ADDR=127.0.0.1:16379 make test-integration
+docker compose up -d valkey postgres
+TEST_VALKEY_ADDR=127.0.0.1:16379 \
+TEST_DATABASE_URL=postgres://se_app:dev-only-se-app-password@127.0.0.1:15432/secret_externalizer_test \
+make test-integration
 ```
 
 valkey는 디스크에 아무것도 남기지 않는다. valkey를 다시 띄우면 모든 세션이 사라지고 다시 로그인해야 한다. 메모리는 64MB로 제한하며, 다 차면 기존 키를 지우지 않고 새 쓰기만 거부한다(`noeviction`). 이때 새 로그인은 503 화면을 보고, 이미 로그인한 세션은 그대로 쓸 수 있다.
+
+테스트는 실행마다 `test_<난수>` 스키마를 만들어 쓰고 끝나면 지운다.
