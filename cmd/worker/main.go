@@ -40,6 +40,13 @@ func main() {
 // reads the configuration, opens and migrates the database, and runs queued
 // scans until SIGINT, SIGTERM or cancellation of ctx.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
+	return runWith(ctx, args, getenv, stdout, stderr, nil)
+}
+
+// runWith is run with a function that adjusts the configuration after it is
+// loaded, so tests can shorten the queue intervals. A nil tune changes
+// nothing.
+func runWith(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer, tune func(*config)) error {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
 	showVersion := flags.Bool("version", false, "print the version and exit")
@@ -62,6 +69,9 @@ func run(ctx context.Context, args []string, getenv func(string) string, stdout,
 	cfg, err := loadConfig(getenv)
 	if err != nil {
 		return fmt.Errorf("loading config: %w", err)
+	}
+	if tune != nil {
+		tune(&cfg)
 	}
 	workerID, err := newWorkerID()
 	if err != nil {
