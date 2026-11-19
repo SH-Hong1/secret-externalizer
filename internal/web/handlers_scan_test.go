@@ -298,8 +298,15 @@ func TestScan_ShowsSkippedFiles(t *testing.T) {
 func TestScan_ShowsSkippedFilesWithoutNames(t *testing.T) {
 	e := newTestEnv(t)
 	body := e.succeeded(t, scan.Scan{Skipped: 3, SkippedFiles: []string{"lib/fake.jar"}})
-	wantContains(t, body, "<li>lib/fake.jar</li>", "외 2개")
-	wantAbsent(t, body, "처음 200개만")
+	wantContains(t, body, "<li>lib/fake.jar</li>", "외 2개", "이름이 UTF-8이 아니거나")
+	wantAbsent(t, body, "처음 200개만", "이름을 남기지 않았습니다")
+}
+
+func TestScan_ShowsSkippedWithNoNamesKept(t *testing.T) {
+	e := newTestEnv(t)
+	body := e.succeeded(t, scan.Scan{Skipped: 3})
+	wantContains(t, body, "건너뛴 파일 3개", "이 스캔은 건너뛴 파일과 폴더의 이름을 남기지 않았습니다.")
+	wantAbsent(t, body, "외 3개", "<ul class=\"skips-list\">")
 }
 
 func TestScan_EscapesSkippedFiles(t *testing.T) {
@@ -322,11 +329,13 @@ func TestScan_ShowsScannerErrors(t *testing.T) {
 func TestScan_ShowsSkippedAndDropped(t *testing.T) {
 	e := newTestEnv(t)
 	body := e.succeeded(t, scan.Scan{Files: 50, Skipped: 4, Dropped: 3})
-	wantContains(t, body, "<dt>검사한 파일</dt><dd>50개</dd>", "건너뛴 파일 4개", "위치가 맞지 않아 버린 결과 3건")
+	wantContains(t, body, "<dt>찾은 파일</dt><dd>50개 <span class=\"muted\">읽지 못해 건너뛴 파일도 셉니다</span></dd>",
+		"건너뛴 파일 4개", "위치가 맞지 않아 버린 결과 3건")
+	wantAbsent(t, body, "검사한 파일")
 
 	e = newTestEnv(t)
 	body = e.succeeded(t, scan.Scan{Files: 50})
-	wantContains(t, body, "<dt>검사한 파일</dt><dd>50개</dd>")
+	wantContains(t, body, "<dt>찾은 파일</dt><dd>50개</dd>")
 	wantAbsent(t, body, "검사하지 못한 것", "건너뛴 파일", "버린 결과")
 }
 
@@ -369,6 +378,9 @@ func TestScan_FailedShowsRequester(t *testing.T) {
 		FinishedAt:  time.Date(2026, 11, 18, 9, 40, 19, 0, time.UTC),
 	})
 	res := e.do(t, http.MethodGet, "/scans/3", nil, e.user(t))
+	if res.status != http.StatusOK {
+		t.Fatalf("GET /scans/3 status = %d, want 200", res.status)
+	}
 	wantContains(t, res.body, "fake-user-3", "2026-11-18 09:40:02 UTC", "2026-11-18 09:40:19 UTC")
 }
 

@@ -303,7 +303,7 @@ func TestAuditPage(t *testing.T) {
 		{ID: 40, At: time.Date(2026, 11, 19, 6, 41, 7, 0, time.UTC), Actor: adminActor, Action: audit.ActionReveal, ProjectID: 1, ProjectName: "shop", BundleID: 311, Detail: map[string]string{}},
 		{
 			ID: 30, At: time.Date(2026, 11, 19, 6, 38, 52, 0, time.UTC), Actor: fakeActor, Action: audit.ActionVerdict, ProjectID: 1, ProjectName: "shop", BundleID: 311,
-			Detail: map[string]string{audit.DetailVerdict: "externalize", audit.DetailName: "db.main.password"},
+			Kind: finding.KindPassword, Detail: map[string]string{audit.DetailVerdict: "externalize", audit.DetailName: "db.main.password"},
 		},
 		{
 			ID: 20, At: time.Date(2026, 11, 19, 6, 35, 40, 0, time.UTC), Actor: fakeActor, Action: audit.ActionMove, ProjectID: 2, ProjectName: "<b>other</b>", BundleID: 311, FindingID: 1002,
@@ -314,20 +314,26 @@ func TestAuditPage(t *testing.T) {
 			Detail: map[string]string{audit.DetailVerdict: "hold", audit.DetailReason: "structure-change", audit.DetailNote: "fake <note>"},
 		},
 		{ID: 5, At: time.Date(2026, 11, 19, 6, 30, 0, 0, time.UTC), Actor: fakeActor, Action: audit.ActionVerdict, ProjectID: 1, ProjectName: "shop", BundleID: 298, Detail: map[string]string{audit.DetailVerdict: ""}},
+		{
+			ID: 3, At: time.Date(2026, 11, 19, 6, 29, 0, 0, time.UTC), Actor: fakeActor, Action: audit.ActionVerdict, ProjectID: 1, ProjectName: "shop", BundleID: 17,
+			Kind: finding.KindPhone, File: "samples/<customers>.csv", Detail: map[string]string{audit.DetailVerdict: "redact"},
+		},
 	}
 	res := e.do(t, http.MethodGet, "/audit", nil, e.admin(t))
 	if res.status != http.StatusOK {
 		t.Fatalf("GET /audit as admin status = %d, want 200", res.status)
 	}
 	rows := strings.Split(section(res.body, "tbody", "audit-rows"), "<tr")
-	if len(rows) != 6 {
-		t.Fatalf("GET /audit shows %d rows, want 5; body:\n%s", len(rows)-1, res.body)
+	if len(rows) != 7 {
+		t.Fatalf("GET /audit shows %d rows, want 6; body:\n%s", len(rows)-1, res.body)
 	}
 	wantIn(t, "reveal row", rows[1], "2026-11-19 06:41:07", "Fake Admin", `badge badge-dark`, "원본 보기", `href="/projects/1"`, "shop", "묶음 #311")
-	wantIn(t, "externalize row", rows[2], "06:38:52", "Fake User", "badge-externalize", "판정 · 외부화", "묶음 #311", "ext.db.main.password")
+	wantIn(t, "externalize row", rows[2], "06:38:52", "Fake User", "badge-externalize", "판정 · 외부화", "묶음 #311 · 비밀번호 · 이름", "ext.db.main.password")
 	wantIn(t, "move row", rows[3], "묶음 옮기기", `href="/projects/2"`, "&lt;b&gt;other&lt;/b&gt;", "항목 #1002", "묶음 #311 → #340")
 	wantIn(t, "hold row", rows[4], "badge-hold", "판정 · 보류", "묶음 #298", "구조 변경 필요", `메모 "fake &lt;note&gt;"`)
 	wantIn(t, "cancel row", rows[5], "판정 취소", "묶음 #298")
+	wantIn(t, "customer data row", rows[6], "판정 · 삭제·마스킹", `묶음 #17 · 전화번호 · <span class="mono">samples/&lt;customers&gt;.csv</span>`)
+	wantNotIn(t, "reveal row", rows[1], " · 비밀번호", " · 전화번호")
 	wantIn(t, "audit page", res.body, `class="mono`)
 	wantNotIn(t, "audit page", res.body, "더 보기", "아직 기록이 없습니다")
 	if diff := cmp.Diff([]int64{0}, e.audits.befores); diff != "" {

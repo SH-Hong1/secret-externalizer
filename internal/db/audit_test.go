@@ -11,6 +11,7 @@ import (
 
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
@@ -66,12 +67,14 @@ func TestAuditEvents(t *testing.T) {
 	shared := bundleOf(t, s, pid, fpA, "conf/a.yml")
 	hostA := bundleOf(t, s, pid, fpB, "conf/a.yml")
 	xml := findingID(t, s, pid, fpA, "conf/b.xml")
+	phoneX := bundleOf(t, s, pid, fpC, "logs/x.log")
 
 	empty, err := s.AuditEvents(ctx, 0, 10)
 	if err != nil || len(empty) != 0 {
 		t.Fatalf("AuditEvents(0, 10) with no events = %v, %v; want none", empty, err)
 	}
 
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictRedact}, phoneX)
 	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldLater, Note: "fake note"}, hostA)
 	to, err := s.MoveFinding(ctx, pid, xml, 0, tester)
 	if err != nil {
@@ -86,14 +89,21 @@ func TestAuditEvents(t *testing.T) {
 		t.Fatalf("AuditEvents(0, 10) error = %v", err)
 	}
 	want := []audit.Event{
-		{Actor: tester, Action: audit.ActionReveal, ProjectID: pid, ProjectName: "shop", BundleID: shared, Detail: map[string]string{}},
 		{
-			Actor: tester, Action: audit.ActionMove, ProjectID: pid, ProjectName: "shop", BundleID: shared, FindingID: xml,
-			Detail: map[string]string{audit.DetailTo: strconv.FormatInt(int64(to), 10)},
+			Actor: tester, Action: audit.ActionReveal, ProjectID: pid, ProjectName: "shop", BundleID: shared,
+			Kind: finding.KindPassword, Detail: map[string]string{},
 		},
 		{
-			Actor: tester, Action: audit.ActionVerdict, ProjectID: pid, ProjectName: "shop", BundleID: hostA,
+			Actor: tester, Action: audit.ActionMove, ProjectID: pid, ProjectName: "shop", BundleID: shared, FindingID: xml,
+			Kind: finding.KindPassword, Detail: map[string]string{audit.DetailTo: strconv.FormatInt(int64(to), 10)},
+		},
+		{
+			Actor: tester, Action: audit.ActionVerdict, ProjectID: pid, ProjectName: "shop", BundleID: hostA, Kind: finding.KindHost,
 			Detail: map[string]string{audit.DetailVerdict: "hold", audit.DetailReason: "later", audit.DetailNote: "fake note"},
+		},
+		{
+			Actor: tester, Action: audit.ActionVerdict, ProjectID: pid, ProjectName: "shop", BundleID: phoneX,
+			Kind: finding.KindPhone, File: "logs/x.log", Detail: map[string]string{audit.DetailVerdict: "redact"},
 		},
 	}
 	if diff := cmp.Diff(want, got, cmpopts.IgnoreFields(audit.Event{}, "ID", "At")); diff != "" {
@@ -114,8 +124,8 @@ func TestAuditEvents(t *testing.T) {
 	if err != nil || len(page) != 1 || page[0].ID != got[1].ID {
 		t.Errorf("AuditEvents(%d, 1) = %+v, %v; want only event %d", got[0].ID, page, err, got[1].ID)
 	}
-	last, err := s.AuditEvents(ctx, got[2].ID, 10)
+	last, err := s.AuditEvents(ctx, got[3].ID, 10)
 	if err != nil || len(last) != 0 {
-		t.Errorf("AuditEvents(%d, 10) past the oldest = %+v, %v; want none", got[2].ID, last, err)
+		t.Errorf("AuditEvents(%d, 10) past the oldest = %+v, %v; want none", got[3].ID, last, err)
 	}
 }

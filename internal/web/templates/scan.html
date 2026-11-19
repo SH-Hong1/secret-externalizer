@@ -29,7 +29,7 @@
 <div><dt>커밋</dt><dd class="mono">{{if .Scan.CommitHash}}{{.Scan.CommitHash}}{{else}}<span class="muted">없음</span>{{end}}</dd></div>
 <div><dt>규칙 버전</dt><dd class="mono">{{.Scan.RulesVersion}}</dd></div>
 <div><dt>도구</dt><dd class="mono">{{range $i, $t := .Tools}}{{if $i}} · {{end}}{{$t.Name}} {{$t.Version}}{{end}}</dd></div>
-<div><dt>검사한 파일</dt><dd>{{.Scan.Files}}개</dd></div>
+<div><dt>찾은 파일</dt><dd>{{.Scan.Files}}개{{if .Scan.Skipped}} <span class="muted">읽지 못해 건너뛴 파일도 셉니다</span>{{end}}</dd></div>
 </dl>
 <section>
 <h2 class="section-title">찾은 항목 {{.Findings}}개(위치 {{.Locations}}곳)</h2>
@@ -47,7 +47,8 @@
 {{with .Scan.SkippedFiles}}<ul class="skips-list">
 {{range .}}<li>{{.}}</li>
 {{end}}</ul>
-{{end}}{{if .SkippedMore}}<p class="muted">{{if .SkippedCapped}}처음 {{len .Scan.SkippedFiles}}개만 보여 줍니다. 외 {{.SkippedMore}}개.{{else}}외 {{.SkippedMore}}개. 이름이 UTF-8이 아니거나 제어 문자가 든 파일과 읽지 못한 폴더는 이름을 남기지 않습니다.{{end}}</p>
+{{else}}<p class="muted">이 스캔은 건너뛴 파일과 폴더의 이름을 남기지 않았습니다.</p>
+{{end}}{{if and .Scan.SkippedFiles .SkippedMore}}<p class="muted">{{if .SkippedCapped}}처음 {{len .Scan.SkippedFiles}}개만 보여 줍니다. 외 {{.SkippedMore}}개.{{else}}외 {{.SkippedMore}}개. 이름이 UTF-8이 아니거나 제어 문자가 든 파일과 읽지 못한 폴더는 이름을 남기지 않습니다.{{end}}</p>
 {{end}}</div>
 </details>
 {{end}}{{if .Scan.Dropped}}<p class="notice"><strong>위치가 맞지 않아 버린 결과 {{.Scan.Dropped}}건.</strong> <span class="text-2">스캐너가 알려 준 자리에서 값을 확인하지 못해 항목으로 남기지 않았습니다.</span></p>

@@ -40,8 +40,13 @@ const (
 // for a move the bundle the finding left; FindingID is set only for a move.
 // Detail holds only the verdict, hold reason, name and note of a decision and
 // the bundle a finding moved to, under the Detail keys; never a value. A
-// reveal has no detail. ProjectName is the project's name when the event is
-// read back from the trail, and is not stored with the event.
+// reveal has no detail.
+//
+// ProjectName, Kind and File are filled in when the event is read back from
+// the trail and are not stored with it. ProjectName is the project's name.
+// Kind is the kind of the first finding the bundle holds now, and File that
+// finding's path when it is customer data, whose bundle holds only it; both
+// are empty when the bundle holds no finding any more. Neither is a value.
 type Event struct {
 	ID          int64
 	At          time.Time
@@ -49,6 +54,8 @@ type Event struct {
 	Action      Action
 	ProjectID   project.ID
 	ProjectName string
+	Kind        finding.Kind
+	File        string
 	BundleID    triage.BundleID
 	FindingID   finding.ID
 	Detail      map[string]string

@@ -14,8 +14,9 @@ const auditPageSize = 100
 const auditTimeLayout = "2006-01-02 15:04:05"
 
 // auditRow is one event of the audit trail as the page shows it. Move rows
-// show the finding and the bundles it left and joined; the others show the
-// bundle with the name, hold reason and note of a decision.
+// show the finding and the bundles it left and joined; verdict rows show the
+// bundle with its kind, the file of customer data, and the name, hold reason
+// and note of a decision; reveal rows show the bundle.
 type auditRow struct {
 	At          string
 	User        string
@@ -25,6 +26,8 @@ type auditRow struct {
 	ProjectName string
 	Move        bool
 	Bundle      string
+	Kind        string
+	File        string
 	Finding     string
 	To          string
 	Name        string
@@ -55,6 +58,10 @@ func newAuditRows(events []audit.Event) []auditRow {
 		case audit.ActionVerdict:
 			v := verdictOf(triage.Verdict(e.Detail[audit.DetailVerdict]))
 			row.ActionLabel, row.ActionClass = "판정 · "+v.Label, v.Class
+			if e.Kind != "" {
+				row.Kind = kindLabel(e.Kind)
+			}
+			row.File = e.File
 			if v.Value == "" {
 				row.ActionLabel = "판정 취소"
 			}

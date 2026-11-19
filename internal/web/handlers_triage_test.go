@@ -151,11 +151,12 @@ func TestTriagePage(t *testing.T) {
 
 	list := section(res.body, "nav", "list")
 	wantIn(t, "triage list", list,
-		"비밀번호", "스토리지", "2곳", "src/main/resources/application-prod.yml:14",
+		"비밀번호", "저장소 접속 정보", "2곳", "src/main/resources/application-prod.yml:14",
 		"토큰", "src/main/webapp/js/partner.js:42",
 		"전화번호", "고객정보", "37건", "logs/sample.log",
 		`hx-target="#detail"`, `hx-push-url="true"`,
 	)
+	wantNotIn(t, "triage list", list, "스토리지", "그 밖의 비밀 값")
 	first := regexp.MustCompile(`<a class="list-row"[^>]*href="([^"]*)"[^>]*aria-current="true"`).FindStringSubmatch(list)
 	if first == nil || !strings.Contains(first[1], "sel=b101") {
 		t.Errorf("triage list current row = %v, want the password bundle b101 chosen", first)

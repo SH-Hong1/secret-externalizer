@@ -174,23 +174,6 @@ func customerKind(k finding.Kind) bool {
 	return false
 }
 
-// categoryShort returns the short category name of a list line.
-func categoryShort(c finding.Category) string {
-	switch c {
-	case finding.CategoryStorage:
-		return "스토리지"
-	case finding.CategorySSH:
-		return "ssh"
-	case finding.CategoryPartnerSession:
-		return "제휴사 세션"
-	case finding.CategoryOther:
-		return "그 밖의 비밀 값"
-	case finding.CategoryCustomerData:
-		return "고객정보"
-	}
-	return string(c)
-}
-
 // bundleSel returns the selection of a secret bundle.
 func bundleSel(id triage.BundleID) string {
 	return "b" + strconv.FormatInt(int64(id), 10)
@@ -252,7 +235,7 @@ func newListRows(id project.ID, q triageQuery, entries []triage.Entry, sel strin
 	for _, e := range entries {
 		r := listRow{
 			KindLabel:    kindLabel(e.Kind),
-			CategoryText: categoryShort(e.Category),
+			CategoryText: categoryLabel(e.Category),
 			Verdict:      verdictOf(e.Verdict),
 		}
 		var s string
