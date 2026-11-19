@@ -70,6 +70,21 @@ func TestSplit(t *testing.T) {
 		{"jdbc:mysql://db.invalid:port/shop", nil},
 		{"jdbc:mysql://[::1/shop", nil},
 		{"jdbc:mysql://\xa9@db.invalid", nil},
+		{
+			"jdbc:postgresql://db.invalid/shop?user=a_user&sslpassword=dev-only-fake-ssl",
+			[]part{{host, "db.invalid"}, {account, "a_user"}, {pw, "dev-only-fake-ssl"}},
+		},
+		{
+			"jdbc:mysql://db.invalid/shop?trustCertificateKeyStorePassword=dev-only-fake-ts&clientCertificateKeyStorePassword=dev-only-fake-cs",
+			[]part{{host, "db.invalid"}, {pw, "dev-only-fake-ts"}, {pw, "dev-only-fake-cs"}},
+		},
+		{
+			"jdbc:sqlserver://db.invalid;accessToken=dev-only-fake-token;keyStoreSecret=dev-only-fake-secret;pwd=dev-only-fake-pwd",
+			[]part{{host, "db.invalid"}, {pw, "dev-only-fake-token"}, {pw, "dev-only-fake-secret"}, {pw, "dev-only-fake-pwd"}},
+		},
+		{"jdbc:mysql://u:12#ab@db.invalid/x", nil},
+		{"jdbc:mysql://u:12?ab@db.invalid/x", nil},
+		{"jdbc:mysql://u:12/ab@db.invalid/x", nil},
 		{"not a url", nil},
 		{"", nil},
 	}

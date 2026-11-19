@@ -30,9 +30,13 @@ const placeholder = "${"
 //     account/password, then @ and host:port:SID, host:port/service, or
 //     //host:port/service;
 //   - any other jdbc:<subprotocol>://[account[:password]@]host[:port][,...]
-//     with an optional path, and user, username, and password parameters
-//     after ? (separated by &) or ; (separated by ;), as MySQL, PostgreSQL,
-//     MariaDB, and SQL Server write them;
+//     with an optional path, and parameters after ? (separated by &) or ;
+//     (separated by ;), as MySQL, PostgreSQL, MariaDB, and SQL Server write
+//     them. The value of user or username is an account, and the value of
+//     any parameter whose name contains password, pwd, secret, or token
+//     (ignoring case) is a password. A value with an @ after the authority
+//     is not split, because its user information may hold an unencoded
+//     delimiter;
 //   - account@host, account@host:port, and account@host:path, the target of
 //     ssh and scp.
 //
@@ -129,6 +133,11 @@ func (sp *splitter) hierarchical() bool {
 	if authEnd < 0 {
 		authEnd = len(s)
 	}
+	if strings.IndexByte(s[authEnd:], '@') >= 0 {
+		// An @ after the end of the authority means the user information
+		// holds an unencoded /, ?, ; or #, so where it ends is not known.
+		return false
+	}
 	hosts := authStart
 	if at := strings.LastIndexByte(s[authStart:authEnd], '@'); at >= 0 {
 		infoEnd := authStart + at
@@ -154,8 +163,8 @@ func (sp *splitter) hierarchical() bool {
 	return true
 }
 
-// params adds the account and password parameters that follow the first ?
-// or ; at or after from.
+// params adds the account and secret parameters that follow the first ? or
+// ; at or after from.
 func (sp *splitter) params(from int) {
 	s := sp.s
 	start := index(s, from, len(s), "?;")
@@ -180,15 +189,28 @@ func (sp *splitter) params(from int) {
 					}
 				}
 			}
-			switch key {
-			case "user", "username":
+			switch {
+			case key == "user" || key == "username":
 				sp.add(finding.KindAccount, vStart, vEnd)
-			case "password":
+			case secretKey(key):
 				sp.add(finding.KindPassword, vStart, vEnd)
 			}
 		}
 		i = end + 1
 	}
+}
+
+// secretKey reports whether a parameter named key, in lower case, holds a
+// secret: its name contains password, pwd, secret, or token, as
+// password, sslpassword, trustCertificateKeyStorePassword, accessToken,
+// and keyStoreSecret do.
+func secretKey(key string) bool {
+	for _, w := range []string{"password", "pwd", "secret", "token"} {
+		if strings.Contains(key, w) {
+			return true
+		}
+	}
+	return false
 }
 
 // target splits account@host, account@host:port, and account@host:path.

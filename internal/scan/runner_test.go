@@ -1095,6 +1095,7 @@ func TestHandle_SplitsConnectionString(t *testing.T) {
 		url       = "jdbc:mysql://shop_app:dev-only-fake-pw@db.invalid:3306/shop" //nolint:gosec // G101: an obviously fake fixture value
 		urlPrefix = "    url: "
 		h2        = "jdbc:h2:mem:test"
+		paramURL  = "jdbc:postgresql://db.invalid/shop?user=a_user&sslpassword=dev-only-fake-ssl"
 	)
 	lines := []string{"# 주문 DB", "spring:", "  datasource:", urlPrefix + url}
 	euckr, err := korean.EUCKR.NewEncoder().String(strings.Join(lines, "\r\n") + "\r\n")
@@ -1106,11 +1107,12 @@ func TestHandle_SplitsConnectionString(t *testing.T) {
 		"crlf/application.yml":  strings.Join(lines, "\r\n") + "\r\n",
 		"euckr/application.yml": euckr,
 		"h2/application.yml":    "spring:\n  datasource:\n" + urlPrefix + h2 + "\n",
+		"param/application.yml": "spring:\n  datasource:\n" + urlPrefix + paramURL + "\n",
 	})
 	urlScanner := func(needle string) *needleScanner {
 		return &needleScanner{tool: "opengrep", rule: "yaml-jdbc-url", category: finding.CategoryStorage, kind: finding.KindURL, needle: needle}
 	}
-	if err := e.handle(t.Context(), urlScanner(url), urlScanner(h2)); err != nil {
+	if err := e.handle(t.Context(), urlScanner(url), urlScanner(h2), urlScanner(paramURL)); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
 	got := e.result(t)
@@ -1164,6 +1166,19 @@ func TestHandle_SplitsConnectionString(t *testing.T) {
 			}
 			if string(e.orig.pending[f.Fingerprint]) != p.value {
 				t.Errorf("Handle() parked %q for the %s, want %q", e.orig.pending[f.Fingerprint], p.kind, p.value)
+			}
+		}
+	}
+	if fs := byFile["param/application.yml"]; len(fs) != 3 {
+		t.Errorf("Handle() findings in param/application.yml = %+v, want the host, the account, and the ssl password", fs)
+	}
+	for _, f := range byFile["param/application.yml"] {
+		if f.Kind == finding.KindPassword && f.Fingerprint != fingerprintOf("dev-only-fake-ssl") {
+			t.Errorf("Handle() password finding in param/application.yml = %+v, want the sslpassword value", f)
+		}
+		for _, l := range f.Locations {
+			if v := containsAny(strings.Join(l.Context, "\n"), "dev-only-fake-ssl"); v != "" {
+				t.Errorf("param/application.yml %s surrounding lines = %q, hold %q", f.Kind, l.Context, v)
 			}
 		}
 	}
