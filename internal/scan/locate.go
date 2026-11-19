@@ -38,6 +38,13 @@ type placedFile struct {
 	// hash is the SHA-256 of the file's bytes on disk.
 	hash  string
 	spots []spot
+	// unplaced holds the ranges of the values of results that could not be
+	// placed, so that surrounding lines mask them too.
+	unplaced []finding.Span
+	// noContext is true when no surrounding lines may be shown for any
+	// finding in the file: the file is text and a scanner reported the whole
+	// file as a key, so every line of it is part of a value.
+	noContext bool
 }
 
 // locate re-reads every file that raws refer to and places each result in
@@ -83,6 +90,7 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 	var original []byte
 	for _, raw := range raws {
 		if raw.wholeFile() {
+			pf.noContext = src.text
 			if original == nil {
 				data, hash, err := readOriginal(dir, rel, maxBytes)
 				if err != nil || (src.text && hash != src.hash) {
@@ -96,6 +104,7 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 		}
 		span, ok := place(pf.file, bom, raw)
 		if !ok {
+			pf.unplaced = append(pf.unplaced, unplacedSpans(pf.file.Text, bom, raw)...)
 			dropped++
 			continue
 		}
@@ -134,6 +143,30 @@ func place(f textfile.File, bom int, raw Raw) (_ finding.Span, ok bool) {
 	return finding.Span{Start: start, End: end}, true
 }
 
+// unplacedSpans returns where the value of raw, which could not be placed,
+// may be in text. For a value the scanner gave (betterleaks), that is every
+// place the value appears. For a byte range (opengrep), it is the range
+// itself; finding.Context clamps it to the text and widens it to whole
+// characters.
+func unplacedSpans(text []byte, bom int, raw Raw) []finding.Span {
+	if raw.Offset >= 0 {
+		return []finding.Span{{Start: raw.Offset - bom, End: raw.EndOffset - bom}}
+	}
+	if len(raw.Value) == 0 {
+		return nil
+	}
+	var out []finding.Span
+	for off := 0; off < len(text); {
+		i := bytes.Index(text[off:], raw.Value)
+		if i < 0 {
+			break
+		}
+		out = append(out, finding.Span{Start: off + i, End: off + i + len(raw.Value)})
+		off += i + 1
+	}
+	return out
+}
+
 // position returns where s is in the file: the line and column of its first
 // character and of its last character, columns counting characters. A
 // whole-file spot runs from the first to the last character of the text, or
@@ -151,15 +184,17 @@ func (pf *placedFile) position(s spot) (startLine, startCol, endLine, endCol int
 	return startLine, startCol, endLine, endCol
 }
 
-// spans returns the spans of every text result in the file.
+// spans returns the ranges to mask in the file's surrounding lines: every
+// placed text result and every place a result that could not be placed may
+// have its value.
 func (pf *placedFile) spans() []finding.Span {
-	out := make([]finding.Span, 0, len(pf.spots))
+	out := make([]finding.Span, 0, len(pf.spots)+len(pf.unplaced))
 	for _, s := range pf.spots {
 		if !s.raw.wholeFile() {
 			out = append(out, s.span)
 		}
 	}
-	return out
+	return append(out, pf.unplaced...)
 }
 
 // forget drops the values held by placed, and zeroes the bytes of the

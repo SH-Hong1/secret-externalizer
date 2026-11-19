@@ -47,9 +47,18 @@ func TestHandle_RealScanners(t *testing.T) {
 	if err != nil {
 		t.Fatalf("encoding EUC-KR: %v", err)
 	}
+	// Hangul before the value on the same line: betterleaks reports a byte
+	// column, opengrep a byte offset.
+	javaLine := `String 설명 = "주문"; String password = "` + password + `";` + "\r\n"
+	javaEUCKR, err := korean.EUCKR.NewEncoder().String(javaLine)
+	if err != nil {
+		t.Fatalf("encoding EUC-KR: %v", err)
+	}
 	e := newEnv(t, map[string]string{
 		"conf/euckr.properties": euckr,
 		"conf/bom.properties":   "\xef\xbb\xbf# 설정\r\njdbc.password=" + password + "\r\n",
+		"src/A.java":            javaLine,
+		"src/B.java":            javaEUCKR,
 	})
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 	bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
@@ -59,8 +68,20 @@ func TestHandle_RealScanners(t *testing.T) {
 		t.Fatalf("Handle() error = %v", err)
 	}
 	got := e.result(t)
-	if got.Dropped != 0 || len(got.Findings) != 2 {
-		t.Fatalf("Handle() = %+v, want two findings and nothing dropped", got)
+	if got.Dropped != 0 || len(got.Findings) != 4 {
+		t.Fatalf("Handle() = %+v, want four findings and nothing dropped", got)
+	}
+	javaCol := len([]rune(`String 설명 = "주문"; String password = "`)) + 1
+	for i, file := range []string{"src/A.java", "src/B.java"} {
+		f := got.Findings[2+i]
+		if f.File != file || f.Fingerprint != fingerprintOf(password) || len(f.Locations) != 1 {
+			t.Errorf("finding %d = %+v, want the password in %s", 2+i, f, file)
+			continue
+		}
+		l := f.Locations[0]
+		if l.StartLine != 1 || l.StartCol != javaCol || l.EndLine != 1 || l.EndCol != javaCol+len(password)-1 || len(l.Detections) != 2 {
+			t.Errorf("location in %s = %+v, want line 1 columns %d to %d found by both tools", file, l, javaCol, javaCol+len(password)-1)
+		}
 	}
 	for i, file := range []string{"conf/bom.properties", "conf/euckr.properties"} {
 		f := got.Findings[i]

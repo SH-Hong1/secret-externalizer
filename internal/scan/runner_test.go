@@ -3,6 +3,7 @@ package scan_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -627,12 +628,18 @@ func TestHandle_CommitHash(t *testing.T) {
 
 func TestHandle_NoRawValueInLogs(t *testing.T) {
 	key := "-----BEGIN RSA PRIVATE KEY-----\ndev-only-fake-rsa-material\n-----END RSA PRIVATE KEY-----\n" //nolint:gosec // G101: an obviously fake fixture value
-	files := map[string]string{
-		propsFile:       "db.user=" + account + "\ndb.password=" + password + "\n",
-		"logs/app.log":  "call " + phone + "\n",
-		"deploy/id_rsa": key,
+	legacy, err := korean.EUCKR.NewEncoder().String("# 주문 설정\r\n이름=상점 url=" + hostURL + "\r\n# 끝\r\n")
+	if err != nil {
+		t.Fatalf("encoding EUC-KR: %v", err)
 	}
-	values := []string{password, account, phone, "dev-only-fake-rsa-material", "dev-only-other-value"}
+	files := map[string]string{
+		// dev-only-other-value is on line 3, but reported at line 1.
+		propsFile:                "db.user=" + account + "\ndb.password=" + password + "\ndb.other=dev-only-other-value\n",
+		"conf/legacy.properties": legacy,
+		"logs/app.log":           "call " + phone + "\n",
+		"deploy/id_rsa":          key,
+	}
+	values := []string{password, account, phone, hostURL, "dev-only-fake-rsa-material", "dev-only-other-value"}
 	scanners := func() []scan.Scanner {
 		mismatch := passwordBL()
 		mismatch.extra = []scan.Raw{{
@@ -642,6 +649,7 @@ func TestHandle_NoRawValueInLogs(t *testing.T) {
 		return []scan.Scanner{
 			mismatch, passwordOG(),
 			&needleScanner{tool: "opengrep", rule: "properties-user", category: finding.CategoryStorage, kind: finding.KindAccount, needle: account},
+			&needleScanner{tool: "opengrep", rule: "properties-url", category: finding.CategoryStorage, kind: finding.KindURL, needle: hostURL},
 			&needleScanner{tool: "betterleaks", rule: "customer-phone", category: finding.CategoryCustomerData, kind: finding.KindPhone, needle: phone, lineCol: true},
 		}
 	}
@@ -649,6 +657,7 @@ func TestHandle_NoRawValueInLogs(t *testing.T) {
 	cases := []struct {
 		name  string
 		setup func(*env)
+		extra scan.Scanner
 	}{
 		{name: "success"},
 		{name: "fingerprint fails", setup: func(e *env) { e.fps.err = errors.New("fingerprinting values: refused") }},
@@ -660,14 +669,21 @@ func TestHandle_NoRawValueInLogs(t *testing.T) {
 		}},
 		{name: "save fails", setup: func(e *env) { e.store.saveErr = errors.New("storing finding 0: refused") }},
 		{name: "lease lost", setup: func(e *env) { e.store.saveErr = job.ErrLeaseLost }},
+		{name: "scanner fails", extra: &needleScanner{tool: "opengrep", needle: "x", err: fmt.Errorf("scanning: opengrep exited with code 2: %w", scan.ErrScannerFailed)}},
+		{name: "time limit", setup: func(e *env) { e.opts.TimeLimit = time.Nanosecond }, extra: &blockingScanner{}},
 	}
+	saved := 0
 	for _, c := range cases {
 		e := newEnv(t, files)
 		e.logs = &logs
 		if c.setup != nil {
 			c.setup(e)
 		}
-		err := e.handle(t.Context(), scanners()...)
+		all := scanners()
+		if c.extra != nil {
+			all = append(all, c.extra)
+		}
+		err := e.handle(t.Context(), all...)
 		if err != nil {
 			if v := containsAny(err.Error(), values...); v != "" {
 				t.Errorf("Handle(%s) error = %v, holds %q", c.name, err, v)
@@ -678,6 +694,21 @@ func TestHandle_NoRawValueInLogs(t *testing.T) {
 				t.Errorf("Handle(%s) failure reason %q holds %q", c.name, o.reason, v)
 			}
 		}
+		for _, r := range e.store.results {
+			saved++
+			encoded, err := json.Marshal(r)
+			if err != nil {
+				t.Fatalf("json.Marshal(result) error = %v", err)
+			}
+			for _, dump := range []string{fmt.Sprintf("%+v", r), string(encoded)} {
+				if v := containsAny(dump, values...); v != "" {
+					t.Errorf("Handle(%s) saved a result that holds %q:\n%s", c.name, v, dump)
+				}
+			}
+		}
+	}
+	if saved == 0 {
+		t.Fatal("no scenario saved a result, want the results searched too")
 	}
 	if logs.Len() == 0 {
 		t.Fatal("the runner logged nothing, want at least the failures")
@@ -825,4 +856,71 @@ func TestHandle_RelativeTempDirFails(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(e.root, "5", "keep.txt")); err != nil {
 		t.Errorf("Handle(no temporary folder) removed a folder in the working directory: %v", err)
 	}
+}
+
+func TestHandle_ContextMasksUnplacedValues(t *testing.T) {
+	const other = "dev-only-unplaced-value-9"
+	t.Run("betterleaks value not at its column", func(t *testing.T) {
+		e := newEnv(t, map[string]string{propsFile: "a.password=" + password + "\nb.secret=" + other + "\n"})
+		bl := &needleScanner{
+			tool: "betterleaks", rule: "generic-password", category: finding.CategoryOther, kind: finding.KindOther, needle: "no such value",
+			// The value is on line 2, but reported at line 2, column 1.
+			extra: []scan.Raw{{
+				Tool: "betterleaks", Rule: "generic-password", Category: finding.CategoryOther, Kind: finding.KindOther,
+				File: propsFile, Offset: -1, EndOffset: -1, Line: 2, ByteCol: 1, Value: scan.Value(other),
+			}},
+		}
+		if err := e.handle(t.Context(), passwordOG(), bl); err != nil {
+			t.Fatalf("Handle() error = %v", err)
+		}
+		got := e.result(t)
+		if got.Dropped != 1 || len(got.Findings) != 1 {
+			t.Fatalf("Handle() = %+v, want the password found and the misplaced value dropped", got)
+		}
+		want := []string{"a.password=****", "b.secret=****"}
+		if diff := cmp.Diff(want, got.Findings[0].Locations[0].Context); diff != "" {
+			t.Errorf("surrounding lines of the password (-want +got):\n%s", diff)
+		}
+	})
+	t.Run("opengrep range off a character boundary", func(t *testing.T) {
+		e := newEnv(t, map[string]string{propsFile: "a.password=" + password + "\nb=비밀값\n"})
+		start := len("a.password=" + password + "\nb=")
+		og := &needleScanner{
+			tool: "opengrep", rule: "properties-password", category: finding.CategoryStorage, kind: finding.KindPassword, needle: "no such value",
+			// Starts one byte into the first Hangul character.
+			extra: []scan.Raw{{
+				Tool: "opengrep", Rule: "properties-password", Category: finding.CategoryStorage, Kind: finding.KindPassword,
+				File: propsFile, Offset: start + 1, EndOffset: start + len("비밀값"),
+			}},
+		}
+		if err := e.handle(t.Context(), passwordOG(), og); err != nil {
+			t.Fatalf("Handle() error = %v", err)
+		}
+		got := e.result(t)
+		if got.Dropped != 1 || len(got.Findings) != 1 {
+			t.Fatalf("Handle() = %+v, want the password found and the misplaced range dropped", got)
+		}
+		want := []string{"a.password=****", "b=****"}
+		if diff := cmp.Diff(want, got.Findings[0].Locations[0].Context); diff != "" {
+			t.Errorf("surrounding lines of the password (-want +got):\n%s", diff)
+		}
+	})
+	t.Run("whole-file result in a text file", func(t *testing.T) {
+		content := "spring:\n  password: " + password + "\nkey: |\n-----BEGIN PRIVATE KEY-----\ndev-only-fake-inline-key\n-----END PRIVATE KEY-----\n"
+		e := newEnv(t, map[string]string{"application.yml": content})
+		if err := e.handle(t.Context(), passwordOG()); err != nil {
+			t.Fatalf("Handle() error = %v", err)
+		}
+		got := e.result(t)
+		if len(got.Findings) != 2 {
+			t.Fatalf("Handle() = %+v, want the password and the key file", got)
+		}
+		for _, f := range got.Findings {
+			for _, l := range f.Locations {
+				if l.Context != nil || l.ContextFirstLine != 0 {
+					t.Errorf("%s location = %+v, want no surrounding lines in a file that is itself a key", f.Kind, l)
+				}
+			}
+		}
+	})
 }

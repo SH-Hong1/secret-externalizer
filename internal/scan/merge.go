@@ -28,7 +28,9 @@ type mergedLocation struct {
 //
 // It also returns the originals to keep, by fingerprint: the value of every
 // finding that is not customer data. A customer data finding gets no
-// surrounding lines.
+// surrounding lines, and neither does any finding in a text file that a
+// scanner reported as a whole-file key. Surrounding lines mask every placed
+// value of the file and every place an unplaced result's value may be.
 //
 // A location's end is the line and column of the value's last character.
 // Findings are ordered by file, first location, and fingerprint; locations
@@ -98,7 +100,7 @@ func newFinding(pf *placedFile, fp string, mls []*mergedLocation, spans []findin
 	for _, ml := range mls {
 		l := finding.Location{FileHash: pf.hash, Detections: detections(ml.detected)}
 		l.StartLine, l.StartCol, l.EndLine, l.EndCol = pf.position(ml.spot)
-		if category != finding.CategoryCustomerData && !ml.spot.raw.wholeFile() {
+		if category != finding.CategoryCustomerData && !ml.spot.raw.wholeFile() && !pf.noContext {
 			l.Context, l.ContextFirstLine = finding.Context(pf.file, ml.spot.span, spans)
 		}
 		f.Locations = append(f.Locations, l)
