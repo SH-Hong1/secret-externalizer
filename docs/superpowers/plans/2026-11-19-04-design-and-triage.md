@@ -405,7 +405,7 @@
 
 **Interfaces:**
 - Produces:
-  - `POST /projects/{id}/bundles/{bundle}/verdict` — 양식 값 `verdict`(빈 값은 판정 취소), `hold_reason`, `name`, `note`, `return`(돌아갈 필터와 쪽)
+  - `POST /projects/{id}/bundles/{bundle}/verdict` — 양식 값 `verdict`(`none`은 판정 취소, 값이 없으면 400), `hold_reason`, `name`, `note`, `return`(돌아갈 필터와 쪽)
   - `POST /projects/{id}/customer-data/verdict` — 양식 값 `kind`, `file`, `from`(지금의 판정), `verdict`, `hold_reason`, `note`, `return`
   - `POST /projects/{id}/findings/{finding}/move` — 양식 값 `to`(`new` 또는 묶음 ID), `return`
   - 성공하면 303으로 판정 화면에 돌아간다. 판정한 뒤에는 같은 필터의 다음 줄이 골라지고, 옮긴 뒤에는 원래 묶음(없어졌으면 옮겨 간 묶음)이 골라진다. 실패(400)는 판정 화면을 다시 그리고 상세 위에 사유를 보인다.

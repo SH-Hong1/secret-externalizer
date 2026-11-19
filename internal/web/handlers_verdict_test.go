@@ -75,8 +75,8 @@ func TestVerdictSaves(t *testing.T) {
 			triage.Decision{Verdict: triage.VerdictFalsePositive, Note: "fake note"},
 		},
 		{
-			"empty verdict cancels",
-			verdictForm("", "db.shop.password", "later", "fake note", "status=undecided"),
+			"cancel button cancels",
+			verdictForm("none", "db.shop.password", "later", "fake note", "status=undecided"),
 			triage.Decision{},
 		},
 	}
@@ -144,8 +144,10 @@ func TestVerdictSelectsNext(t *testing.T) {
 }
 
 func TestVerdictRejected(t *testing.T) {
+	customerPath := "/projects/1/customer-data/verdict"
 	tests := []struct {
 		name       string
+		target     string
 		form       url.Values
 		decideErr  error
 		wantStatus int
@@ -175,6 +177,28 @@ func TestVerdictRejected(t *testing.T) {
 			form:       verdictForm("maybe", "", "", "", "status=undecided"),
 			wantStatus: http.StatusBadRequest,
 			wants:      []string{"알 수 없는 판정입니다"},
+		},
+		{
+			name:       "empty verdict",
+			form:       verdictForm("", "", "", "", "status=undecided"),
+			wantStatus: http.StatusBadRequest,
+			wants:      []string{"알 수 없는 판정입니다"},
+		},
+		{
+			name:       "no button pressed",
+			form:       url.Values{"name": {"db.shop.password"}, "hold_reason": {"later"}, "note": {"fake note"}, "return": {"status=undecided"}},
+			wantStatus: http.StatusBadRequest,
+			wants:      []string{"판정 버튼을 눌러 주세요", `value="db.shop.password"`, `value="fake note"`},
+		},
+		{
+			name:   "no button pressed for customer data",
+			target: customerPath,
+			form: url.Values{
+				"kind": {"phone"}, "file": {"logs/sample.log"}, "from": {""},
+				"hold_reason": {"later"}, "note": {"fake note"}, "return": {"status=undecided"},
+			},
+			wantStatus: http.StatusBadRequest,
+			wants:      []string{"판정 버튼을 눌러 주세요", `value="fake note"`},
 		},
 		{
 			name:       "unknown hold reason",
@@ -220,20 +244,24 @@ func TestVerdictRejected(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			target := tt.target
+			if target == "" {
+				target = verdictPath
+			}
 			e := triageEnv(t)
 			e.triage.decideErr = tt.decideErr
-			res := e.post(t, verdictPath, tt.form, nil)
+			res := e.post(t, target, tt.form, nil)
 			if res.status != tt.wantStatus {
-				t.Fatalf("POST %s %v status = %d, want %d; body:\n%s", verdictPath, tt.form, res.status, tt.wantStatus, res.body)
+				t.Fatalf("POST %s %v status = %d, want %d; body:\n%s", target, tt.form, res.status, tt.wantStatus, res.body)
 			}
 			if got := len(e.triage.decideCalls()); got != map[bool]int{false: 0, true: 1}[tt.wantDecide] {
-				t.Errorf("POST %s %v called Decide %d times, want it called: %v", verdictPath, tt.form, got, tt.wantDecide)
+				t.Errorf("POST %s %v called Decide %d times, want it called: %v", target, tt.form, got, tt.wantDecide)
 			}
 			if tt.wantStatus != http.StatusBadRequest {
 				return
 			}
 			detail := section(res.body, "section", "detail")
-			wantIn(t, "rejected verdict detail", detail, append(tt.wants, `role="alert"`, `action="/projects/1/bundles/101/verdict"`)...)
+			wantIn(t, "rejected verdict detail", detail, append(tt.wants, `role="alert"`, `action="`+target+`"`)...)
 			wantIn(t, "rejected verdict page", res.body, `id="list"`, "<html")
 			wantNotIn(t, "rejected verdict page", res.body, "deciding:")
 		})
@@ -521,7 +549,7 @@ func TestTriageCancelButton(t *testing.T) {
 	b.Decision = triage.Decision{Verdict: triage.VerdictFalsePositive}
 	e.triage.putBundle(b)
 	res = e.getTriage(t, nil, nil)
-	wantIn(t, "decided detail", section(res.body, "section", "detail"), `name="verdict" value="">판정 취소</button>`)
+	wantIn(t, "decided detail", section(res.body, "section", "detail"), `name="verdict" value="none">판정 취소</button>`)
 
 	res = e.getTriage(t, url.Values{"sel": {"c.none.phone.logs/sample.log"}}, nil)
 	wantNotIn(t, "undecided customer data", section(res.body, "section", "detail"), "판정 취소")
@@ -540,5 +568,33 @@ func TestVerdictFormIsBounded(t *testing.T) {
 	}
 	if n := len(e.triage.decideCalls()); n != 0 {
 		t.Errorf("POST %s with a 64KiB form called Decide %d times, want 0", verdictPath, n)
+	}
+}
+
+// TestVerdictFormGuard checks that the first submit button of each verdict
+// form is a disabled one without a verdict, so Enter in a text field submits
+// nothing.
+func TestVerdictFormGuard(t *testing.T) {
+	e := triageEnv(t)
+	for _, sel := range []string{"b101", "c.none.phone.logs/sample.log"} {
+		res := e.getTriage(t, url.Values{"sel": {sel}}, nil)
+		detail := section(res.body, "section", "detail")
+		i := strings.Index(detail, `class="verdict-form"`)
+		if i < 0 {
+			t.Fatalf("GET triage sel=%s has no verdict form; detail:\n%s", sel, detail)
+		}
+		form := detail[i:]
+		j := strings.Index(form, `type="submit"`)
+		if j < 0 {
+			t.Fatalf("GET triage sel=%s verdict form has no submit button", sel)
+		}
+		start := strings.LastIndex(form[:j], "<button")
+		end := strings.Index(form[j:], ">")
+		if start < 0 || end < 0 {
+			t.Fatalf("GET triage sel=%s first submit is not a button: %q", sel, form[:j])
+		}
+		guard := form[start : j+end+1]
+		wantIn(t, "first submit button of sel="+sel, guard, "disabled", "hidden", `tabindex="-1"`, `aria-hidden="true"`)
+		wantNotIn(t, "first submit button of sel="+sel, guard, `name="verdict"`)
 	}
 }

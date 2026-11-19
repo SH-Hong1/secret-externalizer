@@ -100,6 +100,7 @@
 {{if .Frontend}}<p class="notice-hold">JSP, JS, HTML 파일의 값은 외부화할 수 없습니다. 브라우저로 내려가는 코드라서 구조를 바꿔야 합니다. 리포트의 "구조 변경이 필요한 항목"에 실립니다.</p>
 {{end}}{{if .Form.Text}}<p class="notice-suggest">{{.Form.Text}}</p>
 {{end}}<form method="post" action="{{.Form.Action}}" class="verdict-form">
+{{template "verdict-guard"}}
 <input type="hidden" name="return" value="{{.Form.Return}}">
 <div class="verdict-fields">
 {{with .Name}}<div class="field verdict-field">
@@ -130,6 +131,7 @@
 {{end}}</dl>
 <p class="notice-soft text-2">고객정보는 값과 주변 줄을 저장하지 않습니다. 내용은 편집기에서 이 파일의 줄 번호로 확인해 주세요.</p>
 <form method="post" action="{{.Form.Action}}" class="verdict-form">
+{{template "verdict-guard"}}
 <input type="hidden" name="return" value="{{.Form.Return}}">
 <input type="hidden" name="kind" value="{{.Kind}}">
 <input type="hidden" name="file" value="{{.File}}">
@@ -140,6 +142,11 @@
 </div>
 {{template "verdict-buttons" .Form}}
 </form>{{end}}
+
+{{/* The first submit button of a form is the one Enter in a text field
+presses. This one is disabled, so Enter submits nothing and a verdict is
+stored only by pressing its button. */}}
+{{define "verdict-guard"}}<button type="submit" disabled hidden tabindex="-1" aria-hidden="true"></button>{{end}}
 
 {{define "note"}}<div class="field verdict-field">
 <label class="field-label" for="verdict-note">메모 <span class="optional">· 선택</span></label>
@@ -155,5 +162,5 @@
 {{end}}</select>
 {{with .Hold}}<button class="btn btn-lg btn-{{.Class}}{{if .Suggested}} btn-suggested{{end}}" type="submit" name="verdict" value="{{.Value}}">{{.Label}}{{if .Suggested}} · 제안{{end}}</button>
 {{end}}{{if .Cancel}}<span class="verdict-divider" aria-hidden="true"></span>
-<button class="btn btn-lg" type="submit" name="verdict" value="">판정 취소</button>
+<button class="btn btn-lg" type="submit" name="verdict" value="none">판정 취소</button>
 {{end}}</div>{{end}}

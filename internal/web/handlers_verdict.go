@@ -20,6 +20,7 @@ import (
 // The reasons a verdict or a move is refused, shown above the detail.
 const (
 	msgUnknownVerdict = "알 수 없는 판정입니다."
+	msgPressButton    = "판정 버튼을 눌러 주세요."
 	msgHoldReason     = "보류 사유를 골라 주세요."
 	msgName           = "이름은 점으로 나눈 소문자 낱말 두 개에서 다섯 개로 쓰고, ext로 시작하지 않게 입력해 주세요."
 	msgNote           = "메모는 500자 이하로, 줄바꿈 없이 입력해 주세요."
@@ -29,10 +30,16 @@ const (
 	msgMoveNotAllowed = "이 묶음으로 옮길 수 없습니다."
 )
 
+// cancelVerdict is the verdict value the cancel button sends. It clears the
+// verdict.
+const cancelVerdict = "none"
+
 // verdictInput is what a verdict form submitted, kept to show it again when
-// the verdict is refused.
+// the verdict is refused. Pressed reports whether the form had a verdict
+// field at all, which only a verdict button sends.
 type verdictInput struct {
 	Verdict string
+	Pressed bool
 	Reason  string
 	Name    string
 	Note    string
@@ -40,8 +47,10 @@ type verdictInput struct {
 
 // readVerdictInput reads the verdict fields of a parsed form.
 func readVerdictInput(r *http.Request) verdictInput {
+	_, pressed := r.PostForm["verdict"]
 	return verdictInput{
 		Verdict: r.PostFormValue("verdict"),
+		Pressed: pressed,
 		Reason:  r.PostFormValue("hold_reason"),
 		Name:    r.PostFormValue("name"),
 		Note:    r.PostFormValue("note"),
@@ -49,12 +58,17 @@ func readVerdictInput(r *http.Request) verdictInput {
 }
 
 // decision returns the decision in asks for, or the reason it cannot be
-// one. An empty verdict clears the verdict. The name counts only for
-// externalize and the reason only for hold.
+// one. A form sent without a pressed verdict button records nothing, so a
+// verdict is never stored by submitting a text field with Enter. The cancel
+// value clears the verdict. The name counts only for externalize and the
+// reason only for hold.
 func (in verdictInput) decision() (triage.Decision, string) {
+	if !in.Pressed {
+		return triage.Decision{}, msgPressButton
+	}
 	var d triage.Decision
 	switch v := triage.Verdict(in.Verdict); v {
-	case "":
+	case cancelVerdict:
 		return triage.Decision{}, ""
 	case triage.VerdictExternalize:
 		n, err := triage.ParseName(in.Name)
