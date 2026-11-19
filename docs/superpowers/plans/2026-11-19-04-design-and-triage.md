@@ -489,7 +489,7 @@
 **Files:**
 - Modify: `docs/next-steps.md`, `docs/local-run.md`, `CHANGELOG.md`
 
-- [x] **Step 1:** `docker compose down -v` 뒤 `docker compose up --build`로 새로 띄우고, 계획 3의 예제 소스 프로젝트를 등록해 스캔한다. `down -v`는 하지 않았다. 기존 볼륨을 그대로 두고 이미지를 다시 만들어 띄웠다.
+- [x] **Step 1:** `docker compose down -v` 뒤 `docker compose up --build`로 새로 띄우고, 계획 3의 예제 소스 프로젝트를 등록해 스캔한다. 확인 표는 기존 볼륨 위에서 이미지를 다시 만들어 띄운 스택으로 했고, 마지막에 `down -v`로 빈 볼륨에서 다시 띄워 등록, 스캔, 원본 보기를 확인했다.
 - [x] **Step 2:** Chromium에서 아래 표를 확인하고 결과를 PR 본문에 적는다. 2026-11-20에 14개 모두 확인했다.
 
   | 번호 | 확인 |
@@ -510,7 +510,7 @@
   | 14 | 스캔 화면에서 건너뛴 파일 이름이 펼쳐진다 |
 
 - [x] **Step 3:** `docs/next-steps.md`를 고친다. 표의 계획 4를 완료로 바꾸고, "계획 4에 필요한 계획 3의 남은 일"에서 끝난 것을 지우고, 이 계획이 계획 5로 넘기는 일(오탐의 임시 원본 지우기, 한 파일 안의 같은 값을 따로 이름 붙이기, 호스트·포트·계정의 자동 묶기)을 적는다.
-- [ ] **Step 4:** `superpowers:requesting-code-review`로 브랜치 전체를 검토받고 PR 2를 올린다.
+- [x] **Step 4:** `superpowers:requesting-code-review`로 브랜치 전체를 검토받고 PR 2를 올린다.
 
 ## 이 계획이 하지 않는 것
 

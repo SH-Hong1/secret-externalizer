@@ -69,6 +69,7 @@
 - 감사 로그 화면 `/audit`(`admin`): 판정, 묶음 옮기기, 원본 보기를 최신순으로 한 쪽에 100줄씩 보인다(시각(UTC), 사용자, 동작, 프로젝트, 묶음과 항목 번호, 이름, 보류 사유, 메모). "더 보기"가 다음 쪽(`?before=<마지막 줄의 ID>`)을 열고, 마지막 쪽에는 없다. `*db.Store`에 `RecordReveal`과 `AuditEvents`를 더했다.
 - web 환경 변수 `BAO_ADDR`, `BAO_ROLE_ID`, `BAO_SECRET_ID_FILE`(필수). web은 OpenBao에 닿지 않아도 기동한다. 기동할 때 설정을 로그에 한 줄 남기며, 클라이언트 시크릿, 데이터베이스 주소, secret-id는 가린다. compose의 web이 `openbao-secrets` 볼륨의 `web` 폴더를 읽기 전용으로 마운트한다.
 - 결정 기록 0030 (스캔에 남기는 요청자 이름과 건너뛴 파일 경로)
+- 결정 기록 0031 (계획 4를 구현하면서 대신 정한 것)
 - 프로젝트 화면에 상태별 묶음 수와 "판정하기" 링크, 프로젝트 목록에 마지막 스캔(시각과 상태), 미판정 수, 전체 수 열. `*db.Store`의 `ProjectSummaries`가 쿼리 하나로 읽는다.
 - 스캔이 건너뛴 파일의 이름과 스캐너 오류 수를 저장하고 스캔 화면에 보인다. `scan.Result`와 `scan.Scan`에 `SkippedFiles`(프로젝트 폴더 기준 상대 경로, 경로순 처음 200개, UTF-8이 아니거나 제어 문자가 든 경로는 빼고 수에만 센다)와 `ScannerErrors`(도구별 오류 수, 오류를 알린 도구만)를 더했다. 마이그레이션 0006이 `scan`에 `skipped_files`, `scanner_errors`, `requester_name` 열을 더한다.
 - 스캔을 요청한 사람의 이름을 저장한다(`requester_name`). 스캔 화면과 프로젝트 화면의 스캔 목록에 subject 대신 이름이 보이고, 이름 없이 저장된 이전 스캔은 subject가 보인다. `RequestScan`이 `audit.Actor`를 받는다.
