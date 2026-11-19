@@ -39,6 +39,7 @@ func (b *syncBuffer) String() string {
 // reports that none is left. claimErrs are returned by the first claims,
 // before any job is handed out.
 //
+// extendErrs are returned by the first renewals, and extendErr by the rest.
 // releaseErr is what ReleaseJob returns, and onRelease, when set, runs with
 // the context of each ReleaseJob call.
 type fakeQueue struct {
@@ -47,11 +48,12 @@ type fakeQueue struct {
 	releaseErr error
 	onRelease  func(ctx context.Context)
 
-	mu        sync.Mutex
-	jobs      []job.Job
-	claimErrs []error
-	claims    int
-	releases  []int64
+	mu         sync.Mutex
+	jobs       []job.Job
+	claimErrs  []error
+	claims     int
+	extendErrs []error
+	releases   []int64
 }
 
 func newFakeQueue(jobs ...job.Job) *fakeQueue {
@@ -79,6 +81,13 @@ func (q *fakeQueue) ExtendJob(_ context.Context, _ int64, _ string, _ time.Durat
 	select {
 	case q.extended <- struct{}{}:
 	default:
+	}
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.extendErrs) > 0 {
+		err := q.extendErrs[0]
+		q.extendErrs = q.extendErrs[1:]
+		return err
 	}
 	return q.extendErr
 }
@@ -422,5 +431,65 @@ func TestRun_ReleaseErrorIsLoggedOnce(t *testing.T) {
 	}
 	if n := strings.Count(logs.String(), "fake release failure"); n != 1 {
 		t.Errorf("Run() logged the release error %d times, want 1; log:\n%s", n, logs.String())
+	}
+}
+
+// leaseExpiry runs one job in a synctest bubble with a lease of one minute
+// renewed every 20 seconds, and returns how long after the start the
+// handler's context was cancelled, and the jobs released.
+func leaseExpiry(t *testing.T, q *fakeQueue) (time.Duration, []int64) {
+	t.Helper()
+	var elapsed time.Duration
+	var released []int64
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		opts := job.Options{WorkerID: "fake-worker", Poll: time.Hour, Lease: time.Minute, Heartbeat: 20 * time.Second}
+		start := time.Now()
+		cancelled := make(chan time.Duration, 1)
+		returned := make(chan error, 1)
+		go func() {
+			returned <- job.Run(ctx, discardLogger(), q, func(ctx context.Context, _ job.Job) error {
+				// A handler that is never cancelled gives up after ten
+				// minutes, so a failure is reported rather than hanging.
+				select {
+				case <-ctx.Done():
+				case <-time.After(10 * time.Minute):
+				}
+				cancelled <- time.Since(start)
+				return ctx.Err()
+			}, opts)
+		}()
+		elapsed = <-cancelled
+		cancel()
+		if err := <-returned; err != nil {
+			t.Errorf("Run() after cancel = %v, want nil", err)
+		}
+		released = q.released()
+	})
+	return elapsed, released
+}
+
+func TestRun_CancelsHandlerWhenLeaseExpiresLocally(t *testing.T) {
+	q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+	q.extendErr = errors.New("fake connection refused")
+	elapsed, released := leaseExpiry(t, q)
+	if elapsed != time.Minute {
+		t.Errorf("Run() with failing renewals cancelled the handler %v after the claim, want at the lease of 1m0s", elapsed)
+	}
+	if len(released) != 0 {
+		t.Errorf("Run() released jobs %v after the lease ran out, want none", released)
+	}
+}
+
+func TestRun_RenewalAfterFailureKeepsHandler(t *testing.T) {
+	q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+	// The renewal at 20s fails, the one at 40s succeeds, and every later one
+	// fails, so the lease runs out one minute after the 40s renewal.
+	q.extendErrs = []error{errors.New("fake connection refused"), nil}
+	q.extendErr = errors.New("fake connection refused")
+	elapsed, _ := leaseExpiry(t, q)
+	if want := 40*time.Second + time.Minute; elapsed != want {
+		t.Errorf("Run() cancelled the handler %v after the claim, want %v, one lease after the last renewal", elapsed, want)
 	}
 }

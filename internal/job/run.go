@@ -62,7 +62,9 @@ func (o Options) validate() error {
 }
 
 // Run claims jobs from q one at a time and passes each to h, until ctx is
-// cancelled. A job's lease is renewed while h runs. A job that h returns an
+// cancelled. A job's lease is renewed while h runs, and h's context is
+// cancelled when the lease is lost or runs out without a successful
+// renewal. A job that h returns an
 // error for is logged and left to its lease, so it is retried when the lease
 // runs out. On cancellation Run cancels the running job's context and waits
 // for h to return. When h then returns an error, so that it did not finish
@@ -79,10 +81,11 @@ func Run(ctx context.Context, logger *slog.Logger, q Queue, h Handler, opts Opti
 	timer := time.NewTimer(opts.Poll)
 	defer timer.Stop()
 	for ctx.Err() == nil {
+		claimed := time.Now()
 		j, err := q.ClaimJob(ctx, opts.WorkerID, opts.Lease)
 		switch {
 		case err == nil:
-			runJob(ctx, logger, q, h, opts, j)
+			runJob(ctx, logger, q, h, opts, j, claimed)
 			continue
 		case ctx.Err() != nil:
 			return nil
@@ -100,15 +103,16 @@ func Run(ctx context.Context, logger *slog.Logger, q Queue, h Handler, opts Opti
 	return nil
 }
 
-// runJob runs h for j and renews the lease meanwhile. It returns after h has
-// returned, the renewals have stopped, and, when the shutdown stopped h, the
-// job has been released.
-func runJob(ctx context.Context, logger *slog.Logger, q Queue, h Handler, opts Options, j Job) {
+// runJob runs h for j, claimed at the time claimed, and renews the lease
+// meanwhile. It returns after h has returned, the renewals have stopped,
+// and, when the shutdown stopped h, the job has been released.
+func runJob(ctx context.Context, logger *slog.Logger, q Queue, h Handler, opts Options, j Job, claimed time.Time) {
 	jobCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	// stopped is set by the handler's goroutine and leaseLost by the
-	// renewals'; both are read only after Wait.
+	// renewals', when the lease is lost or runs out; both are read only
+	// after Wait.
 	var stopped, leaseLost bool
 	var g errgroup.Group
 	g.Go(func() error {
@@ -130,7 +134,7 @@ func runJob(ctx context.Context, logger *slog.Logger, q Queue, h Handler, opts O
 		renewLease(jobCtx, logger, func() {
 			leaseLost = true
 			cancel()
-		}, q, opts, j)
+		}, q, opts, j, claimed)
 		return nil
 	})
 	_ = g.Wait() // both functions return nil; they report through the logger
@@ -158,30 +162,59 @@ func releaseJob(ctx context.Context, logger *slog.Logger, q Queue, opts Options,
 }
 
 // renewLease extends the lease on j every opts.Heartbeat until ctx ends. It
-// calls lost when the lease belongs to another worker.
-func renewLease(ctx context.Context, logger *slog.Logger, lost context.CancelFunc, q Queue, opts Options, j Job) {
-	timer := time.NewTimer(opts.Heartbeat)
-	defer timer.Stop()
+// calls lost when the lease belongs to another worker, and when opts.Lease
+// has passed without a successful renewal since claimed or since the start
+// of the last successful renewal: the lease has then run out in the
+// database as well, and another worker may claim the job.
+//
+// A claim or renewal is counted from the moment it was asked for, which is
+// no later than the database clock started the lease, so the handler is
+// stopped no later than the lease ends.
+func renewLease(ctx context.Context, logger *slog.Logger, lost func(), q Queue, opts Options, j Job, claimed time.Time) {
+	deadline := claimed.Add(opts.Lease)
+	expiry := time.NewTimer(time.Until(deadline))
+	defer expiry.Stop()
+	beat := time.NewTimer(opts.Heartbeat)
+	defer beat.Stop()
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case <-timer.C:
+		case <-expiry.C:
+			logger.WarnContext(ctx, "job lease ran out without a renewal", "job_id", j.ID, "scan_id", j.ScanID)
+			lost()
+			return
+		case <-beat.C:
 		}
-		err := q.ExtendJob(ctx, j.ID, opts.WorkerID, opts.Lease)
+		asked := time.Now()
+		err := extend(ctx, q, opts, j, deadline)
 		switch {
 		case err == nil:
+			deadline = asked.Add(opts.Lease)
+			expiry.Reset(time.Until(deadline))
 		case ctx.Err() != nil:
 			return
 		case errors.Is(err, ErrLeaseLost):
 			logger.WarnContext(ctx, "job lease lost", "job_id", j.ID, "scan_id", j.ScanID)
 			lost()
 			return
+		case !time.Now().Before(deadline):
+			logger.WarnContext(ctx, "job lease ran out without a renewal", "job_id", j.ID, "scan_id", j.ScanID, "error", err.Error())
+			lost()
+			return
 		default:
 			// A renewal that fails for another reason is tried again at the
-			// next beat; the lease only runs out if every beat fails.
+			// next beat, until the lease runs out.
 			logger.WarnContext(ctx, "extending the job lease failed", "job_id", j.ID, "error", err.Error())
 		}
-		timer.Reset(opts.Heartbeat)
+		beat.Reset(opts.Heartbeat)
 	}
+}
+
+// extend renews the lease on j. A renewal that has not answered when the
+// lease runs out at deadline is abandoned.
+func extend(ctx context.Context, q Queue, opts Options, j Job, deadline time.Time) error {
+	ctx, cancel := context.WithDeadline(ctx, deadline)
+	defer cancel()
+	return q.ExtendJob(ctx, j.ID, opts.WorkerID, opts.Lease)
 }
