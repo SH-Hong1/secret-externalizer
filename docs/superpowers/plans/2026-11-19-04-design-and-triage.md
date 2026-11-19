@@ -30,7 +30,7 @@
 14. **[확정] 오탐으로 판정한 값의 임시 원본을 지우는 일은 계획 5에서 한다.** web은 OpenBao에 읽기 권한만 있고, 지우는 쪽은 worker다. 계획 5가 만드는 적용 작업이 OpenBao의 임시 경로를 정리할 때 함께 한다.
 15. **[확정] 건너뛴 파일의 이름을 스캔 화면에 보여 준다.** 스캔 기록에 건너뛴 파일의 경로(처음 200개)와 도구별 스캐너 오류 건수를 저장하고, 스캔 화면에서 펼쳐 볼 수 있게 한다. 무엇이 검사되지 않았는지 모르면 "남은 항목 0"을 믿을 수 없다. 경로는 비밀 값이 아니다.
 16. **[확정] 만든 CSS 파일을 저장소에 넣는다.** `make css`가 `internal/web/static/app.css`를 만들고, `make check`가 다시 만들어 본 결과와 같은지 확인한다. `go build`와 web 이미지 빌드는 지금 그대로다. 다른 안: 이미지 빌드 단계에서 CLI를 받아 만든다.
-17. **[확정] 글꼴은 시안에서 정한다.** 웹 글꼴을 쓰면 OFL 등 재배포가 허용된 것만 정적 파일로 넣고(CDN 없음) 결정 기록에 라이선스를 적는다.
+17. **[확정] 글꼴은 시안에서 정한다.** 웹 글꼴을 쓰면 OFL 등 재배포가 허용된 것만 정적 파일로 넣고(CDN 없음) 결정 기록에 라이선스를 적는다. 시안을 확인하면서 본문은 IBM Plex Sans KR, 코드는 D2Coding으로 정했다(결정 기록 0029).
 
 ## 구현 전에 확인할 사실
 
@@ -106,17 +106,17 @@
 **Files:**
 - Create: `docs/design/README.md`, `docs/design/*.html`
 
-- [ ] **Step 1:** `.superpowers/brainstorm/` 아래의 배치 시안 `triage-layout.html`(B안: 목록 + 상세)과 설계 8절을 읽는다. 배치는 이미 확정이고, 이 Task가 정하는 것은 시각 디자인이다.
-- [ ] **Step 2:** Claude design으로 다음 화면의 시안을 만든다. 값은 모두 가짜이고 가린 형태다.
+- [x] **Step 1:** `.superpowers/brainstorm/` 아래의 배치 시안 `triage-layout.html`(B안: 목록 + 상세)과 설계 8절을 읽는다. 배치는 이미 확정이고, 이 Task가 정하는 것은 시각 디자인이다.
+- [x] **Step 2:** Claude design으로 다음 화면의 시안을 만든다. 값은 모두 가짜이고 가린 형태다.
   - 공통 틀: 머리(도구 이름, 프로젝트·감사 로그 내비게이션, 사용자 이름과 역할, 로그아웃), 오류 화면, 역할 없음 화면
   - 프로젝트 목록, 등록 양식(검증 오류가 보이는 상태 포함), 프로젝트 상세(스캔 목록, 스캔 시작, 판정 화면으로 가기)
   - 스캔: 진행 중, 성공(요약, 건너뛴 파일 펼침), 실패
   - 판정 화면의 상태 다섯 가지: 비밀 값 묶음(주변 줄, 같은 값의 다른 위치, 이름 입력, 판정 버튼), 고객정보 줄(파일과 종류, 건수, 줄 번호), JSP 항목(외부화 없음), 과거 판정 제안이 있는 묶음, 원본을 펼친 `admin`의 화면
   - 판정 화면의 빈 상태: 스캔 없음, 필터 결과 없음, 모두 판정함
   - 감사 로그
-- [ ] **Step 3:** 사용자에게 시안의 주소를 주고 확인받는다. 고칠 점을 받아 고치고 다시 확인받는다.
-- [ ] **Step 4:** 확인받은 시안의 HTML을 `docs/design/`에 저장하고, `README.md`에 색(역할별 이름과 값), 글꼴, 글자 크기 단계, 간격 단계, 판정 네 가지와 미판정의 색 표시를 표로 적는다. 글꼴을 정했으면 결정 기록을 쓴다.
-- [ ] **Step 5:** 커밋한다. `docs: add the approved screen designs`
+- [x] **Step 3:** 사용자에게 시안의 주소를 주고 확인받는다. 고칠 점을 받아 고치고 다시 확인받는다.
+- [x] **Step 4:** 확인받은 시안의 HTML을 `docs/design/`에 저장하고, `README.md`에 색(역할별 이름과 값), 글꼴, 글자 크기 단계, 간격 단계, 판정 네 가지와 미판정의 색 표시를 표로 적는다. 글꼴을 정했으면 결정 기록을 쓴다.
+- [x] **Step 5:** 커밋한다. `docs: add the approved screen designs`
 
 ### Task 2: 정적 자원과 공통 틀
 
@@ -135,7 +135,7 @@
   - `TestNoInlineScriptOrStyle`: 모든 템플릿 파일에 `<script>` 본문, `style=`, `<style`, `on[a-z]+=` 속성이 없다.
 - [ ] **Step 3:** 테스트가 실패하는지 확인한다. `go test ./internal/web/ -run 'TestStatic|TestAsset|TestLayout|TestNoInline'`
 - [ ] **Step 4:** `static.go`를 쓴다. `//go:embed static`으로 넣고, `handleStatic() http.Handler`가 파일 이름 하나만 받는다. `securityHeaders`의 `no-store`는 이 handler가 덮어쓴다. `parseTemplates`는 `template.New(...).Funcs`로 `asset`을 넣는다.
-- [ ] **Step 5:** `layout.html`에 `<link rel="stylesheet">`, `<script src defer>`, `<meta name="htmx-config">`, 머리와 내비게이션을 넣고, 모든 쪽 템플릿을 시안대로 다시 쓴다(frontend-design 스킬). `assets/app.css`에 `docs/design/README.md`의 값을 테마로 옮긴다. `make css`로 `static/app.css`를 만든다.
+- [ ] **Step 5:** `layout.html`에 `<link rel="stylesheet">`, `<script src defer>`, `<meta name="htmx-config">`, 머리와 내비게이션을 넣고, 모든 쪽 템플릿을 시안대로 다시 쓴다(frontend-design 스킬). `assets/app.css`에 `docs/design/README.md`의 값을 테마로 옮긴다. IBM Plex Sans KR(400, 600, 700)과 D2Coding(400, 700)의 woff2 파일과 라이선스 전문을 `internal/web/static/fonts/`에 넣고 `@font-face`로 불러온다(결정 기록 0029). 글꼴 파일은 배포처의 공식 릴리스에서 받아 체크섬을 `Makefile`에 적는다. `make css`로 `static/app.css`를 만든다.
 - [ ] **Step 6:** `make check`가 통과하는지 확인한다. `docker compose up --build`로 띄워 Chromium에서 로그인, 프로젝트 목록, 등록, 스캔 화면이 시안과 같은지 보고, 콘솔에 CSP 위반이 없는지 확인한다.
 - [ ] **Step 7:** `CHANGELOG.md`와 결정 기록 0025(standalone CLI, 만든 CSS를 저장소에 두는 이유, htmx를 쓰는 범위)를 쓰고 커밋한다. `feat(web): add the stylesheet, htmx and the shared page frame`
 
@@ -395,7 +395,7 @@
   - `TestTriageRequiresLogin`: 세션이 없으면 로그인으로 보낸다.
 - [ ] **Step 2:** 실패를 확인한다.
 - [ ] **Step 3:** handler와 템플릿을 시안대로 쓴다(frontend-design 스킬). 목록의 줄은 `<a href="?...&sel=...">`이고 `hx-get`, `hx-target="#detail"`, `hx-push-url="true"`를 갖는다. `Suggester`의 구현은 `cmd/web`이 조립한다: 과거 판정(`PastDecision`)이 있으면 그것을 쓰고, 없으면 `triage.Default`다. `Suggester`가 오류를 내면 제안 없이 그리고 오류를 한 번 로그에 남긴다.
-- [ ] **Step 4:** 프로젝트 화면에 판정 화면으로 가는 링크와 상태별 건수를 넣는다.
+- [ ] **Step 4:** 프로젝트 화면에 판정 화면으로 가는 링크와 상태별 건수를 넣는다. 프로젝트 목록에는 시안대로 마지막 스캔(시각과 상태), 미판정 수, 전체 수 열을 넣는다. 이를 위해 `*db.Store`에 `ProjectSummaries(ctx) ([]project.Summary, error)`를 더하고 쿼리 하나로 읽는다.
 - [ ] **Step 5:** `make check`가 통과하는지 확인하고 커밋한다. `feat(web): show the triage list and detail`
 
 ### Task 7: 판정하기, 묶음 옮기기

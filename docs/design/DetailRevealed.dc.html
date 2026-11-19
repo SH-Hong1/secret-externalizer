@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<title>상세, 원본 보기</title>
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans+KR:wght@400;500;600;700&display=swap">
+<style>
+body{margin:0}
+a{color:#1F4FD8}a:hover{color:#163A9E}
+</style>
+</helmet>
+<div style="width: 760px; height: 600px; box-sizing: border-box; padding: 20px 24px 24px; background: #FFFFFF; color: #15171C; font-family: 'IBM Plex Sans KR', system-ui, sans-serif; font-size: 14px; line-height: 1.5; display: flex; flex-direction: column; gap: 18px">
+
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px 14px">
+<h2 style="margin: 0; font-size: 18px; font-weight: 700">비밀번호</h2>
+<span style="color: #565D6B">스토리지 접속 정보</span>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 15px; padding: 3px 8px; background: #F3F4F6; border: 1px solid #D9DDE3; border-radius: 4px">Sh0p****</span>
+<span style="flex-grow: 1"></span>
+<span style="padding: 3px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; background: #E6ECFC; color: #12307F">외부화 · ext.db.main.password</span>
+</div>
+
+<div style="border: 2px solid #15171C; border-radius: 6px; overflow: hidden">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 8px 12px; background: #15171C; color: #F3F4F6">
+<span style="font-weight: 600">원본 값</span>
+<span style="color: #C9CED8; flex-grow: 1">admin에게만 보입니다. 이 열람은 감사 로그에 남았습니다.</span>
+<button type="button" style="font: inherit; font-size: 13px; color: #F3F4F6; background: transparent; border: 1px solid #8B93A1; border-radius: 6px; padding: 4px 10px; min-height: 32px; cursor: pointer">닫기</button>
+</div>
+<pre style="margin: 0; padding: 14px 12px; font-family: 'IBM Plex Mono', monospace; font-size: 15px; line-height: 1.6; overflow-x: auto; white-space: pre-wrap; word-break: break-all">Sh0p-dev-only-fake-password</pre>
+<div style="padding: 8px 12px; border-top: 1px solid #D9DDE3; font-size: 12.5px; color: #565D6B">dev-admin · 2026-11-19 06:41:07 UTC · OpenBao에서 지금 읽은 값이며 이 화면을 떠나면 사라집니다.</div>
+</div>
+
+<div style="border: 1px solid #D9DDE3; border-radius: 6px; overflow: hidden">
+<div style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 8px 12px; background: #F7F8FA; border-bottom: 1px solid #D9DDE3">
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 13px; font-weight: 600">src/main/resources/application-prod.yml:14</span>
+<span style="flex-grow: 1"></span>
+<span style="font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: #565D6B">betterleaks generic-password</span>
+</div>
+<pre style="margin: 0; padding: 8px 0; font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.6; overflow-x: auto"><span style="display: block; padding: 0 12px"><span style="color: #6B7280">13  </span>    username: ****</span><span style="display: block; padding: 0 12px; background: #FFF1CC; box-shadow: inset 3px 0 0 #C27A00"><span style="color: #6B7280">14  </span>    password: <strong>Sh0p****</strong></span><span style="display: block; padding: 0 12px"><span style="color: #6B7280">15  </span>    url: jdbc:mysql://****:****/shop</span></pre>
+</div>
+
+<div style="display: flex; flex-direction: column; gap: 8px">
+<h3 style="margin: 0; font-size: 13px; font-weight: 600; color: #565D6B">원본을 볼 수 없을 때</h3>
+<p style="margin: 0; padding: 10px 14px; background: #F7F8FA; border: 1px solid #D9DDE3; border-radius: 6px; color: #3D4350">보관된 원본이 없습니다. 다시 스캔하면 보관됩니다.</p>
+<p style="margin: 0; padding: 10px 14px; background: #F7F8FA; border: 1px solid #D9DDE3; border-radius: 6px; color: #3D4350">텍스트가 아닌 원본입니다. 2,348바이트.</p>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props='{"$preview":{"width":760,"height":600}}'>
+class Component extends DCLogic {
+renderVals() { return {}; }
+}
+</script>
+</body>
+</html>
