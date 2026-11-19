@@ -148,6 +148,10 @@ func TestProjectCreate_InvalidInput(t *testing.T) {
 		{"empty path", url.Values{"name": {"shop"}, "path": {""}}},
 		{"empty name", url.Values{"name": {"  "}, "path": {"shop"}}},
 		{"name too long", url.Values{"name": {strings.Repeat("a", 101)}, "path": {"shop"}}},
+		{"name with NUL", url.Values{"name": {"sh\x00op"}, "path": {"shop"}}},
+		{"name with control character", url.Values{"name": {"sh\x1bop"}, "path": {"shop"}}},
+		{"name with newline", url.Values{"name": {"sh\nop"}, "path": {"shop"}}},
+		{"name with invalid UTF-8", url.Values{"name": {"sh\xffop"}, "path": {"shop"}}},
 		{"invalid exclude", url.Values{"name": {"shop"}, "path": {"shop"}, "excludes": {"vendor\n../x"}}},
 	}
 	for _, tt := range tests {
