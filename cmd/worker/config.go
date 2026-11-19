@@ -161,7 +161,7 @@ func checkExecutable(p string) error {
 	}
 	info, err := os.Stat(p)
 	if err != nil {
-		return err
+		return fmt.Errorf("checking the file: %w", err)
 	}
 	if !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
 		return fmt.Errorf("%q is not an executable file", p)
@@ -178,14 +178,14 @@ func checkRulesDir(dir string) error {
 	}
 	toml, err := os.Stat(filepath.Join(dir, "betterleaks.toml"))
 	if err != nil {
-		return err
+		return fmt.Errorf("checking the betterleaks rule file: %w", err)
 	}
 	if !toml.Mode().IsRegular() {
 		return fmt.Errorf("%q holds no betterleaks.toml file", dir)
 	}
 	og, err := os.Stat(filepath.Join(dir, "opengrep"))
 	if err != nil {
-		return err
+		return fmt.Errorf("checking the opengrep rule folder: %w", err)
 	}
 	if !og.IsDir() {
 		return fmt.Errorf("%q holds no opengrep folder", dir)
@@ -199,7 +199,7 @@ func checkRulesDir(dir string) error {
 func readSecretID(path string) (bao.SecretID, error) {
 	b, err := os.ReadFile(path) //nolint:gosec // G304: the path is the operator's own BAO_SECRET_ID_FILE setting
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("reading the secret-id file: %w", err)
 	}
 	s := bao.SecretID(strings.TrimSpace(string(b)))
 	if s == "" {

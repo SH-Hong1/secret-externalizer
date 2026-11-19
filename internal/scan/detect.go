@@ -112,9 +112,9 @@ func scanFolder(ctx context.Context, s Scanner, dir string) ([]Raw, Counts, erro
 // bytes. Any other result needs a file read as text: for an EUC-KR file it
 // is taken from its UTF-8 copy, and the project folder's result, at EUC-KR
 // offsets, is left out.
-func (l fileList) keep(raws []Raw, fromCopy bool) (kept []Raw, inSkipped int) {
+func (fl fileList) keep(raws []Raw, fromCopy bool) (kept []Raw, inSkipped int) {
 	for _, raw := range raws {
-		f, listed := l.files[raw.File]
+		f, listed := fl.files[raw.File]
 		switch {
 		case !listed:
 		case raw.wholeFile():

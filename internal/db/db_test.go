@@ -79,23 +79,23 @@ func TestOpen_ConnectTimeout(t *testing.T) {
 	if err != nil {
 		t.Fatalf("net.Listen() error = %v", err)
 	}
-	t.Cleanup(func() { _ = ln.Close() }) // closing a listener the test only accepted on loses nothing
 	var conns []net.Conn
-	var mu sync.Mutex
+	accepting := make(chan struct{})
 	go func() {
+		defer close(accepting)
 		for {
 			c, err := ln.Accept()
 			if err != nil {
 				return
 			}
-			mu.Lock()
 			conns = append(conns, c)
-			mu.Unlock()
 		}
 	}()
+	// Closing the listener ends the accept loop; the cleanup waits for it
+	// before it touches the connections the loop collected.
 	t.Cleanup(func() {
-		mu.Lock()
-		defer mu.Unlock()
+		_ = ln.Close() // closing a listener the test only accepted on loses nothing
+		<-accepting
 		for _, c := range conns {
 			_ = c.Close() // nothing was written to the connection
 		}
