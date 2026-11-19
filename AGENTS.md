@@ -10,8 +10,8 @@ live in `docs/decisions/`. Changes are listed in `CHANGELOG.md`.
 
 ## Project layout
 
-- Each binary has one entry point at `cmd/<binary>/main.go`. Today that is
-  `cmd/web`.
+- Each binary has one entry point at `cmd/<binary>/main.go`. Today those are
+  `cmd/web` and `cmd/worker`.
 - All other code lives under `internal/`. Do not create a `pkg/` directory.
 - Name a package after what it provides: `scan`, `finding`, `manifest`. Do not
   create `util`, `common`, `helpers`, `base`, or `models` packages.

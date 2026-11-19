@@ -40,9 +40,15 @@
 - `compose.yaml`: postgres, valkey, Keycloak, web을 띄우는 로컬 개발 환경. Keycloak은 기동할 때 `deploy/keycloak/realm.json`(역할 `user`, `admin`, 개발용 사용자 3명, ID 토큰의 `roles` 클레임)을 가져온다. 포트는 `127.0.0.1`에만 열고, valkey는 `16379`로 연다. valkey는 메모리를 64MB로 제한하고 넘치면 지우지 않고 새 쓰기를 거부한다(`noeviction`).
 - `deploy/web/Dockerfile`: 정적 링크한 web을 셸이 없는 최소 이미지에서 root가 아닌 사용자로 실행한다. compose에서는 읽기 전용 루트 파일 시스템, 모든 capability 제거, `no-new-privileges`를 적용한다.
 - 로컬 실행 안내 `docs/local-run.md`
+- `internal/db`: postgres 연결 풀(pgx), 내장 마이그레이션, 프로젝트·스캔·작업 저장소. 접속 주소는 `db.DSN` 타입으로 다뤄 로그와 오류 메시지에 남지 않는다.
+- 프로젝트 등록: 작업 공간 루트 아래의 폴더를 이름과 상대 경로로 등록한다. 경로는 심볼릭 링크를 풀어 루트 안인지 확인한다.
+- 스캔 요청과 상태 화면: 프로젝트마다 진행 중인 스캔은 하나만 둘 수 있고, 상태 화면은 스캔이 끝날 때까지 스스로 새로 고친다.
+- `cmd/worker`: 큐에 쌓인 스캔을 하나씩 실행한다. 지금은 프로젝트 폴더의 일반 파일 수만 세어 `succeeded`로 끝낸다. 작업은 postgres에 임대로 잡으며(2분, 30초마다 연장), worker가 멈추면 임대가 끝난 뒤 다시 실행하고 세 번 멈추면 스캔을 `failed`로 끝낸다. 실패 사유는 정해진 문구만 화면에 보이고 오류 내용은 worker 로그에만 남는다.
+- `deploy/worker/Dockerfile`과 compose의 `worker`: git이 든 alpine 이미지를 root가 아닌 사용자로 실행하고 작업 공간(`SE_WORKSPACE`)을 읽기 전용으로 마운트한다. `SE_WORKSPACE`가 없으면 compose가 안내와 함께 멈춘다.
 
 ### 변경
 
+- web은 `DATABASE_URL`을 필수로 읽고 기동할 때 마이그레이션을 실행한다.
 - `web -h`는 사용법을 표준 출력에 쓰고 종료 코드 0으로 끝난다. 플래그 오류는 한 번만 출력한다.
 - `make lint`, `make fmt`는 `bin/`에 도구가 없으면 먼저 설치한다.
 - 종료 시 검토가 `go.mod` 변경을 확인하고, 결정 기록 없는 의존성 추가를 지적한다.
@@ -52,6 +58,8 @@
 
 ### 수정
 
+- `project.Resolve`가 일반 파일을 거쳐 가는 경로(`file.txt/sub`)에 `ErrNotDirectory`가 아닌 일반 오류를 돌려주던 문제
+- 작업 큐가 세 번 시도한 작업을 경합 상황에서도 네 번째로 내주지 않는다.
 - 이름이 `testdata`로 시작하는 패키지(예: `internal/testdatabase`)가 린트에서 빠지던 문제
 - 저장소가 `testdata`라는 이름의 폴더 아래에 있으면 수정 hook이 모든 파일을 건너뛰던 문제
 - 수정 hook이 상대 경로 입력을 현재 폴더 기준으로 해석하던 문제. 저장소 루트 기준으로 해석한다.

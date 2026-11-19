@@ -1,6 +1,6 @@
 # 로컬에서 띄우기
 
-`compose.yaml`은 postgres, valkey, Keycloak, web을 한 번에 띄워 Keycloak으로 로그인해 볼 수 있게 한다. 이 파일과 `deploy/` 아래의 비밀번호와 시크릿은 모두 `dev-only-…` 형태의 가짜 값이며 로컬 개발에만 쓴다. 공유하거나 배포하는 환경에 그대로 쓰지 않는다.
+`compose.yaml`은 postgres, valkey, Keycloak, web, worker를 한 번에 띄워 Keycloak으로 로그인해 볼 수 있게 한다. 이 파일과 `deploy/` 아래의 비밀번호와 시크릿은 모두 `dev-only-…` 형태의 가짜 값이며 로컬 개발에만 쓴다. 공유하거나 배포하는 환경에 그대로 쓰지 않는다.
 
 ## 띄우고 내리기
 
@@ -17,6 +17,21 @@ docker compose down -v         # 볼륨까지 지운다. 다음 기동 때 realm
 `deploy/postgres/init.sql`은 postgres 볼륨을 처음 만들 때만 실행된다. `se_app` 계정과 테스트용 데이터베이스(`secret_externalizer_test`)를 더하기 전에 만든 볼륨에는 이 둘이 없으므로, `docker compose down -v`로 볼륨을 지우고 다시 띄운다. 볼륨을 지우지 않으려면 `init.sql`의 `se_app` 이하 문장을 `docker compose exec -T postgres psql -U postgres`로 한 번 실행한다.
 
 브라우저에서 `http://localhost:8080/`을 열면 Keycloak 로그인 화면으로 넘어간다.
+
+## 작업 공간과 worker
+
+worker는 등록한 프로젝트 폴더를 읽어 스캔한다. 프로젝트는 작업 공간 루트 아래의 폴더이므로, 루트로 쓸 폴더를 `SE_WORKSPACE`에 절대 경로로 준다. compose가 이 폴더를 worker 컨테이너의 `/workspace`에 읽기 전용으로 마운트한다.
+
+```sh
+export SE_WORKSPACE=$HOME/work     # 프로젝트 폴더들이 들어 있는 폴더
+docker compose up --build -d
+```
+
+- `SE_WORKSPACE`가 없으면 compose가 안내 문구와 함께 멈춘다. worker를 띄우지 않는 명령(`ps`, `down`)에도 compose 파일을 읽을 때 같은 오류가 나므로 셸에 계속 설정해 둔다.
+- macOS에서는 Docker가 공유하는 경로(보통 홈 폴더 아래)여야 한다. `/tmp` 같은 경로는 컨테이너에서 빈 폴더로 보인다.
+- 프로젝트를 등록할 때의 경로는 `SE_WORKSPACE` 기준의 상대 경로다. 예를 들어 `$HOME/work/shop`을 스캔하려면 `shop`으로 등록한다.
+- worker는 큐에 쌓인 스캔을 하나씩 실행한다. 지금은 일반 파일 수를 세어 스캔 화면에 보여 줄 뿐이다. 실패하면 화면에는 정해진 사유만 보이고 자세한 오류는 `docker compose logs worker`에 남는다.
+- worker가 스캔 중에 멈추면 임대(2분)가 끝난 뒤 다시 실행한다. 세 번 멈추면 스캔이 `failed`로 끝난다.
 
 ## 개발용 계정
 
@@ -59,6 +74,15 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 | `OIDC_DISCOVERY_URL` | | web이 발급자에 닿는 주소. 비우면 `OIDC_ISSUER_URL`을 쓴다. 여기서 읽은 discovery 문서의 `issuer`가 `OIDC_ISSUER_URL`과 다르면 web이 기동하지 않는다 |
 | `OIDC_CLIENT_ID` | 예 | `secret-externalizer-web` |
 | `OIDC_CLIENT_SECRET` | 예 | 로그와 오류 메시지에 남지 않는다 |
+
+## worker 환경 변수
+
+| 이름 | 필수 | 내용 |
+|---|---|---|
+| `DATABASE_URL` | 예 | web과 같은 postgres 주소. worker도 기동할 때 마이그레이션을 실행한다 |
+| `WORKSPACE_ROOT` | 예 | 작업 공간 루트. 절대 경로이고 폴더여야 한다. compose에서는 `/workspace` |
+
+확인 간격(2초), 임대(2분), 연장 간격(30초)은 환경 변수로 바꾸지 않는다.
 
 ## Safari 제약
 
