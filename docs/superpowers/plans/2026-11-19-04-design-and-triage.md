@@ -350,7 +350,7 @@
 
   web의 `Suggester` 인터페이스(Task 6)는 `Suggest(ctx context.Context, b triage.Bundle) (triage.Suggestion, error)` 하나다. 2차의 AI 제안은 이 인터페이스의 구현을 하나 더하는 것이다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다.** `TestSuggestName`은 표 형태다. 탐지된 줄은 `Members[0].Locations[0]`의 `Context`에서 `StartLine`에 해당하는 줄이다.
+- [x] **Step 1: 실패하는 테스트를 쓴다.** `TestSuggestName`은 표 형태다. 탐지된 줄은 `Members[0].Locations[0]`의 `Context`에서 `StartLine`에 해당하는 줄이다.
 
   | 분류, 종류 | 탐지된 줄 | 쓰인 이름 | 결과 |
   |---|---|---|---|
@@ -366,8 +366,8 @@
   | other-secret, other | `secretValue = "abcd****"` | 없음 | `secret.main.value` |
 
   결과는 언제나 `ParseName`을 통과한다(탐지된 줄에 한글이나 기호만 있어도). `TestDefault`: 비밀 값 묶음은 판정 없이 이름만 채운다. `Frontend` 파일 묶음은 `hold`와 `structure-change`, `Source: "rule"`이다. 고객정보 묶음은 빈 제안이다.
-- [ ] **Step 2:** 실패를 확인하고 구현한다. 대상을 만드는 순서: 탐지된 줄에서 값 앞의 키(`=`, `:` 앞의 낱말이나 `name="..."`의 값, Java는 대입문의 변수 이름)를 찾고, `.`, `_`, `-`, 낙타 표기 경계로 낱말을 나누고, 소문자로 바꾸고, 분류를 뜻하는 낱말(`jdbc`, `db`, `database`, `datasource`, `spring`, `ssh`, `partner`)과 항목을 뜻하는 낱말(`password`, `passwd`, `pwd`, `pass`, `username`, `user`, `id`, `account`, `url`, `host`, `port`, `token`, `key`, `secret`)을 빼고, 남은 첫 낱말을 쓴다.
-- [ ] **Step 3:** `make check`가 통과하는지 확인하고 커밋한다. `feat(triage): suggest placeholder names and default verdicts`
+- [x] **Step 2:** 실패를 확인하고 구현한다. 대상을 만드는 순서: 탐지된 줄에서 값 앞의 키(`=`, `:` 앞의 낱말이나 `name="..."`의 값, Java는 대입문의 변수 이름)를 찾고, `.`, `_`, `-`, 낙타 표기 경계로 낱말을 나누고, 소문자로 바꾸고, 분류를 뜻하는 낱말(`jdbc`, `db`, `database`, `datasource`, `spring`, `ssh`, `partner`)과 항목을 뜻하는 낱말(`password`, `passwd`, `pwd`, `pass`, `username`, `user`, `id`, `account`, `url`, `host`, `port`, `token`, `key`, `secret`)을 빼고, 남은 첫 낱말을 쓴다.
+- [x] **Step 3:** `make check`가 통과하는지 확인하고 커밋한다. `feat(triage): suggest placeholder names and default verdicts`
 - [ ] **Step 4:** PR 1을 올린다. 본문에 검토 항목 1~17의 답과, 화면에서 달라지는 것이 스타일뿐임을 적는다.
 
 ---
