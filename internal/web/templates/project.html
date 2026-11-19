@@ -7,5 +7,8 @@
 {{range .Excludes}}<li>{{.}}</li>
 {{end}}</ul>
 {{else}}<p>없음</p>
-{{end}}<p><a href="/projects">목록</a></p>
+{{end}}<form method="post" action="/projects/{{.ID}}/scans">
+<button type="submit">스캔 시작</button>
+</form>
+<p><a href="/projects">목록</a></p>
 </main>{{end}}

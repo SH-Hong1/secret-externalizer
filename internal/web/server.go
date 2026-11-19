@@ -9,6 +9,7 @@ import (
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
 )
 
@@ -42,13 +43,23 @@ type ProjectStore interface {
 	Projects(ctx context.Context) ([]project.Project, error)
 }
 
+// ScanStore keeps the scans. RequestScan returns the ID of the project's
+// active scan together with an error matching db.ErrScanActive when one is
+// already queued or running, and an error matching db.ErrNotFound when the
+// project is unknown. Scan fails with an error matching db.ErrNotFound when
+// the ID is unknown.
+type ScanStore interface {
+	RequestScan(ctx context.Context, projectID project.ID, requestedBy string) (scan.ID, error)
+	Scan(ctx context.Context, id scan.ID) (scan.Scan, error)
+}
+
 // NewServer returns the complete handler, including middleware. From the
 // outside in, a request passes panic recovery, the request log, the security
 // headers, and cross-origin protection before it reaches its route.
-func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore) http.Handler {
+func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore) http.Handler {
 	mux := http.NewServeMux()
 	rd := newRenderer()
-	addRoutes(mux, logger, rd, authn, sessions, attempts, projects)
+	addRoutes(mux, logger, rd, authn, sessions, attempts, projects, scans)
 
 	return chain(mux,
 		recoverPanic(logger, rd),

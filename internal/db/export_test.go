@@ -83,3 +83,10 @@ func MigrationCount() int {
 	}
 	return len(m)
 }
+
+// JobState returns the state of the job that runs the scan with the given ID.
+func (s *Store) JobState(ctx context.Context, scanID int64) (string, error) {
+	var state string
+	err := s.pool.QueryRow(ctx, "SELECT state FROM job WHERE scan_id = $1", scanID).Scan(&state)
+	return state, err
+}

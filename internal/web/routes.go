@@ -10,7 +10,7 @@ import (
 // addRoutes registers every route of the server. Only the routes that need a
 // signed-in user read the session, so /healthz answers and logout works even
 // when the session store is down.
-func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore) {
+func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore) {
 	signedIn := func(h http.Handler) http.Handler {
 		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd))
 	}
@@ -30,5 +30,7 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, authn Auth
 	mux.Handle("GET /projects/new", signedIn(handleProjectNew(logger, rd)))
 	mux.Handle("POST /projects", signedIn(handleProjectCreate(logger, rd, projects)))
 	mux.Handle("GET /projects/{id}", signedIn(handleProject(logger, rd, projects)))
+	mux.Handle("POST /projects/{id}/scans", signedIn(handleScanCreate(logger, rd, scans)))
+	mux.Handle("GET /scans/{id}", signedIn(handleScan(logger, rd, scans)))
 	mux.Handle("/", handleNotFound(logger, rd))
 }
