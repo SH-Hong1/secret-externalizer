@@ -21,6 +21,18 @@ func requestScan(t *testing.T, s *db.Store) scan.ID {
 	return id
 }
 
+// assertJobState fails the test unless the job of scan id is in state want.
+func assertJobState(t *testing.T, s *db.Store, id scan.ID, want string) {
+	t.Helper()
+	got, err := s.JobState(t.Context(), int64(id))
+	if err != nil {
+		t.Fatalf("JobState(%d) error = %v", id, err)
+	}
+	if got != want {
+		t.Errorf("JobState(%d) = %q, want %q", id, got, want)
+	}
+}
+
 func TestClaimJob_NoJob(t *testing.T) {
 	s := newMigratedStore(t)
 	_, err := s.ClaimJob(t.Context(), "worker-a", time.Minute)
@@ -41,9 +53,7 @@ func TestClaimJob_ClaimsOnce(t *testing.T) {
 	if got.ScanID != int64(id) || got.Attempts != 1 {
 		t.Errorf("ClaimJob() = %+v, want scan %d and 1 attempt", got, id)
 	}
-	if state, _ := s.JobState(ctx, int64(id)); state != "running" {
-		t.Errorf("JobState(%d) after ClaimJob = %q, want %q", id, state, "running")
-	}
+	assertJobState(t, s, id, "running")
 	if _, err := s.ClaimJob(ctx, "worker-b", time.Minute); !errors.Is(err, job.ErrNoJob) {
 		t.Errorf("ClaimJob() of a leased job error = %v, want ErrNoJob", err)
 	}
@@ -123,9 +133,7 @@ func TestClaimJob_GivesUpAfterThree(t *testing.T) {
 	if got.Status != scan.StatusFailed || got.FailureReason != "worker stopped during the scan three times" || got.FinishedAt.IsZero() {
 		t.Errorf("Scan(%d) = %+v, want failed with the three-attempts reason and a finish time", id, got)
 	}
-	if state, _ := s.JobState(ctx, int64(id)); state != "failed" {
-		t.Errorf("JobState(%d) = %q, want %q", id, state, "failed")
-	}
+	assertJobState(t, s, id, "failed")
 	// The failed scan no longer blocks the project.
 	if _, err := s.RequestScan(ctx, got.ProjectID, "fake-subject"); err != nil {
 		t.Errorf("RequestScan() after the scan failed error = %v, want nil", err)
@@ -181,20 +189,19 @@ func TestFailScan_OnlyByLeaseHolder(t *testing.T) {
 	if got.Status != scan.StatusRunning || got.FailureReason != "" {
 		t.Errorf("Scan(%d) after a refused FailScan = %+v, want running with no reason", id, got)
 	}
-	if state, _ := s.JobState(ctx, int64(id)); state != "running" {
-		t.Errorf("JobState(%d) after a refused FailScan = %q, want %q", id, state, "running")
-	}
+	assertJobState(t, s, id, "running")
 
 	if err := s.FailScan(ctx, a.ID, "worker-b", id, "scan failed"); err != nil {
 		t.Fatalf("FailScan(worker-b, holder) error = %v", err)
 	}
-	got, _ = s.Scan(ctx, id)
+	got, err = s.Scan(ctx, id)
+	if err != nil {
+		t.Fatalf("Scan(%d) error = %v", id, err)
+	}
 	if got.Status != scan.StatusFailed || got.FailureReason != "scan failed" || got.FinishedAt.IsZero() {
 		t.Errorf("Scan(%d) after FailScan = %+v, want failed with the reason and a finish time", id, got)
 	}
-	if state, _ := s.JobState(ctx, int64(id)); state != "failed" {
-		t.Errorf("JobState(%d) after FailScan = %q, want %q", id, state, "failed")
-	}
+	assertJobState(t, s, id, "failed")
 }
 
 func TestFinishEmptyScan(t *testing.T) {
@@ -214,13 +221,14 @@ func TestFinishEmptyScan(t *testing.T) {
 	if err := s.FinishEmptyScan(ctx, j.ID, "worker-a", id, 3, 1); err != nil {
 		t.Fatalf("FinishEmptyScan(holder) error = %v", err)
 	}
-	got, _ := s.Scan(ctx, id)
+	got, err := s.Scan(ctx, id)
+	if err != nil {
+		t.Fatalf("Scan(%d) error = %v", id, err)
+	}
 	if got.Status != scan.StatusSucceeded || got.Files != 3 || got.Skipped != 1 || got.Findings != 0 || got.StartedAt.IsZero() || got.FinishedAt.IsZero() {
 		t.Errorf("Scan(%d) after FinishEmptyScan = %+v, want succeeded with 3 files, 1 skipped, started and finished", id, got)
 	}
-	if state, _ := s.JobState(ctx, int64(id)); state != "done" {
-		t.Errorf("JobState(%d) = %q, want %q", id, state, "done")
-	}
+	assertJobState(t, s, id, "done")
 	if err := s.FinishEmptyScan(ctx, j.ID, "worker-a", id, 3, 1); !errors.Is(err, job.ErrLeaseLost) {
 		t.Errorf("FinishEmptyScan(twice) error = %v, want ErrLeaseLost", err)
 	}

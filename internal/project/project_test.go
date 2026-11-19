@@ -102,6 +102,7 @@ func TestResolve(t *testing.T) {
 		{"missing", "nope", "", project.ErrNotDirectory},
 		{"dangling symlink", "dangling", "", project.ErrNotDirectory},
 		{"file", "file.txt", "", project.ErrNotDirectory},
+		{"through a file", "file.txt/sub", "", project.ErrNotDirectory},
 		{"invalid shape", "../outside", "", project.ErrInvalidPath},
 	}
 	for _, tt := range tests {

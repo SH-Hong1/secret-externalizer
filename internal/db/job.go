@@ -50,11 +50,12 @@ func (s *Store) ClaimJob(ctx context.Context, workerID string, lease time.Durati
 			locked_by = $1, locked_until = now() + $2 * interval '1 second'
 		WHERE id = (
 			SELECT id FROM job
-			WHERE state = 'queued' OR (state = 'running' AND locked_until <= now())
+			WHERE attempts < $3
+				AND (state = 'queued' OR (state = 'running' AND locked_until <= now()))
 			ORDER BY id LIMIT 1
 			FOR UPDATE SKIP LOCKED)
 		RETURNING id, scan_id, attempts`,
-		workerID, lease.Seconds()).Scan(&j.ID, &j.ScanID, &j.Attempts)
+		workerID, lease.Seconds(), maxJobAttempts).Scan(&j.ID, &j.ScanID, &j.Attempts)
 	noJob := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !noJob {
 		return job.Job{}, fmt.Errorf("claiming job: %w", err)
