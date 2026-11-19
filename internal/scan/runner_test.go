@@ -62,11 +62,11 @@ func (f *fakeStore) FailScan(_ context.Context, _ int64, _ string, _ scan.ID, re
 	return nil
 }
 
-func (f *fakeStore) FinishEmptyScan(_ context.Context, _ int64, _ string, _ scan.ID, files, skipped int) error {
+func (f *fakeStore) SaveResult(_ context.Context, _ int64, _ string, _ scan.ID, r scan.Result) error {
 	if f.finishErr != nil {
 		return f.finishErr
 	}
-	f.got = append(f.got, outcome{status: scan.StatusSucceeded, files: files, skipped: skipped})
+	f.got = append(f.got, outcome{status: scan.StatusSucceeded, files: r.Files, skipped: r.Skipped})
 	return nil
 }
 

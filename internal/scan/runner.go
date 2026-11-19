@@ -18,7 +18,7 @@ type Store interface {
 	Scan(ctx context.Context, id ID) (Scan, error)
 	Project(ctx context.Context, id project.ID) (project.Project, error)
 	FailScan(ctx context.Context, jobID int64, workerID string, id ID, reason string) error
-	FinishEmptyScan(ctx context.Context, jobID int64, workerID string, id ID, files, skipped int) error
+	SaveResult(ctx context.Context, jobID int64, workerID string, id ID, r Result) error
 }
 
 // The reasons a scan is failed with. They are shown on the scan page, so
@@ -51,7 +51,7 @@ func (r *Runner) Handle(ctx context.Context, j job.Job) error {
 	id := ID(j.ScanID)
 	files, err := r.run(ctx, id)
 	if err == nil {
-		if err := r.store.FinishEmptyScan(ctx, j.ID, r.workerID, id, files, 0); err != nil {
+		if err := r.store.SaveResult(ctx, j.ID, r.workerID, id, Result{Files: files}); err != nil {
 			return fmt.Errorf("finishing scan %d: %w", id, err)
 		}
 		return nil

@@ -34,7 +34,8 @@ func (s Status) Active() bool { return s == StatusQueued || s == StatusRunning }
 
 // Scan is one run of the scanner over a project. The time fields that do not
 // apply yet are zero. FailureReason is fixed wording chosen by the code that
-// fails the scan, never text from an error.
+// fails the scan, never text from an error. Dropped counts scanner results
+// that could not be placed in a file the scan read.
 type Scan struct {
 	ID            ID
 	ProjectID     project.ID
@@ -49,7 +50,27 @@ type Scan struct {
 	FailureReason string
 	Files         int
 	Skipped       int
+	Dropped       int
 	Findings      int
+}
+
+// Result is what a scan found, ready to be stored. It holds no value a
+// scanner found: each finding carries only a fingerprint, a masked preview,
+// its locations and, for secrets, masked surrounding lines.
+//
+// Files counts the regular files the scan listed. Skipped counts the files
+// it could not read as text and the directories it could not read. Dropped
+// counts scanner results that were discarded: a value not at the place the
+// scanner reported, a file the scan did not read, or a result the scanner
+// itself could not place.
+type Result struct {
+	CommitHash   string
+	RulesVersion string
+	ToolVersions map[string]string
+	Files        int
+	Skipped      int
+	Dropped      int
+	Findings     []finding.Finding
 }
 
 // ErrScannerFailed means a scanner did not finish with a usable report. The

@@ -25,7 +25,7 @@ const foreignKeyViolation = "23503"
 const requestScanAttempts = 3
 
 const scanColumns = `id, project_id, status, requested_by, requested_at, started_at, finished_at,
-	commit_hash, rules_version, tool_versions, failure_reason, files, skipped, findings`
+	commit_hash, rules_version, tool_versions, failure_reason, files, skipped, dropped, findings`
 
 // RequestScan records a queued scan of the project and the job that runs it,
 // in one transaction, and returns the scan ID. When the project already has
@@ -161,7 +161,7 @@ func scanScan(row pgx.Row) (scan.Scan, error) {
 		toolVersions      map[string]string
 	)
 	err := row.Scan(&sc.ID, &sc.ProjectID, &sc.Status, &sc.RequestedBy, &sc.RequestedAt, &started, &finished,
-		&sc.CommitHash, &sc.RulesVersion, &toolVersions, &sc.FailureReason, &sc.Files, &sc.Skipped, &sc.Findings)
+		&sc.CommitHash, &sc.RulesVersion, &toolVersions, &sc.FailureReason, &sc.Files, &sc.Skipped, &sc.Dropped, &sc.Findings)
 	if err != nil {
 		return scan.Scan{}, err
 	}

@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/SH-Hong1/secret-externalizer/internal/project"
 )
 
 // NewTestStore returns a Store whose pool uses a schema of its own, created
@@ -89,4 +91,19 @@ func (s *Store) JobState(ctx context.Context, scanID int64) (string, error) {
 	var state string
 	err := s.pool.QueryRow(ctx, "SELECT state FROM job WHERE scan_id = $1", scanID).Scan(&state)
 	return state, err
+}
+
+// FindingIDs are the identifying columns of a finding row.
+type FindingIDs struct {
+	ID, FirstScanID, LastScanID int64
+}
+
+// FindingRow returns the identifying columns of the finding of the project
+// with the given fingerprint and file.
+func (s *Store) FindingRow(ctx context.Context, projectID project.ID, fingerprint, file string) (FindingIDs, error) {
+	var f FindingIDs
+	err := s.pool.QueryRow(ctx,
+		"SELECT id, first_scan_id, last_scan_id FROM finding WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3",
+		projectID, fingerprint, file).Scan(&f.ID, &f.FirstScanID, &f.LastScanID)
+	return f, err
 }

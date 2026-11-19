@@ -203,33 +203,3 @@ func TestFailScan_OnlyByLeaseHolder(t *testing.T) {
 	}
 	assertJobState(t, s, id, "failed")
 }
-
-func TestFinishEmptyScan(t *testing.T) {
-	s := newMigratedStore(t)
-	ctx := t.Context()
-	id := requestScan(t, s)
-	j, err := s.ClaimJob(ctx, "worker-a", time.Minute)
-	if err != nil {
-		t.Fatalf("ClaimJob() error = %v", err)
-	}
-	if err := s.StartScan(ctx, id); err != nil {
-		t.Fatalf("StartScan(%d) error = %v", id, err)
-	}
-	if err := s.FinishEmptyScan(ctx, j.ID, "worker-b", id, 3, 1); !errors.Is(err, job.ErrLeaseLost) {
-		t.Errorf("FinishEmptyScan(not the holder) error = %v, want ErrLeaseLost", err)
-	}
-	if err := s.FinishEmptyScan(ctx, j.ID, "worker-a", id, 3, 1); err != nil {
-		t.Fatalf("FinishEmptyScan(holder) error = %v", err)
-	}
-	got, err := s.Scan(ctx, id)
-	if err != nil {
-		t.Fatalf("Scan(%d) error = %v", id, err)
-	}
-	if got.Status != scan.StatusSucceeded || got.Files != 3 || got.Skipped != 1 || got.Findings != 0 || got.StartedAt.IsZero() || got.FinishedAt.IsZero() {
-		t.Errorf("Scan(%d) after FinishEmptyScan = %+v, want succeeded with 3 files, 1 skipped, started and finished", id, got)
-	}
-	assertJobState(t, s, id, "done")
-	if err := s.FinishEmptyScan(ctx, j.ID, "worker-a", id, 3, 1); !errors.Is(err, job.ErrLeaseLost) {
-		t.Errorf("FinishEmptyScan(twice) error = %v, want ErrLeaseLost", err)
-	}
-}
