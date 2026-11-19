@@ -68,8 +68,8 @@ tags = ["category:partner-session", "kind:token"]
 
 [[rules]]
 id = "partner-bearer-token"
-description = "Bearer token in an Authorization header"
-regex = '''(?i)\bbearer[ \t]+([A-Za-z0-9._~+/-]{16,})'''
+description = "Bearer token in an Authorization header, with any base64 padding"
+regex = '''(?i)\bbearer[ \t]+([A-Za-z0-9._~+/-]{16,}=*)'''
 secretGroup = 1
 keywords = ["bearer"]
 tags = ["category:partner-session", "kind:token"]

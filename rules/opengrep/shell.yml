@@ -2,7 +2,9 @@
 # the command sshpass runs, so an ssh -p port is not taken for it), the
 # user and host of user@host on an ssh, scp, sftp, or rsync line, and the key
 # file given to -i. Comment lines and variables ($VAR) are not reported, and
-# quotes around a value are not part of it.
+# quotes around a value are not part of it; a quoted sshpass password may
+# contain spaces. A (?|...) group numbers its alternatives' values alike, so
+# each is $VALUE.
 #
 # Every rule starts with "  - id:" and has its category and kind under
 # metadata, which the rule tests read line by line.
@@ -17,7 +19,7 @@ rules:
       category: ssh-credential
       kind: password
     patterns:
-      - pattern-regex: (?m)^[^#\r\n]*?\bsshpass\b(?:(?!\b(?:ssh|scp|sftp|rsync)\b)[^#\r\n])*?[ \t]-p[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)
+      - pattern-regex: (?m)^[^#\r\n]*?\bsshpass\b(?:(?!\b(?:ssh|scp|sftp|rsync)\b)[^#\r\n])*?[ \t]-p[ \t]*(?|'(?P<VALUE>[^'\r\n]+)'|"([^"\r\n$]+)"|([^\s'"$][^\s'"]*))
       - focus-metavariable: $VALUE
 
   - id: shell-ssh-user

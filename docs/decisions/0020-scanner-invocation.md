@@ -10,13 +10,14 @@ worker는 betterleaks와 opengrep을 외부 명령으로 실행하고(0002), 키
 확인한 사실(darwin/arm64 호스트와, worker와 같은 alpine 3.24.4 이미지에서 uid 65532, 읽기 전용 루트, `/tmp`만 tmpfs, 네트워크 없음으로 실행):
 
 - betterleaks 1.10.1(최신 안정판. 2.0.0은 아직 rc), opengrep 2.0.0(최신 안정판). 두 도구 모두 linux용 실행 파일이 정적 링크라 alpine(musl)에서 그대로 실행된다. worker의 기반 이미지는 바꾸지 않았다.
-- betterleaks: JSON 보고서는 결과의 배열이다(결과가 없으면 `[]`). `File`은 넘긴 폴더가 절대 경로면 절대 경로다. `StartLine`, `StartColumn`은 `Match`가 시작하는 곳이고, 열은 1부터 세는 **바이트** 열이다(같은 줄 앞에 한글이 있을 때 확인, UTF-8 BOM도 3바이트로 센다). 여러 줄에 걸친 일치는 `Match`에 줄바꿈이 그대로 들어 있고 `StartLine`/`StartColumn`은 첫 줄 기준이다. 결과가 있으면 `--exit-code`로 준 코드, 없으면 0, 설정 파일 오류 같은 자체 오류는 1로 끝난다. 읽을 수 없는 파일은 표준 오류에 경고만 쓰고 건너뛴다.
+- betterleaks: JSON 보고서는 결과의 배열이다(결과가 없으면 `[]`). `File`은 넘긴 폴더가 절대 경로면 절대 경로이고, 스캔 폴더를 작업 디렉터리로 두고 `.`을 넘기면 그 폴더 기준 상대 경로(`logs/app.log`)다. 규칙의 `path` 정규식도 이 경로에 맞춰 본다. `StartLine`, `StartColumn`은 `Match`가 시작하는 곳이고, 열은 1부터 세는 **바이트** 열이다(같은 줄 앞에 한글이 있을 때 확인, UTF-8 BOM도 3바이트로 센다). 여러 줄에 걸친 일치는 `Match`에 줄바꿈이 그대로 들어 있고 `StartLine`/`StartColumn`은 첫 줄 기준이다. 결과가 있으면 `--exit-code`로 준 코드, 없으면 0, 설정 파일 오류 같은 자체 오류는 1로 끝난다. 읽을 수 없는 파일은 표준 오류에 경고만 쓰고 건너뛴다.
 - betterleaks는 스캔 대상 폴더의 `.gitleaksignore`/`.betterleaksignore`를 `-i` 값과 상관없이 읽어 결과를 숨긴다. 끄는 옵션이 없다. 대상 폴더의 `.gitleaks.toml`은 `--unsafe-auto-load-config` 없이는 읽지 않는다. 줄 끝의 `gitleaks:allow` 주석도 결과를 숨긴다(`--ignore-gitleaks-allow`로 끈다). jar 같은 압축 파일은 바이너리로 보고 건너뛴다. HOME 아래 `.cache`에 정규식 엔진(wazero) 컴파일 캐시를 쓰며, HOME에 쓸 수 없어도 스캔은 된다.
 - opengrep: `start.offset`, `end.offset`은 **바이트** 오프셋이다(앞줄과 같은 줄에 한글이 있을 때 확인). `col`도 바이트 기준이다. 결과의 `extra.lines`와 `extra.metavars`에는 일치한 원문이 있고, `errors[].message`에도 소스 원문이 들어 있다.
 - opengrep은 규칙 파일의 경로를 규칙 ID 앞에 붙인다(`private.tmp...rules.java-password-field`). `--no-rewrite-rule-ids`를 주면 규칙에 쓴 ID 그대로다.
 - opengrep의 종료 코드: 일부 파일이 구문 분석에 실패해도(`PartialParsing`, `level: warn`) 0이고 `errors[]`에만 남는다. 읽을 수 없는 파일은 `errors[]`에도 없이 조용히 건너뛴다(`--x-ls-long`에서만 `insufficient_permissions`로 보인다). 규칙 파일이 잘못되었으면 7(`errors[]`에 code 5 `Invalid YAML` 또는 code 7 `Missing config`)이다.
 - opengrep의 기본 제외: 아무 옵션 없이 실행하면 `test/`, `vendor/`, `build/`(기본 `.semgrepignore`)와 `.gitignore` 대상이 빠진다. `--x-ignore-semgrepignore-files`가 앞의 셋을, `--no-git-ignore`가 `.gitignore` 대상을 다시 넣는 것을 확인했다. 줄 끝의 `nosemgrep` 주석은 결과를 숨긴다(`--disable-nosem`으로 끈다).
 - opengrep의 `--exclude` 패턴은 gitignore 문법이고 프로젝트 루트에 고정된다. 스캔 폴더가 git 저장소의 하위 폴더이면 프로젝트 루트는 저장소 루트라서 `/main`이 스캔 폴더의 `main`을 가리키지 않는다. `--project-root=<폴더>`를 주면 그 폴더가 루트가 되고(버전 관리 없는 폴더로 본다) 패턴이 그 폴더 기준이 된다. `\`로 `*`, `?`, `[`, `]`, 공백을 이스케이프할 수 있다.
+- 규칙 파일의 `paths: include`(`*.properties`, `build.xml` 등)도 gitignore 문법으로 경로의 각 구성 요소에 맞춰 본다. 스캔 대상을 절대 경로로 넘기면 스캔 폴더 **위의** 폴더 이름도 대상이 된다. 예를 들어 `…/build.xml/proj`를 스캔하면 그 안의 모든 XML 파일에 `build.xml` 규칙이 적용되었다. 스캔 폴더를 작업 디렉터리로 두고 `.`을 넘기면 결과의 `path`가 상대 경로가 되고 위 폴더 이름은 맞춰 보지 않는다. 이때도 `--project-root=<폴더>`와 `--exclude` 패턴은 그대로 동작한다. 스캔 폴더 **안의** 폴더 이름(예: `sub/build.xml/inner.xml`)은 gitignore 문법대로 여전히 맞는다.
 - opengrep은 `/tmp`, HOME에 아무것도 쓰지 않았다. 버전 확인 등 네트워크 접속 없이 동작한다.
 - 배포 파일: betterleaks는 `betterleaks_<버전>_<linux|darwin>_<arm64|x64>.tar.gz`와 `checksums.txt`, opengrep은 실행 파일 그대로 `opengrep_linux_aarch64`, `opengrep_linux_x86`, `opengrep_osx_arm64`, `opengrep_osx_x86`이고 체크섬 파일은 없다(서명 `.sig`, `.cert`는 있다). GitHub 릴리스 API가 주는 자산 digest를 썼고, betterleaks는 `checksums.txt`와 digest가 같다.
 
@@ -35,10 +36,10 @@ betterleaks:
 
 ```
 dir --no-banner --config=<config> --report-format=json --report-path=- --exit-code=3
-    --max-target-megabytes=20 --timeout=1500 --log-level=warn --ignore-gitleaks-allow -- <dir>
+    --max-target-megabytes=20 --timeout=1500 --log-level=warn --ignore-gitleaks-allow -- .
 ```
 
-종료 코드 0과 3이 정상이다.
+작업 디렉터리는 스캔 폴더(`<dir>`)다. 종료 코드 0과 3이 정상이다.
 
 opengrep:
 
@@ -46,13 +47,14 @@ opengrep:
 scan --config=<rulesDir> --json --quiet --no-git-ignore --x-ignore-semgrepignore-files
      --no-rewrite-rule-ids --disable-nosem --project-root=<dir> --max-target-bytes=20MB --timeout=10
      --exclude=.git/ --exclude=target/ --exclude=build/ --exclude=node_modules/
-     --exclude=/<프로젝트 제외 경로>… -- <dir>
+     --exclude=/<프로젝트 제외 경로>… -- .
 ```
 
-종료 코드 0만 정상이다.
+작업 디렉터리는 스캔 폴더(`<dir>`)다. 종료 코드 0만 정상이다.
 
 - 계획의 표에 더한 것: betterleaks의 `--ignore-gitleaks-allow`, opengrep의 `--no-rewrite-rule-ids`, `--disable-nosem`, `--project-root`, 그리고 두 도구의 `--` 구분자. 값은 `--옵션=값` 한 인자로 넘긴다.
 - 기본 제외 디렉터리는 끝에 `/`를 붙여 같은 이름의 파일은 제외하지 않는다(`textfile.Walk`와 같다). 프로젝트 제외 경로는 앞에 `/`를 붙여 스캔 폴더 기준으로 고정하고 gitignore의 특수 문자를 이스케이프한다.
+- 두 도구 모두 스캔 폴더에서 실행하고 대상으로 `.`을 넘긴다(`scanexec.Command.Dir`). 규칙의 경로 조건(betterleaks의 `path`, opengrep의 `paths`)이 스캔 폴더 안의 경로에만 맞춰지게 하려는 것이다. 절대 경로를 넘기면 스캔 폴더가 `data`, `logs` 같은 이름의 폴더 아래에 있을 때 고객정보 규칙이 모든 파일에 적용되었다(`.java`의 이메일 주소가 고객정보로 나왔다).
 - betterleaks에는 제외 옵션을 주지 않는다. 이후 스캔 실행기가 자기 파일 목록에 없는 파일의 결과를 버린다.
 
 ### 실행
@@ -67,7 +69,7 @@ scan --config=<rulesDir> --json --quiet --no-git-ignore --x-ignore-semgrepignore
 
 - betterleaks: `Match` 안에서 `Secret`이 처음 나오는 곳으로 줄과 바이트 열을 옮긴다. `Match`에 줄바꿈이 있으면 그 앞의 줄바꿈 수만큼 줄을 더하고 열은 마지막 줄바꿈 뒤부터 센다. `Secret`이 `Match`에 없거나 비어 있으면 버린다. 분류와 종류는 규칙의 `category:…`, `kind:…` 태그에서 오고, 둘 다 없으면 규칙 ID에 `private-key`가 있을 때 `ssh-credential`/`private-key`, 아니면 `other-secret`/`other`다. 하나만 있거나 알 수 없는 이름이면 규칙 파일의 잘못으로 보고 스캔이 실패한다.
 - opengrep: `check_id`, `path`, `start.offset`, `end.offset`, `extra.metadata.category`, `extra.metadata.kind`만 읽는다. `extra.lines`, `extra.metavars`, `errors[]`의 내용은 디코딩하지 않고 `errors[]`는 건수만 센다. `metadata`의 분류나 종류가 없거나 알 수 없으면 스캔이 실패한다. 오프셋이 없거나 거꾸로면 버린다.
-- 두 도구 모두 결과의 경로를 스캔 폴더 기준 상대 경로로 바꾸고, 폴더 밖을 가리키면 버린다.
+- 두 도구 모두 결과의 경로를 스캔 폴더 기준 상대 경로로 바꾸고, 폴더 밖을 가리키면 버린다. 상대 경로로 보고된 결과는 스캔 폴더 기준으로 읽으므로 `../a`도 폴더 밖으로 보고 버린다.
 - 버린 결과의 수(`Dropped`)와 opengrep의 오류 수(`Errors`)는 `scan.Counts`로 돌려준다. `scan.Scanner` 인터페이스의 `Scan`은 계획대로 두고, 각 스캐너에 `ScanWithCounts(ctx, dir) ([]scan.Raw, scan.Counts, error)`를 더했다. 테스트와 이후의 실행기는 `Parse(out, dir) ([]scan.Raw, scan.Counts, error)`나 `ScanWithCounts`로 건수를 얻는다.
 
 ### 키 파일

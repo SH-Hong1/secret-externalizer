@@ -51,7 +51,7 @@ func (s *Scanner) ScanWithCounts(ctx context.Context, dir string) ([]scan.Raw, s
 	if !filepath.IsAbs(dir) {
 		return nil, scan.Counts{}, fmt.Errorf("scanning %s: the folder is not an absolute path", name)
 	}
-	out, err := scanexec.Run(ctx, scanexec.Command{Tool: name, Bin: s.bin, Args: s.args(dir), Env: s.env})
+	out, err := scanexec.Run(ctx, scanexec.Command{Tool: name, Bin: s.bin, Args: s.args(dir), Dir: dir, Env: s.env})
 	if err != nil {
 		return nil, scan.Counts{}, fmt.Errorf("scanning: %w", err)
 	}
@@ -61,7 +61,9 @@ func (s *Scanner) ScanWithCounts(ctx context.Context, dir string) ([]scan.Raw, s
 // args returns the arguments for a scan of dir.
 //
 // dir is made the project root, so opengrep treats it as a folder without
-// version control and anchors exclude patterns there. .gitignore files,
+// version control and anchors exclude patterns there. opengrep runs in dir
+// with the target ".", so rules' paths patterns (such as *.properties) are
+// matched against paths inside dir only, never against the folders above it. .gitignore files,
 // .semgrepignore files, and nosemgrep comments are not honoured, so a
 // scanned project cannot hide a file or a line from the scan. Rule IDs are
 // kept as written in the rule files.
@@ -87,7 +89,7 @@ func (s *Scanner) args(dir string) []string {
 	for _, e := range s.excludes {
 		args = append(args, "--exclude=/"+escapePattern(e))
 	}
-	return append(args, "--", dir)
+	return append(args, "--", ".")
 }
 
 // escapePattern escapes the characters that have a meaning in a gitignore

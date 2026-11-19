@@ -94,6 +94,7 @@ func TestParse_Opengrep_Dropped(t *testing.T) {
 	}{
 		{"FileOutsideDir", "/elsewhere/a.java", start10, end20},
 		{"FileEscapesDir", "/scan/../a.java", start10, end20},
+		{"RelativeFileEscapesDir", "../a.java", start10, end20},
 		{"EndBeforeStart", "/scan/a.java", end20, start10},
 		{"NegativeOffset", "/scan/a.java", `{"offset":-1}`, end20},
 		{"NoOffset", "/scan/a.java", `{"line":1,"col":1}`, end20},
@@ -183,8 +184,11 @@ func TestScan_NonZeroExit(t *testing.T) {
 
 func TestScan_Args(t *testing.T) {
 	env := testEnv(t)
-	bin := fakeScanner(t, `for a in "$@"; do printf '%s\n' "$a"; done > "$HOME/args"; echo '{"results":[],"errors":[{},{}]}'`)
-	dir := t.TempDir()
+	bin := fakeScanner(t, `pwd > "$HOME/pwd"; for a in "$@"; do printf '%s\n' "$a"; done > "$HOME/args"; echo '{"results":[],"errors":[{},{}]}'`)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	excludes := []string{"vendor/lib", "we*ird [x]?", `back\slash`, "-starts-with-dash"}
 	s := opengrep.New(bin, "/rules/opengrep", excludes, env)
 	excludes[0] = "changed-after-new"
@@ -203,10 +207,17 @@ func TestScan_Args(t *testing.T) {
 		"--max-target-bytes=20MB", "--timeout=10",
 		"--exclude=.git/", "--exclude=target/", "--exclude=build/", "--exclude=node_modules/",
 		"--exclude=/vendor/lib", `--exclude=/we\*ird\ \[x\]\?`, `--exclude=/back\\slash`, "--exclude=/-starts-with-dash",
-		"--", dir,
+		"--", ".",
 	}
 	if diff := cmp.Diff(want, strings.Split(strings.TrimSuffix(string(args), "\n"), "\n")); diff != "" {
 		t.Errorf("opengrep arguments mismatch (-want +got):\n%s", diff)
+	}
+	pwd, err := os.ReadFile(filepath.Join(env.Home, "pwd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(pwd)); got != dir {
+		t.Errorf("opengrep working directory = %s, want the scanned folder %s", got, dir)
 	}
 }
 

@@ -146,7 +146,7 @@ bin/opengrep --version
 - 규칙마다 분류와 종류를 적는다(betterleaks는 `tags`의 `category:`, `kind:`, opengrep은 `metadata`의 `category`, `kind`). 규칙은 값만 잡는다. 따옴표, 키 이름, XML 태그는 잡은 범위에 넣지 않는다.
 - 규칙 버전(`internal/ruleset.Version`)은 `rules/` 아래 파일들의 이름과 내용으로 계산한다. 한 글자만 바꿔도 버전이 바뀐다.
 
-규칙을 고치면 예제 프로젝트 `internal/ruleset/testdata/legacy-shop`으로 확인한다. 이 프로젝트의 값은 모두 가짜다. 찾아야 하는 것은 `internal/ruleset/testdata/expected.json`에 `{file, line, category, kind}`로 적혀 있고, 규칙 테스트는 실제 스캐너로 예제를 스캔해 이 목록과 정확히 같은지 본다.
+규칙을 고치면 예제 프로젝트 `internal/ruleset/testdata/legacy-shop`으로 확인한다. 이 프로젝트의 값은 모두 가짜다. 찾아야 하는 것은 `internal/ruleset/testdata/expected.json`에 `{file, line, category, kind, value}`로 적혀 있고(`value`는 잡아야 하는 값의 정확한 글자), 규칙 테스트는 실제 스캐너로 예제를 스캔해 이 목록과 정확히 같은지 본다. 같은 결과가 두 번 나와도 차이로 본다. 예제를 `data`, `build.xml` 같은 이름의 폴더 아래에 두고 스캔해도 결과가 같은지도 본다.
 
 ```sh
 make scanners                                   # 처음 한 번

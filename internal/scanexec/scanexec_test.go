@@ -357,6 +357,19 @@ func TestRun_Env(t *testing.T) {
 	}
 }
 
+func TestRun_Dir(t *testing.T) {
+	c := command(t, "/bin/pwd")
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.Dir = dir
+	out, err := scanexec.Run(t.Context(), c)
+	if err != nil || strings.TrimSpace(string(out)) != dir {
+		t.Errorf("Run(pwd in %s) = %q, %v, want %s", dir, out, err, dir)
+	}
+}
+
 func TestRun_StartFails(t *testing.T) {
 	c := command(t, "/bin/echo")
 	c.Bin = filepath.Join(t.TempDir(), "missing")

@@ -12,3 +12,7 @@ ext:
   partner:
     url: https://partner.example.invalid/api
     password: dev-only-fake-partner-password # rotated by hand
+batch:
+  datasource:
+    password: "dev-only-fake #yaml-hash" # quoted, then a comment
+    username: 'dev only batch user'

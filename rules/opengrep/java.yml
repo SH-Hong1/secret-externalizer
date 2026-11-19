@@ -5,7 +5,10 @@
 # metadata, which the rule tests read line by line.
 rules:
   # A literal assigned to a variable or field whose name contains passw,
-  # secret, or token, in a declaration or an assignment.
+  # secret, token, or pwd (any case), or ends in Pass, PASS, Pw, or PW, or is
+  # pass or pw, in a declaration or an assignment. The endings are matched
+  # with their case so that dbPass and DB_PASS are reported but compass is
+  # not.
   - id: java-secret-variable
     message: A string literal is assigned to a variable whose name says it holds a secret.
     severity: WARNING
@@ -19,7 +22,7 @@ rules:
           - pattern: $NAME = "$VALUE";
       - metavariable-regex:
           metavariable: $NAME
-          regex: (?i).*(passw|secret|token)
+          regex: ((?i:.*(passw|secret|token|pwd).*)|.*[a-z0-9_](Pass|PASS|Pw|PW)|(?i:pass|pw))$
       - metavariable-regex:
           metavariable: $VALUE
           regex: ^.
@@ -35,6 +38,42 @@ rules:
       kind: password
     patterns:
       - pattern: $OBJ.setPassword("$VALUE")
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: ^.
+      - focus-metavariable: $VALUE
+
+  # A literal password put into a Properties object, as passed to
+  # DriverManager.getConnection(url, props).
+  - id: java-set-property-password
+    message: A string literal is set as a password property.
+    severity: WARNING
+    languages: [java]
+    metadata:
+      category: other-secret
+      kind: password
+    patterns:
+      - pattern: $OBJ.setProperty("$KEY", "$VALUE")
+      - metavariable-regex:
+          metavariable: $KEY
+          regex: (?i).*(passw|pwd).*
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: ^.
+      - focus-metavariable: $VALUE
+
+  # A literal password passed to getConnection(url, user, password).
+  - id: java-get-connection-password
+    message: A string literal is passed as the password to getConnection.
+    severity: WARNING
+    languages: [java]
+    metadata:
+      category: other-secret
+      kind: password
+    patterns:
+      - pattern-either:
+          - pattern: $OBJ.getConnection($URL, $USER, "$VALUE")
+          - pattern: getConnection($URL, $USER, "$VALUE")
       - metavariable-regex:
           metavariable: $VALUE
           regex: ^.

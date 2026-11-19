@@ -98,6 +98,19 @@ func TestParse_Betterleaks_SecretInsideMatch(t *testing.T) {
 	}
 }
 
+// betterleaks runs in the scanned folder with the target ".", so it reports
+// paths relative to that folder.
+func TestParse_Betterleaks_RelativeFile(t *testing.T) {
+	got := parseOne(t, leak{
+		RuleID: "fake-rule", StartLine: 1, StartColumn: 1,
+		Match: "abc", Secret: "abc", File: "logs/app.log",
+		Tags: []string{"category:customer-data", "kind:phone"},
+	})
+	if got.File != "logs/app.log" {
+		t.Errorf("Parse(relative file) file = %q, want logs/app.log", got.File)
+	}
+}
+
 func TestParse_Betterleaks_MultiLineMatch(t *testing.T) {
 	got := parseOne(t, leak{
 		RuleID: "fake-rule", StartLine: 7, StartColumn: 5,
@@ -130,6 +143,7 @@ func TestParse_Betterleaks_Dropped(t *testing.T) {
 		{"EmptySecret", leak{RuleID: "r", StartLine: 1, StartColumn: 1, Match: "password = ", Secret: "", File: "/scan/a", Tags: tags}},
 		{"FileOutsideDir", leak{RuleID: "r", StartLine: 1, StartColumn: 1, Match: "abc", Secret: "abc", File: "/elsewhere/a", Tags: tags}},
 		{"FileEscapesDir", leak{RuleID: "r", StartLine: 1, StartColumn: 1, Match: "abc", Secret: "abc", File: "/scan/../a", Tags: tags}},
+		{"RelativeFileEscapesDir", leak{RuleID: "r", StartLine: 1, StartColumn: 1, Match: "abc", Secret: "abc", File: "../a", Tags: tags}},
 		{"NoLine", leak{RuleID: "r", StartLine: 0, StartColumn: 1, Match: "abc", Secret: "abc", File: "/scan/a", Tags: tags}},
 		{"NoColumn", leak{RuleID: "r", StartLine: 1, StartColumn: 0, Match: "abc", Secret: "abc", File: "/scan/a", Tags: tags}},
 	}
@@ -275,8 +289,11 @@ func TestScan_Betterleaks_ExitCode3(t *testing.T) {
 
 func TestScan_Args(t *testing.T) {
 	env := testEnv(t)
-	bin := fakeScanner(t, `for a in "$@"; do printf '%s\n' "$a"; done > "$HOME/args"; echo '[]'`)
-	dir := t.TempDir()
+	bin := fakeScanner(t, `pwd > "$HOME/pwd"; for a in "$@"; do printf '%s\n' "$a"; done > "$HOME/args"; echo '[]'`)
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	s := betterleaks.New(bin, "/rules/betterleaks.toml", env)
 	got, counts, err := s.ScanWithCounts(t.Context(), dir)
 	if err != nil || len(got) != 0 || counts != (scan.Counts{}) {
@@ -290,10 +307,17 @@ func TestScan_Args(t *testing.T) {
 		"dir", "--no-banner", "--config=/rules/betterleaks.toml",
 		"--report-format=json", "--report-path=-", "--exit-code=3",
 		"--max-target-megabytes=20", "--timeout=1500", "--log-level=warn",
-		"--ignore-gitleaks-allow", "--", dir,
+		"--ignore-gitleaks-allow", "--", ".",
 	}
 	if diff := cmp.Diff(want, strings.Split(strings.TrimSuffix(string(args), "\n"), "\n")); diff != "" {
 		t.Errorf("betterleaks arguments mismatch (-want +got):\n%s", diff)
+	}
+	pwd, err := os.ReadFile(filepath.Join(env.Home, "pwd"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(string(pwd)); got != dir {
+		t.Errorf("betterleaks working directory = %s, want the scanned folder %s", got, dir)
 	}
 }
 

@@ -32,13 +32,15 @@ import (
 const maxFileBytes = 1 << 20
 
 // located is a result reduced to what expected.json lists. Line is the
-// 1-based line where the value starts; a result for a whole file is on
-// line 1.
+// 1-based line where the value starts and Value is the exact text of the
+// value in the UTF-8 copy; a result for a whole file is on line 1 with an
+// empty Value.
 type located struct {
 	File     string           `json:"file"`
 	Line     int              `json:"line"`
 	Category finding.Category `json:"category"`
 	Kind     finding.Kind     `json:"kind"`
+	Value    string           `json:"value"`
 }
 
 // result is one scanner result placed in the scanned copy. Span is the
@@ -79,10 +81,11 @@ func scannerBin(t *testing.T, env, name string) string {
 	return bin
 }
 
-// utf8Copy copies the example project into a new folder with every file
-// converted to UTF-8, the way the scan runner hands files to the scanners,
-// and returns the folder with its symbolic links resolved.
-func utf8Copy(t *testing.T) string {
+// utf8Copy copies the example project into a new folder at parent, a
+// slash-separated path inside a temporary folder, with every file converted
+// to UTF-8, the way the scan runner hands files to the scanners. It returns
+// the folder with its symbolic links resolved.
+func utf8Copy(t *testing.T, parent string) string {
 	t.Helper()
 	src, err := filepath.EvalSymlinks(filepath.Join("testdata", "legacy-shop"))
 	if err != nil {
@@ -92,10 +95,11 @@ func utf8Copy(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dst, err := filepath.EvalSymlinks(t.TempDir())
+	tmp, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
+	dst := filepath.Join(tmp, filepath.FromSlash(parent), "legacy-shop")
 	_, err = textfile.Walk(src, nil, func(rel string, _ fs.DirEntry) error {
 		f, err := textfile.Read(filepath.Join(src, filepath.FromSlash(rel)), maxFileBytes)
 		if err != nil {
@@ -113,13 +117,14 @@ func utf8Copy(t *testing.T) string {
 	return dst
 }
 
-// scanExample scans a UTF-8 copy of the example project with the three
-// scanners and the rules in the repository's rules/ folder.
-func scanExample(t *testing.T) []result {
+// scanExample scans a UTF-8 copy of the example project, placed under
+// parent, with the three scanners and the rules in the repository's rules/
+// folder.
+func scanExample(t *testing.T, parent string) []result {
 	t.Helper()
 	blBin := scannerBin(t, "BETTERLEAKS_BIN", "betterleaks")
 	ogBin := scannerBin(t, "OPENGREP_BIN", "opengrep")
-	dir := utf8Copy(t)
+	dir := utf8Copy(t, parent)
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 
 	var raws []scan.Raw
@@ -183,6 +188,7 @@ func place(t *testing.T, dir string, r scan.Raw) result {
 		res.Line = r.Line
 	}
 	res.Span = f.Text[start:end]
+	res.Value = string(res.Span)
 	res.Before = f.Text[max(0, start-1):start]
 	res.After = f.Text[end:min(len(f.Text), end+1)]
 	return res
@@ -207,17 +213,19 @@ func compareLocated(a, b located) int {
 		cmp.Compare(a.Line, b.Line),
 		strings.Compare(string(a.Category), string(b.Category)),
 		strings.Compare(string(a.Kind), string(b.Kind)),
+		strings.Compare(a.Value, b.Value),
 	)
 }
 
-func TestRules_ExpectedFindings(t *testing.T) {
-	results := scanExample(t)
-	var got []located
+// checkExpected compares results with expected.json, as lists: a finding
+// reported twice is a difference. It also checks every span.
+func checkExpected(t *testing.T, results []result) {
+	t.Helper()
+	got := make([]located, 0, len(results))
 	for _, r := range results {
 		got = append(got, r.located)
 	}
 	slices.SortFunc(got, compareLocated)
-	got = slices.Compact(got)
 	want := readExpected(t)
 	slices.SortFunc(want, compareLocated)
 	if diff := gocmp.Diff(want, got); diff != "" {
@@ -228,6 +236,17 @@ func TestRules_ExpectedFindings(t *testing.T) {
 	}
 }
 
+func TestRules_ExpectedFindings(t *testing.T) {
+	checkExpected(t, scanExample(t, "copy"))
+}
+
+// The scanned folder's own path must not decide which rules apply: rules
+// limited to log and data folders or to file names such as build.xml and
+// *.sh look only at paths inside the project.
+func TestRules_ParentFoldersDoNotMatter(t *testing.T) {
+	checkExpected(t, scanExample(t, "data/logs/samples/dump/build.xml/settings.xml/pom.xml/deploy.sh/app.properties/application.yml"))
+}
+
 // boundary holds the bytes that may surround a value: white space and the
 // quoting and separator characters of the example files' formats.
 const boundary = " \t\r\n\"'<>=:@;,()"
@@ -235,7 +254,9 @@ const boundary = " \t\r\n\"'<>=:@;,()"
 // checkSpan fails when the bytes reported for r are empty, start or end
 // with a boundary byte, or are not surrounded by boundary bytes (or the
 // start or end of the file). Any of these means the span takes in a quote or
-// a key name, or cuts the value short.
+// a key name, or cuts the value short. A value may end with "=", the padding
+// of a base64 token. expected.json pins each value exactly; this check
+// catches the same mistakes in results that are not listed there.
 func checkSpan(t *testing.T, r result) {
 	t.Helper()
 	if r.Span == nil {
@@ -246,7 +267,7 @@ func checkSpan(t *testing.T, r result) {
 		return
 	}
 	first, last := r.Span[0], r.Span[len(r.Span)-1]
-	if strings.IndexByte(boundary, first) >= 0 || strings.IndexByte(boundary, last) >= 0 {
+	if strings.IndexByte(boundary, first) >= 0 || (last != '=' && strings.IndexByte(boundary, last) >= 0) {
 		t.Errorf("%s %s in %s line %d: the span %q starts or ends with a quote, a separator, or white space", r.Tool, r.Rule, r.File, r.Line, r.Span)
 	}
 	isBoundary := func(b []byte) bool { return len(b) == 0 || strings.IndexByte(boundary, b[0]) >= 0 }
@@ -263,7 +284,7 @@ func TestRules_IgnoredAndTestDirsAreScanned(t *testing.T) {
 	if !slices.Contains(strings.Split(string(ignore), "\n"), "local/") {
 		t.Fatalf("legacy-shop/.gitignore does not list local/, so the test checks nothing")
 	}
-	results := scanExample(t)
+	results := scanExample(t, "copy")
 	for _, dir := range []string{"test/", "local/"} {
 		tools := map[string]bool{}
 		for _, r := range results {
@@ -297,7 +318,7 @@ func dataPath(rel string) bool {
 }
 
 func TestRules_CustomerDataOnlyInDataFiles(t *testing.T) {
-	results := scanExample(t)
+	results := scanExample(t, "copy")
 	var logPhone bool
 	for _, r := range results {
 		if r.Category != finding.CategoryCustomerData {

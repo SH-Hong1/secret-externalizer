@@ -31,4 +31,13 @@ public class OrderDao {
         conn.setRequestProperty("Authorization", "Bearer devonlyfakebearertoken0000");
         return conn;
     }
+
+    public java.sql.Connection legacyConnection(java.util.Properties props) throws java.sql.SQLException {
+        String pwd = "dev-only-fake-pwd";
+        String dbPass = "dev-only-fake-db-pass";
+        String compass = "north";
+        props.setProperty("user", "shop_app");
+        props.setProperty("password", "dev-only-fake-props-password");
+        return java.sql.DriverManager.getConnection("jdbc:oracle:thin:@db.example.invalid:1521:SHOP", "scott", "dev-only-fake-tiger");
+    }
 }

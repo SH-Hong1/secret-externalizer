@@ -43,6 +43,8 @@ type Command struct {
 	Bin string
 	// Args are the arguments, passed to the executable without a shell.
 	Args []string
+	// Dir is the working directory. Empty means the caller's.
+	Dir string
 	// Env is the environment; nothing else is passed.
 	Env Env
 	// OKCodes are the exit codes of a successful run. Empty means only 0.
@@ -104,6 +106,7 @@ func Run(ctx context.Context, c Command) ([]byte, error) {
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, c.Bin, c.Args...)
 	cmd.Env = []string{"PATH=" + c.Env.Path, "HOME=" + c.Env.Home, "TMPDIR=" + c.Env.TmpDir}
+	cmd.Dir = c.Dir
 	cmd.Stderr = nil // the null device
 	cmd.WaitDelay = waitDelay
 	ownGroup(cmd)

@@ -55,7 +55,8 @@ func (s *Scanner) ScanWithCounts(ctx context.Context, dir string) ([]scan.Raw, s
 	out, err := scanexec.Run(ctx, scanexec.Command{
 		Tool:    name,
 		Bin:     s.bin,
-		Args:    s.args(dir),
+		Args:    s.args(),
+		Dir:     dir,
 		Env:     s.env,
 		OKCodes: []int{0, exitLeaks},
 	})
@@ -65,10 +66,15 @@ func (s *Scanner) ScanWithCounts(ctx context.Context, dir string) ([]scan.Raw, s
 	return Parse(out, dir)
 }
 
-// args returns the arguments for a scan of dir. Comments that allow a line
-// (gitleaks:allow) are ignored, so a scanned project cannot hide a value from
-// the scan.
-func (s *Scanner) args(dir string) []string {
+// args returns the arguments for a scan of the working directory. Comments
+// that allow a line (gitleaks:allow) are ignored, so a scanned project cannot
+// hide a value from the scan.
+//
+// The target is "." and betterleaks runs in the scanned folder, so the paths
+// it matches rules' path patterns against, and reports, are relative to that
+// folder: a folder above it named, say, data does not make every file a data
+// file.
+func (s *Scanner) args() []string {
 	return []string{
 		"dir",
 		"--no-banner",
@@ -81,7 +87,7 @@ func (s *Scanner) args(dir string) []string {
 		"--log-level=warn",
 		"--ignore-gitleaks-allow",
 		"--",
-		dir,
+		".",
 	}
 }
 
