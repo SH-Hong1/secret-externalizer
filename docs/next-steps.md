@@ -66,13 +66,10 @@
 
 ## 계획 3 병합 뒤 사용자가 정할 것
 
-종료 hook의 검토와 전체 검토에서 나왔고, 계획 3의 확정 사항이나 `AGENTS.md`의 규칙과 닿아 있어 사용자의 답 없이 고치지 않은 것이다. 1번과 2번은 정해지기 전까지 종료 hook이 턴마다 다시 지적할 수 있다.
+전체 검토에서 나왔고 사용자의 답 없이 고치지 않은 것이다. 파일 읽기 함수의 `ctx`, 미리보기와 고객정보 지문, EUC-KR 임시 사본은 2026-11-19에 `AGENTS.md`의 문장을 고치는 쪽으로 정했다(`docs/decisions/0023-security-rule-exceptions.md`).
 
-- [ ] 1. 파일을 읽는 함수의 `ctx`. `AGENTS.md`는 I/O를 하는 함수의 첫 매개변수를 `ctx`로 하라고 하지만 `textfile.Read`, `textfile.Walk`, `scan.readOriginal`, `ruleset.Version`, `scan.checkIgnoreFiles`, `keyfile.readHead`에는 없다(계획 3이 `Read(path, maxBytes)`로 정했다). 로컬 파일 읽기는 `ctx`로 멈출 수 없으므로 규칙을 "네트워크나 외부 프로세스를 쓰거나 오래 막힐 수 있는 함수"로 좁히는 쪽을 권한다. 다른 선택은 여섯 함수에 `ctx`를 넣는 것이다.
-- [ ] 2. 미리보기와 고객정보 지문. `AGENTS.md` Security는 비밀 값이 데이터베이스 열과 화면에 나오지 않고, 고객정보는 종류, 위치, 건수만 저장하라고 한다. 계획 3은 값의 앞 4글자 미리보기와 지문(HMAC)을 저장하고 고객정보 항목에도 같게 하기로 확정했다. 계획대로 두고 `AGENTS.md`에 예외를 적는 쪽을 권한다. 다른 선택은 미리보기를 없애고 고객정보의 지문을 저장하지 않는 것이다(마이그레이션 `0004`와 화면 수정이 필요하다).
 - [ ] 3. 회전된 로그. `app.log.1`, `catalina.out`, `nohup.out`처럼 `logs` 같은 폴더 밖에 있는 로그는 고객정보 경로에 들지 않아 주변 줄이 저장된다. 그 줄에 탐지되지 않은 고객정보가 있으면 사본이 생긴다. 경로 집합을 넓히려면 `finding.CustomerDataPath`와 `rules/betterleaks.toml`의 `path`를 함께 고친다.
 - [ ] 4. 허용 주석과 무시 파일. 지금은 `gitleaks:allow`와 `nosemgrep` 주석을 무시하고 그 줄도 보고하며, 프로젝트에 `.gitleaksignore`나 `.betterleaksignore`가 있으면 스캔을 실패시킨다(`docs/decisions/0020-scanner-invocation.md`, `0021-scan-assembly.md`). 이 동작이 맞는지 확인한다.
-- [ ] 5. EUC-KR 파일의 UTF-8 사본. 스캐너가 EUC-KR을 읽지 못하므로 worker는 그런 파일을 UTF-8로 바꾼 사본을 tmpfs의 `copies/<스캔 ID>`에 쓰고 스캔이 끝나면 지운다(계획 3의 확정 사항). 파일에 고객정보가 있으면 `AGENTS.md` Security의 "고객정보는 어디에도 복사하지 않는다"와 닿는다. 디스크에 남지 않고 스캔 동안만 있는 사본을 예외로 `AGENTS.md`에 적는 쪽을 권한다. 2번과 함께 정한다.
 
 ## 계획 3에서 남은 일
 
