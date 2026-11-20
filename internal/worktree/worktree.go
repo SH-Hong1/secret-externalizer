@@ -52,24 +52,26 @@ const (
 	maxOutput = 64 << 20
 )
 
-// baseArgs come before the folder and command of every git call. They turn
-// off what a repository's configuration could make git run or write:
+// baseArgs returns the arguments that come before the folder and command of
+// every git call. They turn off what a repository's configuration could make git run or write:
 // fsmonitor, hooks, the pager, the untracked cache, a global attributes
 // file, submodule recursion, and every transport protocol. checkStat and
 // trustctime make a work tree mounted into a container, whose inode, ctime
 // and owner differ from the host's, compare by size and modification time.
-var baseArgs = []string{
-	"--no-pager", "--no-optional-locks",
-	"-c", "safe.directory=*",
-	"-c", "core.fsmonitor=false",
-	"-c", "core.hooksPath=/dev/null",
-	"-c", "core.untrackedCache=false",
-	"-c", "core.checkStat=minimal",
-	"-c", "core.trustctime=false",
-	"-c", "core.attributesFile=/dev/null",
-	"-c", "core.quotePath=false",
-	"-c", "submodule.recurse=false",
-	"-c", "protocol.allow=never",
+func baseArgs() []string {
+	return []string{
+		"--no-pager", "--no-optional-locks",
+		"-c", "safe.directory=*",
+		"-c", "core.fsmonitor=false",
+		"-c", "core.hooksPath=/dev/null",
+		"-c", "core.untrackedCache=false",
+		"-c", "core.checkStat=minimal",
+		"-c", "core.trustctime=false",
+		"-c", "core.attributesFile=/dev/null",
+		"-c", "core.quotePath=false",
+		"-c", "submodule.recurse=false",
+		"-c", "protocol.allow=never",
+	}
 }
 
 // environ returns the whole environment of a git call for the workspace
@@ -149,8 +151,9 @@ func run(ctx context.Context, git, root, dir string, args ...string) ([]byte, er
 	ctx, cancel := context.WithTimeout(ctx, callTimeout)
 	defer cancel()
 
-	full := make([]string, 0, len(baseArgs)+2+len(args))
-	full = append(full, baseArgs...)
+	base := baseArgs()
+	full := make([]string, 0, len(base)+2+len(args))
+	full = append(full, base...)
 	full = append(full, "-C", dir)
 	full = append(full, args...)
 	cmd := exec.CommandContext(ctx, git, full...)
