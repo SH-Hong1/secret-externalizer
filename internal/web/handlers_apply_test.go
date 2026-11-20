@@ -66,6 +66,13 @@ func run(state apply.State) *apply.Run {
 	}
 }
 
+// checkFailed is run 5 as a check that failed for reason.
+func checkFailed(reason string) *apply.Run {
+	r := run(apply.StateFailed)
+	r.FailureReason = reason
+	return r
+}
+
 // confirmed is run 5 in state after a user confirmed its apply.
 func confirmed(state apply.State) *apply.Run {
 	r := run(state)
@@ -98,7 +105,10 @@ const (
 	checkForm   = `action="/projects/1/apply/check"`
 	digestField = `name="digest"`
 	applyOff    = `<button class="btn btn-primary btn-lg" type="button" disabled>적용</button>`
-	refresh     = `<meta http-equiv="refresh" content="3">`
+	// refresh is the start of any refresh tag, and applyRefresh the one
+	// the apply page carries while a check runs.
+	refresh      = `<meta http-equiv="refresh"`
+	applyRefresh = `<meta http-equiv="refresh" content="3; url=/projects/1/apply">`
 )
 
 func TestApplyPage_States(t *testing.T) {
@@ -136,12 +146,12 @@ func TestApplyPage_States(t *testing.T) {
 			name:    "never checked",
 			summary: summary(nil),
 			want:    []string{checkForm, ">조건 점검</button>", "진행 중인 스캔이 없음", "판정별 항목"},
-			wantNot: []string{refresh, "점검한 뒤 판정이 바뀌었습니다", applyOff},
+			wantNot: []string{refresh, "점검한 뒤 판정이나 스캔이 바뀌었습니다", applyOff},
 		},
 		{
 			name:    "checked before the verdicts changed",
 			summary: summary(stale),
-			want:    []string{"점검한 뒤 판정이 바뀌었습니다", checkForm, ">다시 점검</button>"},
+			want:    []string{"점검한 뒤 판정이나 스캔이 바뀌었습니다", checkForm, ">다시 점검</button>"},
 			wantNot: []string{"적용하면 바뀌는 위치"},
 		},
 		{
@@ -159,7 +169,7 @@ func TestApplyPage_States(t *testing.T) {
 		{
 			name:    "checking",
 			summary: summary(run(apply.StateChecking)),
-			want:    []string{refresh, "점검 중입니다.", "badge-running\">점검 중"},
+			want:    []string{applyRefresh, "점검 중입니다.", "badge-running\">점검 중"},
 			wantNot: []string{checkForm, applyOff},
 		},
 		{
@@ -206,7 +216,7 @@ func TestApplyPage_States(t *testing.T) {
 			name:    "after an apply",
 			summary: summary(confirmed(apply.StateSucceeded)),
 			want:    []string{checkForm, `<a href="/applies/5">#5</a> 적용 완료`},
-			wantNot: []string{"점검한 뒤 판정이 바뀌었습니다"},
+			wantNot: []string{"점검한 뒤 판정이나 스캔이 바뀌었습니다"},
 		},
 		{
 			name:    "after a failed apply",
@@ -215,9 +225,22 @@ func TestApplyPage_States(t *testing.T) {
 		},
 		{
 			name:    "after a failed check",
-			summary: summary(run(apply.StateFailed)),
-			want:    []string{checkForm, "#5 점검 실패", ">조건 점검</button>"},
+			summary: summary(checkFailed(apply.FailureSecretStore)),
+			want: []string{
+				checkForm, "#5 점검 실패", ">조건 점검</button>",
+				"비밀 저장소에 연결할 수 없었습니다.", "worker 로그를 확인한 뒤 다시 점검하고 적용해 주세요.",
+			},
 			wantNot: []string{`href="/applies/5"`, "적용 실패"},
+		},
+		{
+			name:    "after a check the queue gave up",
+			summary: summary(checkFailed(db.CheckGaveUpReason)),
+			want:    []string{"#5 점검 실패", "worker가 세 번 멈춰 점검을 포기했습니다.", checkForm},
+		},
+		{
+			name:    "after a check that failed for an unknown reason",
+			summary: summary(checkFailed("made-up-reason")),
+			want:    []string{"알 수 없는 사유입니다.", `<span class="mono">made-up-reason</span>`},
 		},
 	}
 	for _, tt := range tests {
@@ -537,6 +560,14 @@ func TestApplyCheck_Post(t *testing.T) {
 			}
 		})
 	}
+	t.Run("check running refreshes onto the apply page", func(t *testing.T) {
+		e := applyEnv(t)
+		e.applies.put(summary(run(apply.StateChecking)))
+		res := e.post(t, applyCheckPath, nil, nil)
+		if res.status != http.StatusConflict || !strings.Contains(res.body, applyRefresh) {
+			t.Errorf("POST %s while a check runs = %d, want 409 and %q; body:\n%s", applyCheckPath, res.status, applyRefresh, res.body)
+		}
+	})
 	t.Run("no project", func(t *testing.T) {
 		e := applyEnv(t)
 		res := e.post(t, "/projects/2/apply/check", nil, nil)
@@ -605,6 +636,7 @@ func TestApply_Post(t *testing.T) {
 		{"superseded", run(apply.StateSuperseded), http.StatusConflict, "", "다시 점검해 주세요."},
 		{"blocked", run(apply.StateBlocked), http.StatusConflict, "", "다시 점검해 주세요."},
 		{"check failed", run(apply.StateFailed), http.StatusConflict, "", "다시 점검해 주세요."},
+		{"still checking", run(apply.StateChecking), http.StatusConflict, "", "점검이 아직 진행 중입니다. 점검이 끝난 뒤 적용해 주세요."},
 	} {
 		t.Run("run "+tt.name, func(t *testing.T) {
 			e := applyEnv(t)
@@ -625,7 +657,7 @@ func TestApply_Post(t *testing.T) {
 		status int
 		want   string
 	}{
-		{db.ErrPlanChanged, http.StatusConflict, "판정이 바뀌었습니다. 다시 점검해 주세요"},
+		{db.ErrPlanChanged, http.StatusConflict, "판정이나 스캔이 바뀌었습니다. 다시 점검해 주세요"},
 		{db.ErrScanActive, http.StatusConflict, "이 프로젝트의 스캔이 진행 중입니다."},
 		{db.ErrNotFound, http.StatusConflict, "다시 점검해 주세요."},
 	} {
@@ -846,6 +878,18 @@ func TestApplyRunPage(t *testing.T) {
 	partial := confirmationScan(scan.StatusSucceeded)
 	partial.Skipped = 2
 	notApplied := []apply.Item{runItems()[3]}
+	writing := append(slices.Clone(notApplied), apply.Item{
+		BundleID: 101, FindingID: 1008, File: "conf/d.properties", StartLine: 5,
+		Action: apply.ActionReplace, Category: finding.CategoryStorage, Kind: finding.KindPassword, Name: "ext.db.main.password",
+		Status: apply.StatusWriting,
+	})
+	interrupted := append(slices.Clone(notApplied), apply.Item{
+		BundleID: 101, FindingID: 1009, File: "conf/e.properties", StartLine: 6,
+		Action: apply.ActionReplace, Category: finding.CategoryStorage, Kind: finding.KindPassword, Name: "ext.db.main.password",
+		Status: apply.StatusFailed, Reason: apply.ReasonInterrupted,
+	})
+	failedConfirmed := finishedRun(apply.StateFailed, 8)
+	failedConfirmed.FailureReason = apply.FailureSecretStore
 
 	tests := []struct {
 		name       string
@@ -864,7 +908,7 @@ func TestApplyRunPage(t *testing.T) {
 				`<span class="tile-label">적용</span><span class="tile-figure">3</span>`,
 				`<span class="tile-label">건너뜀</span><span class="tile-figure">1</span>`,
 				`<span class="tile-label">실패</span><span class="tile-figure">1</span>`,
-				`<a href="/scans/8">확인 스캔 #8</a>`, "외부화한 값이 모두 사라졌습니다",
+				`<a href="/scans/8">확인 스캔 #8</a>`, "외부화한 값이 모두 사라졌습니다", "확인 스캔이 제외 경로 밖의 모든 파일을 검사했고",
 				"ext.db.main.password", storePath, "conf/a.yml", "src/main/java/shop/Db.java", ">14<", "코드 수정 필요",
 				"[REDACTED]로 가림", "logs/x.log",
 				"재스캔 필요", "conf/b.xml:9", "비밀 저장소에 저장하지 못함", "conf/c.properties:2",
@@ -902,33 +946,50 @@ func TestApplyRunPage(t *testing.T) {
 			want: []string{"확인 스캔이 요청되지 않았습니다"},
 		},
 		{
-			name: "stopped while writing", run: gaveUp,
-			items: append(slices.Clone(notApplied), apply.Item{
-				BundleID: 101, FindingID: 1008, File: "conf/d.properties", StartLine: 5,
-				Action: apply.ActionReplace, Category: finding.CategoryStorage, Kind: finding.KindPassword, Name: "ext.db.main.password",
-				Status: apply.StatusWriting,
-			}),
+			name: "stopped while writing", run: gaveUp, items: writing,
 			want: []string{
 				"바꾸던 중에 멈춘 파일 1개는 바뀌었을 수도, 그대로일 수도 있습니다", "바꾸던 중에 멈춘 위치 1곳", "conf/d.properties:5",
 				"확인 스캔이 요청되지 않았습니다", "프로젝트에서 스캔 시작",
 			},
-			wantNot: []string{"이미 바꾼 파일", "소스는 바뀌지 않았습니다", "바꾼 파일이 없어"},
+			wantNot: []string{"이미 바꾼 파일", "소스의 값은 바뀌지 않았습니다", "바꾼 파일이 없어"},
 		},
 		{
-			name: "stopped while writing, then scanned", run: gaveUp,
-			items: append(slices.Clone(notApplied), apply.Item{
-				BundleID: 101, FindingID: 1008, File: "conf/d.properties", StartLine: 5,
-				Action: apply.ActionReplace, Category: finding.CategoryStorage, Kind: finding.KindPassword, Name: "ext.db.main.password",
-				Status: apply.StatusWriting,
-			}),
+			name: "stopped while writing, then scanned", run: gaveUp, items: writing,
 			later:   &scan.Scan{ID: 9, ProjectID: 1, Status: scan.StatusQueued, RequestedAt: time.Date(2026, 11, 20, 11, 0, 0, 0, time.UTC)},
 			want:    []string{"확인 스캔은 없지만 이 실행 뒤에 요청된 스캔이 있습니다", `<a href="/scans/9">스캔 #9</a>`},
 			wantNot: []string{"바꾼 파일이 없어", "확인 스캔이 요청되지 않았습니다"},
 		},
 		{
 			name: "failed before changing anything", run: gaveUp, items: notApplied,
-			want:    []string{"소스는 바뀌지 않았습니다"},
+			want:    []string{"소스의 값은 바뀌지 않았습니다"},
 			wantNot: []string{"이미 바꾼 파일", "확인 스캔이 요청되지 않았습니다"},
+		},
+		{
+			name: "succeeded without changing a value", run: finishedRun(apply.StateSucceeded, 0), items: notApplied,
+			want: []string{"값을 바꾼 파일이 없어 확인 스캔을 하지 않았습니다."},
+		},
+		{
+			name: "stopped while writing, confirmation found nothing", run: failedConfirmed, items: writing,
+			scan: confirmationScan(scan.StatusSucceeded),
+			want: []string{
+				"확인 스캔이 외부화한 값을 다시 찾지 못했지만, 바꾸던 중에 멈춘 파일의 값은 이 확인에 들지 않을 수 있습니다.",
+				`<a href="/scans/8">확인 스캔 #8</a>`,
+			},
+			wantNot: []string{"외부화한 값이 모두 사라졌습니다"},
+		},
+		{
+			name: "failed on an interrupted place", run: gaveUp, items: interrupted,
+			want: []string{
+				"중단됨", "conf/e.properties:6",
+				"중단됨인 위치 말고는 값을 소스에서 지우지 않았습니다.",
+				"중단됨인 위치는 바꾸던 중에 멈춘 파일입니다.",
+			},
+			wantNot: []string{"<p class=\"text-2\">값을 소스에서 지우지 않았습니다."},
+		},
+		{
+			name: "failed places", run: failed, items: runItems(), scan: confirmationScan(scan.StatusQueued),
+			want:    []string{"<p class=\"text-2\">값을 소스에서 지우지 않았습니다."},
+			wantNot: []string{"중단됨인 위치"},
 		},
 		{
 			name: "places not reached", run: failed, items: unreached, scan: confirmationScan(scan.StatusQueued),
@@ -967,30 +1028,36 @@ func TestApplyRunPage(t *testing.T) {
 }
 
 func TestApplyRunPage_Refresh(t *testing.T) {
+	const runRefresh = `<meta http-equiv="refresh" content="3; url=/applies/5">`
 	for _, tt := range []struct {
-		state    apply.State
+		name     string
+		run      *apply.Run
 		status   int
 		location string
 		refresh  bool
 	}{
-		{apply.StateQueued, http.StatusOK, "", true},
-		{apply.StateRunning, http.StatusOK, "", true},
-		{apply.StateSucceeded, http.StatusOK, "", false},
-		{apply.StateFailed, http.StatusOK, "", false},
-		{apply.StateChecking, http.StatusSeeOther, applyPagePath, false},
-		{apply.StateReady, http.StatusSeeOther, applyPagePath, false},
-		{apply.StateBlocked, http.StatusSeeOther, applyPagePath, false},
-		{apply.StateSuperseded, http.StatusSeeOther, applyPagePath, false},
+		{"queued", confirmed(apply.StateQueued), http.StatusOK, "", true},
+		{"running", confirmed(apply.StateRunning), http.StatusOK, "", true},
+		{"succeeded", confirmed(apply.StateSucceeded), http.StatusOK, "", false},
+		{"apply failed", confirmed(apply.StateFailed), http.StatusOK, "", false},
+		{"check failed", checkFailed(apply.FailureSecretStore), http.StatusSeeOther, applyPagePath, false},
+		{"checking", run(apply.StateChecking), http.StatusSeeOther, applyPagePath, false},
+		{"ready", run(apply.StateReady), http.StatusSeeOther, applyPagePath, false},
+		{"blocked", run(apply.StateBlocked), http.StatusSeeOther, applyPagePath, false},
+		{"superseded", run(apply.StateSuperseded), http.StatusSeeOther, applyPagePath, false},
 	} {
-		t.Run(string(tt.state), func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			e := applyEnv(t)
-			e.putRun(*run(tt.state), nil, nil, 0)
+			e.putRun(*tt.run, nil, nil, 0)
 			res := e.do(t, http.MethodGet, runPagePath, nil, e.user(t))
 			if res.status != tt.status || res.location() != tt.location {
-				t.Fatalf("GET %s of a %s run = %d to %q, want %d to %q", runPagePath, tt.state, res.status, res.location(), tt.status, tt.location)
+				t.Fatalf("GET %s of a %s run = %d to %q, want %d to %q", runPagePath, tt.name, res.status, res.location(), tt.status, tt.location)
 			}
-			if got := strings.Contains(res.body, refresh); got != tt.refresh {
-				t.Errorf("GET %s of a %s run has the refresh tag = %v, want %v", runPagePath, tt.state, got, tt.refresh)
+			if got := strings.Contains(res.body, runRefresh); got != tt.refresh {
+				t.Errorf("GET %s of a %s run has the refresh tag %q = %v, want %v", runPagePath, tt.name, runRefresh, got, tt.refresh)
+			}
+			if !tt.refresh && strings.Contains(res.body, refresh) {
+				t.Errorf("GET %s of a %s run has a refresh tag, want none", runPagePath, tt.name)
 			}
 		})
 	}

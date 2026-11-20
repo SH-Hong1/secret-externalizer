@@ -17,13 +17,14 @@ import (
 // The reasons a check or an apply is refused, shown at the top of the apply
 // page.
 const (
-	msgPlanChanged      = "판정이 바뀌었습니다. 다시 점검해 주세요."
+	msgPlanChanged      = "판정이나 스캔이 바뀌었습니다. 다시 점검해 주세요."
 	msgApplyScanActive  = "이 프로젝트의 스캔이 진행 중입니다. 스캔이 끝난 뒤 다시 점검해 주세요."
 	msgApplyAlready     = "이 프로젝트의 점검이나 적용이 이미 진행 중입니다."
 	msgApplyNotPossible = "지금은 적용할 수 없습니다."
 	msgCheckNotPossible = "지금은 점검할 수 없습니다. 아래 조건을 확인해 주세요."
 	msgCheckNoScan      = "성공한 스캔이 없어 점검할 수 없습니다."
 	msgCheckAgain       = "이 점검으로는 적용할 수 없습니다. 다시 점검해 주세요."
+	msgCheckRunning     = "점검이 아직 진행 중입니다. 점검이 끝난 뒤 적용해 주세요."
 )
 
 // applyWriter holds what the handlers of the apply page share.
@@ -143,9 +144,9 @@ func handleApplyConfirm(aw applyWriter) http.Handler {
 		case errors.Is(err, db.ErrNotFound):
 			// The run left ready since it was read: another submit or a
 			// new check got there first.
-			now, err := aw.store.ApplyRun(r.Context(), run.ID)
-			if err != nil {
-				aw.rd.fail(w, r, aw.logger, bundleReadStatus(err), fmt.Errorf("reading apply run: %w", err))
+			now, readErr := aw.store.ApplyRun(r.Context(), run.ID)
+			if readErr != nil {
+				aw.rd.fail(w, r, aw.logger, bundleReadStatus(readErr), fmt.Errorf("reading apply run: %w", readErr))
 				return
 			}
 			aw.notReady(w, r, pid, now)
@@ -173,10 +174,14 @@ func checkRefusal(sum apply.Summary) string {
 
 // notReady answers a confirmation of run, which is not ready: a confirmed
 // run sends the browser to its page, and any other run shows the apply page
-// with status 409.
+// with status 409, saying so when the run is still being checked.
 func (aw applyWriter) notReady(w http.ResponseWriter, r *http.Request, pid project.ID, run apply.Run) {
 	if !run.ConfirmedAt.IsZero() {
 		http.Redirect(w, r, runPath(run.ID), http.StatusSeeOther)
+		return
+	}
+	if run.State == apply.StateChecking {
+		aw.show(w, r, pid, http.StatusConflict, msgCheckRunning)
 		return
 	}
 	aw.show(w, r, pid, http.StatusConflict, msgCheckAgain)
@@ -268,7 +273,12 @@ func (aw applyWriter) build(ctx context.Context, pid project.ID) (applyPage, int
 			return page, 0, nil
 		}
 		page.Digest = c.PlanDigest
-	case apply.StateSucceeded, apply.StateFailed, apply.StateSuperseded:
+	case apply.StateFailed:
+		if c.ConfirmedAt.IsZero() {
+			f := failureOf(c.FailureReason)
+			page.CheckFailure = &f
+		}
+	case apply.StateSucceeded, apply.StateSuperseded:
 	}
 	return page, 0, nil
 }

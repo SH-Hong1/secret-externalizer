@@ -1,6 +1,6 @@
 {{define "title"}}적용 #{{.Run.ID}} · {{.Project.Name}}{{end}}
 {{define "section"}}projects{{end}}
-{{define "head"}}{{if .Active}}<meta http-equiv="refresh" content="3">
+{{define "head"}}{{if .Active}}<meta http-equiv="refresh" content="3; url=/applies/{{.Run.ID}}">
 {{end}}{{end}}
 {{define "places"}}<ul class="skips-list">
 {{range .}}<li>{{.File}}:{{.Line}} · {{.Kind}}{{with .Name}} · {{.}}{{end}}</li>
@@ -32,7 +32,7 @@
 {{with .Action}}<p class="text-2">{{.}}</p>
 {{end}}{{if $.Changed}}<p>이미 바꾼 파일 {{$.Changed}}개는 그대로입니다. <code>git diff</code>로 확인하세요. 다음 점검이 기록을 맞춥니다.</p>
 {{end}}{{if $.Unsure}}<p>바꾸던 중에 멈춘 파일 {{$.Unsure}}개는 바뀌었을 수도, 그대로일 수도 있습니다. 다음 점검이 디스크를 보고 기록을 맞춥니다.</p>
-{{end}}{{if not (or $.Changed $.Unsure)}}<p class="text-2">소스는 바뀌지 않았습니다.</p>
+{{end}}{{if not (or $.Changed $.Unsure)}}<p class="text-2">소스의 값은 바뀌지 않았습니다.</p>
 {{end}}{{if $.NeedScan}}<p>확인 스캔이 요청되지 않았습니다. 바뀐 소스를 다시 스캔해야 판정 화면이 지금 상태를 보여 줍니다. 스캔을 시작해 주세요.</p>
 <div><a class="btn btn-primary" href="{{$.ProjectHref}}">프로젝트에서 스캔 시작</a></div>
 {{else if $.LaterScan}}<p class="text-2">이 실행 뒤에 요청된 스캔: <a href="/scans/{{$.LaterScan}}">스캔 #{{$.LaterScan}}</a></p>
@@ -54,7 +54,7 @@
 {{end}}<section class="flex flex-col gap-2.5">
 <h2 class="section-title mb-0">확인 스캔</h2>
 {{with .Rescan}}<p><a href="{{.ScanHref}}">확인 스캔 #{{.ScanID}}</a></p>
-{{template "confirmation" .}}{{else}}{{if not (or .Changed .Unsure)}}<p class="notice-soft">바꾼 파일이 없어 확인 스캔을 하지 않았습니다.</p>
+{{template "confirmation" .}}{{else}}{{if not (or .Changed .Unsure)}}<p class="notice-soft">값을 바꾼 파일이 없어 확인 스캔을 하지 않았습니다.</p>
 {{else if .LaterScan}}<p class="notice-soft">확인 스캔은 없지만 이 실행 뒤에 요청된 스캔이 있습니다: <a href="/scans/{{.LaterScan}}">스캔 #{{.LaterScan}}</a></p>
 {{else if not .NeedScan}}<p class="notice-soft">확인 스캔이 없습니다. 프로젝트에서 스캔을 시작하면 바뀐 소스를 다시 검사합니다.</p>
 {{end}}{{end}}</section>
@@ -82,7 +82,9 @@
 {{template "place-groups" .}}</section>
 {{end}}{{with .Failures}}<section class="flex flex-col gap-2.5">
 <h2 class="section-title mb-0">실패한 위치 {{$.Failed}}곳</h2>
-<p class="text-2">값을 소스에서 지우지 않았습니다. 사유를 확인한 뒤 다시 점검하고 적용하면 이어서 바꿉니다.</p>
+{{if $.Interrupted}}<p class="text-2">중단됨인 위치 말고는 값을 소스에서 지우지 않았습니다. 중단됨인 위치는 바꾸던 중에 멈춘 파일입니다. 다음 점검이 그 파일을 바뀌지 않은 것으로 맞췄지만, 그 사이에 파일을 고쳤다면 placeholder가 남아 있을 수 있으니 <code>git diff</code>로 확인해 주세요. 사유를 확인한 뒤 다시 점검하고 적용하면 이어서 바꿉니다.</p>
+{{else}}<p class="text-2">값을 소스에서 지우지 않았습니다. 사유를 확인한 뒤 다시 점검하고 적용하면 이어서 바꿉니다.</p>
+{{end}}
 {{template "place-groups" .}}</section>
 {{end}}{{with .Writing}}<section class="flex flex-col gap-2.5">
 <h2 class="section-title mb-0">바꾸던 중에 멈춘 위치 {{len .}}곳</h2>

@@ -27,7 +27,8 @@ const statusApplied = "applied"
 // Unsure the other files it was changing when it stopped, which may or may
 // not have changed. NeedScan tells that a failed run that touched files has
 // no confirmation scan and no scan was requested after it; LaterScan is the
-// newest scan requested after such a run.
+// newest scan requested after such a run. Interrupted tells that a failed
+// place of the run failed because the run stopped while changing its file.
 // Untouched are the places a finished run never reached, and CodeChanges
 // counts the changed places whose code has to read the value elsewhere.
 type applyRunPage struct {
@@ -52,6 +53,7 @@ type applyRunPage struct {
 	LaterScan    scan.ID
 	CodeChanges  int
 	NeedScan     bool
+	Interrupted  bool
 	Bundles      []runBundle
 	Skips        []skipGroup
 	Failures     []skipGroup
@@ -80,9 +82,11 @@ type runPlace struct {
 
 // confirmationView is what a page says about the scan that confirms an
 // apply. Kind picks the message: "active", "failed", "gone" (nothing found
-// again and the scan checked everything), "partial" (nothing found again
-// but the scan left something unchecked) or "again" (Reappeared findings of
-// applied bundles found again).
+// again and the scan checked everything outside the exclude paths),
+// "partial" (nothing found again but the scan left something unchecked),
+// "unsure" (nothing found again, but the run stopped while changing files
+// whose places are not recorded as applied, so the count may leave them
+// out) or "again" (Reappeared findings of applied bundles found again).
 type confirmationView struct {
 	ScanID        scan.ID
 	ScanHref      string
@@ -128,9 +132,10 @@ func failureOf(reason string) blockerView {
 // handleApplyRun shows one apply run: its state, the counts, the places it
 // changed by bundle, those it skipped or failed with the reason, and the
 // scan that confirms it. The page refreshes itself while the run is queued
-// or running. A run that is a check, or a check a newer one replaced, sends
-// the browser to the apply page of its project. A run of a project that is
-// gone is unknown.
+// or running. A run that is a check, a check that failed before anyone
+// confirmed it, or a check a newer one replaced, sends the browser to the
+// apply page of its project, which says why a check failed. A run of a
+// project that is gone is unknown.
 func handleApplyRun(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore, applies ApplyStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
@@ -153,7 +158,12 @@ func handleApplyRun(logger *slog.Logger, rd *renderer, projects ProjectStore, sc
 		case apply.StateChecking, apply.StateReady, apply.StateBlocked, apply.StateSuperseded:
 			http.Redirect(w, r, applyPath(p.ID), http.StatusSeeOther)
 			return
-		case apply.StateQueued, apply.StateRunning, apply.StateSucceeded, apply.StateFailed:
+		case apply.StateFailed:
+			if run.ConfirmedAt.IsZero() {
+				http.Redirect(w, r, applyPath(p.ID), http.StatusSeeOther)
+				return
+			}
+		case apply.StateQueued, apply.StateRunning, apply.StateSucceeded:
 		}
 		page := newApplyRunPage(p, run)
 		page.User, _ = userFrom(ctx) // requireLogin guarantees a user
@@ -170,6 +180,9 @@ func handleApplyRun(logger *slog.Logger, rd *renderer, projects ProjectStore, sc
 			if err != nil {
 				rd.fail(w, r, logger, http.StatusInternalServerError, err)
 				return
+			}
+			if page.Unsure > 0 && (c.Kind == "gone" || c.Kind == "partial") {
+				c.Kind = "unsure"
 			}
 			page.Rescan = c
 		}
@@ -259,7 +272,7 @@ func newApplyRunPage(p project.Project, run apply.Run) applyRunPage {
 	page := applyRunPage{
 		Project:     p,
 		Run:         run,
-		State:       applyStateOf(run.State),
+		State:       runStateOf(run),
 		Active:      run.State.Active(),
 		ApplyHref:   applyPath(p.ID),
 		ProjectHref: "/projects/" + strconv.FormatInt(int64(p.ID), 10),
@@ -328,6 +341,7 @@ func (p *applyRunPage) setOutcomes(items []apply.Item) {
 			group(skips, &skipOrder, it)
 		case apply.StatusFailed:
 			p.Failed++
+			p.Interrupted = p.Interrupted || it.Reason == apply.ReasonInterrupted
 			group(failures, &failOrder, it)
 		case apply.StatusWriting:
 			unsure[it.File] = true

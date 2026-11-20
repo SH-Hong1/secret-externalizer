@@ -25,8 +25,10 @@ const (
 // constants. Error is a refusal shown above everything else. Changes are
 // the bundles the plan changes and Kept those it leaves alone. DBChecks are
 // the conditions the database shows before a check; Checks are those of
-// the shown run. Stale tells that the verdicts changed after the newest
-// check. Digest is set only when the page offers the apply form.
+// the shown run. Stale tells that the verdicts or the scan changed after
+// the newest check. CheckFailure is why the newest check failed, set only
+// when it failed before anyone confirmed it. Digest is set only when the
+// page offers the apply form.
 type applyPage struct {
 	User         auth.User
 	Project      project.Project
@@ -40,6 +42,7 @@ type applyPage struct {
 	DBChecks     []applyCheck
 	CanCheck     bool
 	Stale        bool
+	CheckFailure *blockerView
 	Run          *apply.Run
 	RunState     applyStateView
 	RunHref      string
