@@ -854,15 +854,14 @@ func TestMoveFinding_KeepsAppliedBundle(t *testing.T) {
 	if err := s.MarkApplied(ctx, pw, "secret/data/projects/1/ext.db.main.password"); err != nil {
 		t.Fatalf("MarkApplied(%d) error = %v", pw, err)
 	}
-	other, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/b.xml"), 0, tester)
-	if err != nil {
-		t.Fatalf("MoveFinding(b.xml, new bundle) out of an applied bundle with two members error = %v, want nil", err)
+	if _, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/b.xml"), 0, tester); !errors.Is(err, triage.ErrNotAllowed) {
+		t.Errorf("MoveFinding(b.xml, new bundle) out of an applied bundle error = %v, want ErrNotAllowed", err)
 	}
-	last := findingID(t, s, pid, fpA, "conf/a.yml")
-	if _, err := s.MoveFinding(ctx, pid, last, other, tester); !errors.Is(err, triage.ErrNotAllowed) {
-		t.Errorf("MoveFinding(last member of an applied bundle) error = %v, want ErrNotAllowed", err)
+	other := bundleOf(t, s, pid, fpA, "web/c.jsp")
+	if _, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/a.yml"), other, tester); !errors.Is(err, triage.ErrNotAllowed) {
+		t.Errorf("MoveFinding(a.yml, bundle %d) out of an applied bundle error = %v, want ErrNotAllowed", other, err)
 	}
-	if b := readBundle(t, s, pid, sid, pw); b.Decision != externalizeDB || len(b.Members) != 1 {
-		t.Errorf("Bundle(%d) after the refused move = %+v with %d members, want %+v with 1", pw, b.Decision, len(b.Members), externalizeDB)
+	if b := readBundle(t, s, pid, sid, pw); b.Decision != externalizeDB || len(b.Members) != 2 {
+		t.Errorf("Bundle(%d) after the refused moves = %+v with %d members, want %+v with 2", pw, b.Decision, len(b.Members), externalizeDB)
 	}
 }

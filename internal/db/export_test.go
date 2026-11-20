@@ -361,6 +361,13 @@ func (s *Store) SetApplyState(ctx context.Context, id apply.ID, state apply.Stat
 	return err
 }
 
+// MoveApplyRun puts the apply run with the given ID in state and changes
+// nothing else, its jobs included.
+func (s *Store) MoveApplyRun(ctx context.Context, id apply.ID, state apply.State) error {
+	_, err := s.pool.Exec(ctx, "UPDATE apply_run SET state = $2 WHERE id = $1", id, state)
+	return err
+}
+
 // SetApplyRun stores every column of r but its ID, project, scan and
 // requester on the apply run r.ID, as a check and an apply would.
 func (s *Store) SetApplyRun(ctx context.Context, r apply.Run) error {

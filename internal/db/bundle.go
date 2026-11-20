@@ -264,9 +264,11 @@ func decisionDetail(d triage.Decision) map[string]string {
 // fingerprint, holds customer data while the finding does not, or has a
 // decision it would no longer allow with the finding in it.
 // The decision is checked against the finding and the bundle's members that
-// the project's latest succeeded scan found. The last finding of a bundle
-// externalized by an apply does not move (triage.ErrNotAllowed), since
-// deleting the bundle would free a name the source and the store still use.
+// the project's latest succeeded scan found. No finding moves out of a
+// bundle externalized by an apply (triage.ErrNotAllowed): its locations
+// already hold the placeholder of that bundle's name, which the manifest and
+// the apply's records name, and deleting the bundle would free a name the
+// source and the store still use.
 // Nothing moves while the project has an apply that is being checked, is
 // queued or runs (ErrApplyActive).
 func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (_ triage.BundleID, err error) {
@@ -336,8 +338,8 @@ func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id findin
 			return 0, err
 		}
 	}
-	if src := locked[from]; src.findings == 1 && appliedExternalization(src.bundle) {
-		return 0, fmt.Errorf("moving the last finding %d out of applied bundle %d: %w", id, from, triage.ErrNotAllowed)
+	if appliedExternalization(locked[from].bundle) {
+		return 0, fmt.Errorf("moving finding %d out of applied bundle %d: %w", id, from, triage.ErrNotAllowed)
 	}
 	dest := locked[to].bundle
 	switch {

@@ -209,3 +209,34 @@ func compareLocations(x, y finding.Location) int {
 		cmp.Compare(x.FileHash, y.FileHash),
 	)
 }
+
+// Input is what the worker needs to plan a run.
+type Input struct {
+	Run        Run
+	Project    project.Project
+	Scan       scan.Scan // the scan the run refers to
+	NewestScan scan.ID   // the project's newest scan in any state
+	// Bundles are the project's bundles to externalize or redact that Scan
+	// found, each with the members and locations of Scan.
+	Bundles []triage.Bundle
+	// CustomerDataFiles holds every file in which Scan found customer data,
+	// whatever its verdict.
+	CustomerDataFiles []string
+	// Unlisted holds the project's applied secret items, of any run, that
+	// are not in the manifest yet.
+	Unlisted []Item
+}
+
+// OpenFile is a change to a file that was announced and not confirmed.
+// TempName is relative to the project folder.
+type OpenFile struct {
+	Run       ID
+	File      string
+	AfterHash string // empty: the file was to be removed
+	TempName  string
+}
+
+// Written is a change the project's applies made to a file.
+type Written struct {
+	AfterHash string // empty: the file was removed
+}

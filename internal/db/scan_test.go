@@ -220,6 +220,9 @@ func TestApplyExcludesScan(t *testing.T) {
 			if n, err := s.Count(ctx, "apply_run"); err != nil || n != 0 {
 				t.Errorf("rows in apply_run = %d, %v, want 0", n, err)
 			}
+			if n := jobsOfKind(t, s, "apply-check"); n != 0 {
+				t.Errorf("apply-check jobs = %d, want 0", n)
+			}
 		})
 	}
 	t.Run("concurrent", func(t *testing.T) {
@@ -254,6 +257,13 @@ func TestApplyExcludesScan(t *testing.T) {
 				t.Errorf("round %d: RequestScan() error = %v, RequestApplyCheck() error = %v, want one nil and the other refused",
 					i, scanErr, checkErr)
 			}
+		}
+		runs, err := s.Count(ctx, "apply_run")
+		if err != nil {
+			t.Fatalf("Count(apply_run) error = %v", err)
+		}
+		if n := jobsOfKind(t, s, "apply-check"); n != runs {
+			t.Errorf("apply-check jobs after %d rounds = %d, want one per run (%d)", rounds, n, runs)
 		}
 	})
 }

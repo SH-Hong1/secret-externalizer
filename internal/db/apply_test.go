@@ -81,6 +81,18 @@ func jobsOfKind(t *testing.T, s *db.Store, kind string) int {
 	return n
 }
 
+// assertRunsAndChecks fails the test unless there are runs apply runs and
+// checks apply-check jobs.
+func assertRunsAndChecks(t *testing.T, s *db.Store, runs, checks int) {
+	t.Helper()
+	if n, err := s.Count(t.Context(), "apply_run"); err != nil || n != runs {
+		t.Errorf("rows in apply_run = %d, %v, want %d", n, err, runs)
+	}
+	if n := jobsOfKind(t, s, "apply-check"); n != checks {
+		t.Errorf("apply-check jobs = %d, want %d", n, checks)
+	}
+}
+
 func TestRequestApplyCheck(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()
@@ -116,12 +128,14 @@ func TestRequestApplyCheck(t *testing.T) {
 		if _, err := s.RequestApplyCheck(ctx, pid, tester); !errors.Is(err, db.ErrApplyActive) {
 			t.Errorf("RequestApplyCheck(%d) while run %d checks error = %v, want ErrApplyActive", pid, id, err)
 		}
+		assertRunsAndChecks(t, s, 5, 1)
 	})
 	t.Run("no succeeded scan", func(t *testing.T) {
 		bare := newProject(t, s, "bare")
 		if _, err := s.RequestApplyCheck(ctx, bare, tester); !errors.Is(err, db.ErrNotFound) {
 			t.Errorf("RequestApplyCheck(project without scan) error = %v, want ErrNotFound", err)
 		}
+		assertRunsAndChecks(t, s, 5, 1)
 	})
 	t.Run("no project", func(t *testing.T) {
 		if _, err := s.RequestApplyCheck(ctx, 424242, tester); !errors.Is(err, db.ErrNotFound) {
@@ -474,14 +488,19 @@ func holdWithRun(t *testing.T, s *db.Store, pid project.ID, sid scan.ID) *db.Hel
 }
 
 // releaseWhenBlocked waits until another backend waits for held's lock,
-// failing if the call returns first, and then commits held.
+// failing if the call returns first or nothing waits within 10s, and then
+// commits held.
 func releaseWhenBlocked(t *testing.T, s *db.Store, held *db.HeldLock, done <-chan error) {
 	t.Helper()
 	ctx := t.Context()
+	timeout := time.NewTimer(10 * time.Second)
+	defer timeout.Stop()
 	for {
 		select {
 		case err := <-done:
 			t.Fatalf("call returned %v while the lock was held, want it to wait", err)
+		case <-timeout.C:
+			t.Fatalf("no call waited for the held lock within 10s")
 		default:
 		}
 		blocking, err := held.Blocking(ctx, s)
