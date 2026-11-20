@@ -27,6 +27,12 @@ var (
 	ErrNotRegular = errors.New("not a regular file")
 	// ErrTooLarge means a file is larger than the size limit.
 	ErrTooLarge = errors.New("file is too large")
+	// ErrHardLinked means a file has more than one link. Replacing or
+	// removing one name would leave its bytes under the others.
+	ErrHardLinked = errors.New("file has more than one link")
+	// ErrAfterCommit means a change is already on disk and a step after it
+	// failed. It is returned wrapped together with that step's error.
+	ErrAfterCommit = errors.New("change is on disk but a following step failed")
 )
 
 // Edit replaces one range of a file's text. With is printable ASCII

@@ -284,11 +284,12 @@ func FuzzReplace(f *testing.F) {
 	// The pieces fuzzed text is made of. Every one can be written in EUC-KR;
 	// "똠" has an ASCII second byte.
 	fuzzPieces := []string{"a", "Z", "c", "=", " ", "\n", "가", "똠", "값", "漢"}
-	f.Add([]byte{0, 6, 7, 5, 1, 2, 3}, []byte{1, 2, 0, 1}, true, true)
-	f.Add([]byte{6, 6, 6, 5, 7, 7}, []byte{0, 1, 1, 1}, false, false)
-	f.Add([]byte{7, 2, 5, 7, 2}, []byte{0, 5}, true, false)
-	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []byte{0, 1, 0, 1, 0, 1, 0, 1}, false, true)
-	f.Fuzz(func(t *testing.T, pieces, cuts []byte, euc, crlf bool) {
+	f.Add([]byte{0, 6, 7, 5, 1, 2, 3}, []byte{1, 2, 0, 1}, true, true, false)
+	f.Add([]byte{6, 6, 6, 5, 7, 7}, []byte{0, 1, 1, 1}, false, false, false)
+	f.Add([]byte{7, 2, 5, 7, 2}, []byte{0, 5}, true, false, false)
+	f.Add([]byte{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, []byte{0, 1, 0, 1, 0, 1, 0, 1}, false, true, true)
+	f.Add([]byte{6, 5, 0, 5, 8, 1, 5}, []byte{0, 2, 1, 3}, false, false, true)
+	f.Fuzz(func(t *testing.T, pieces, cuts []byte, euc, crlf, withBOM bool) {
 		if len(pieces) > 2000 || len(cuts) > 64 {
 			t.Skip("input larger than the property needs")
 		}
@@ -304,7 +305,7 @@ func FuzzReplace(f *testing.F) {
 		switch {
 		case euc:
 			raw = eucKR(t, text)
-		case crlf:
+		case withBOM:
 			raw = append([]byte(bom), raw...)
 		}
 		file := decode(t, raw)

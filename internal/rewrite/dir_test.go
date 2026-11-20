@@ -218,7 +218,7 @@ func TestDir_WriteDetectsChange(t *testing.T) {
 				seen := readSeen(t, d, "a.txt")
 				var want string
 				if beforeRename {
-					rewrite.SetBeforeRename(d, func() { want = c.change(t, path) })
+					rewrite.SetBeforeCommit(d, func() { want = c.change(t, path) })
 				} else {
 					want = c.change(t, path)
 				}
@@ -422,5 +422,210 @@ func TestDir_Create(t *testing.T) {
 	}
 	if got := names(t, root); !slices.Equal(got, []string{"se-manifest.json"}) {
 		t.Errorf("folder after Create = %v, want only se-manifest.json", got)
+	}
+}
+
+func TestDir_RefusesHardLinked(t *testing.T) {
+	const original = "pw=dev-only-fake-pw\n"
+	for _, op := range []string{"Write", "Remove", "Write, link made right before the rename"} {
+		t.Run(op, func(t *testing.T) {
+			root, d := openDir(t)
+			path, other := filepath.Join(root, "a.txt"), filepath.Join(root, "b.txt")
+			writeFile(t, path, original, 0o644)
+			link := func() {
+				if err := os.Link(path, other); err != nil {
+					t.Fatalf("Link error = %v", err)
+				}
+			}
+			var seen rewrite.Seen
+			var err error
+			switch op {
+			case "Write":
+				link()
+				seen = readSeen(t, d, "a.txt")
+				err = d.Write("a.txt", []byte("pw=${SE}\n"), seen, tempName(t, d, "a.txt"))
+			case "Remove":
+				link()
+				seen = readSeen(t, d, "a.txt")
+				err = d.Remove("a.txt", seen)
+			default:
+				seen = readSeen(t, d, "a.txt")
+				rewrite.SetBeforeCommit(d, link)
+				err = d.Write("a.txt", []byte("pw=${SE}\n"), seen, tempName(t, d, "a.txt"))
+			}
+			if !errors.Is(err, rewrite.ErrHardLinked) {
+				t.Errorf("%s(hard-linked a.txt) error = %v, want ErrHardLinked", op, err)
+			}
+			for _, p := range []string{path, other} {
+				if got := readFile(t, p); got != original {
+					t.Errorf("content of %s after %s = %q, want it unchanged", filepath.Base(p), op, got)
+				}
+			}
+			if got := names(t, root); !slices.Equal(got, []string{"a.txt", "b.txt"}) {
+				t.Errorf("folder after %s = %v, want only a.txt and b.txt", op, got)
+			}
+		})
+	}
+}
+
+func TestDir_WriteKeepsOnlyPermissionBits(t *testing.T) {
+	root, d := openDir(t)
+	path := filepath.Join(root, "run.sh")
+	writeFile(t, path, "pw=dev-only-fake-pw\n", 0o750|os.ModeSetuid|os.ModeSetgid)
+	info, err := os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat error = %v", err)
+	}
+	if info.Mode()&os.ModeSetuid == 0 {
+		t.Skip("the file system does not keep the setuid bit")
+	}
+	if err := d.Write("run.sh", []byte("pw=${SE}\n"), readSeen(t, d, "run.sh"), tempName(t, d, "run.sh")); err != nil {
+		t.Fatalf("Write error = %v", err)
+	}
+	info, err = os.Lstat(path)
+	if err != nil {
+		t.Fatalf("Lstat error = %v", err)
+	}
+	if info.Mode() != 0o750 {
+		t.Errorf("mode after Write of a setuid file = %v, want -rwxr-x--- (permission bits only)", info.Mode())
+	}
+}
+
+func TestDir_ErrorAfterCommit(t *testing.T) {
+	failSync := func(*os.File) error { return errors.New("sync refused by the test") }
+	root, d := openDir(t)
+	rewrite.SetSyncDir(d, failSync)
+	path := filepath.Join(root, "a.txt")
+	writeFile(t, path, "pw=dev-only-fake-pw\n", 0o644)
+
+	err := d.Write("a.txt", []byte("pw=${SE}\n"), readSeen(t, d, "a.txt"), tempName(t, d, "a.txt"))
+	if !errors.Is(err, rewrite.ErrAfterCommit) {
+		t.Errorf("Write with a failing folder sync error = %v, want ErrAfterCommit", err)
+	}
+	if got := readFile(t, path); got != "pw=${SE}\n" {
+		t.Errorf("content after Write = %q, want the new content", got)
+	}
+
+	err = d.Create("new.txt", []byte("{}\n"), tempName(t, d, "new.txt"))
+	if !errors.Is(err, rewrite.ErrAfterCommit) {
+		t.Errorf("Create with a failing folder sync error = %v, want ErrAfterCommit", err)
+	}
+	if got := readFile(t, filepath.Join(root, "new.txt")); got != "{}\n" {
+		t.Errorf("content after Create = %q, want the new content", got)
+	}
+
+	err = d.Remove("a.txt", readSeen(t, d, "a.txt"))
+	if !errors.Is(err, rewrite.ErrAfterCommit) {
+		t.Errorf("Remove with a failing folder sync error = %v, want ErrAfterCommit", err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Lstat after Remove error = %v, want fs.ErrNotExist", err)
+	}
+
+	if err := d.Remove("missing.txt", rewrite.Seen{}); err == nil || errors.Is(err, rewrite.ErrAfterCommit) {
+		t.Errorf("Remove(missing.txt) error = %v, want an error that is not ErrAfterCommit", err)
+	}
+}
+
+func TestDir_CreateWhenFileAppears(t *testing.T) {
+	root, d := openDir(t)
+	path := filepath.Join(root, "se-manifest.json")
+	rewrite.SetBeforeCommit(d, func() { writeFile(t, path, "someone else's\n", 0o644) })
+	err := d.Create("se-manifest.json", []byte("{}\n"), tempName(t, d, "se-manifest.json"))
+	if err == nil || errors.Is(err, rewrite.ErrAfterCommit) || !errors.Is(err, fs.ErrExist) {
+		t.Errorf("Create when the file appears error = %v, want fs.ErrExist and not ErrAfterCommit", err)
+	}
+	if got := readFile(t, path); got != "someone else's\n" {
+		t.Errorf("content of the file that appeared = %q, want it untouched", got)
+	}
+	if got := names(t, root); !slices.Equal(got, []string{"se-manifest.json"}) {
+		t.Errorf("folder after Create = %v, want only se-manifest.json", got)
+	}
+}
+
+func TestDir_WriteTargetGone(t *testing.T) {
+	changes := []struct {
+		name    string
+		change  func(t *testing.T, path string)
+		wantErr error
+	}{
+		{"vanished", func(t *testing.T, path string) {
+			if err := os.Remove(path); err != nil {
+				t.Fatalf("Remove error = %v", err)
+			}
+		}, fs.ErrNotExist},
+		{"became a folder", func(t *testing.T, path string) {
+			if err := os.Remove(path); err != nil {
+				t.Fatalf("Remove error = %v", err)
+			}
+			if err := os.Mkdir(path, 0o750); err != nil {
+				t.Fatalf("Mkdir error = %v", err)
+			}
+		}, rewrite.ErrNotRegular},
+	}
+	for _, c := range changes {
+		for _, beforeRename := range []bool{false, true} {
+			name := c.name
+			if beforeRename {
+				name += " right before the rename"
+			}
+			t.Run(name, func(t *testing.T) {
+				root, d := openDir(t)
+				path := filepath.Join(root, "a.txt")
+				writeFile(t, path, "pw=dev-only-fake-pw\n", 0o644)
+				seen := readSeen(t, d, "a.txt")
+				if beforeRename {
+					rewrite.SetBeforeCommit(d, func() { c.change(t, path) })
+				} else {
+					c.change(t, path)
+				}
+				err := d.Write("a.txt", []byte("pw=${SE}\n"), seen, tempName(t, d, "a.txt"))
+				if !errors.Is(err, c.wantErr) {
+					t.Errorf("Write when the target %s error = %v, want %v", c.name, err, c.wantErr)
+				}
+				want := []string{"a.txt"}
+				if errors.Is(c.wantErr, fs.ErrNotExist) {
+					want = nil
+				}
+				if got := names(t, root); !slices.Equal(got, want) {
+					t.Errorf("folder after Write = %v, want %v and no temporary file", got, want)
+				}
+				if info, err := os.Lstat(path); errors.Is(c.wantErr, rewrite.ErrNotRegular) && (err != nil || !info.IsDir()) {
+					t.Errorf("Lstat(a.txt) = %v, %v, want the folder to remain", info, err)
+				}
+			})
+		}
+	}
+}
+
+func TestDir_RefusesInsideLinkedFolder(t *testing.T) {
+	root, d := openDir(t)
+	if err := os.Mkdir(filepath.Join(root, "real"), 0o750); err != nil {
+		t.Fatalf("Mkdir error = %v", err)
+	}
+	path := filepath.Join(root, "real", "a.txt")
+	writeFile(t, path, "pw=dev-only-fake-pw\n", 0o644)
+	if err := os.Symlink("real", filepath.Join(root, "alias")); err != nil {
+		t.Fatalf("Symlink error = %v", err)
+	}
+	seen := readSeen(t, d, "real/a.txt")
+
+	if _, _, err := d.Read("alias/a.txt", 1<<20); !errors.Is(err, rewrite.ErrNotRegular) {
+		t.Errorf("Read(alias/a.txt) error = %v, want ErrNotRegular", err)
+	}
+	if err := d.Write("alias/a.txt", []byte("x"), seen, tempName(t, d, "alias/a.txt")); !errors.Is(err, rewrite.ErrNotRegular) {
+		t.Errorf("Write(alias/a.txt) error = %v, want ErrNotRegular", err)
+	}
+	if err := d.Remove("alias/a.txt", seen); !errors.Is(err, rewrite.ErrNotRegular) {
+		t.Errorf("Remove(alias/a.txt) error = %v, want ErrNotRegular", err)
+	}
+	if err := d.Create("alias/new.txt", []byte("x"), tempName(t, d, "alias/new.txt")); !errors.Is(err, rewrite.ErrNotRegular) {
+		t.Errorf("Create(alias/new.txt) error = %v, want ErrNotRegular", err)
+	}
+	if got := readFile(t, path); got != "pw=dev-only-fake-pw\n" {
+		t.Errorf("content of real/a.txt = %q, want it unchanged", got)
+	}
+	if got := names(t, filepath.Join(root, "real")); !slices.Equal(got, []string{"a.txt"}) {
+		t.Errorf("folder real = %v, want only a.txt", got)
 	}
 }

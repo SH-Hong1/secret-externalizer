@@ -25,9 +25,13 @@ const (
 // the folder.
 type Dir struct {
 	root *os.Root
-	// beforeRename, when set, runs right before a temporary file is renamed
-	// over the file it replaces. Only tests set it.
-	beforeRename func()
+	// beforeCommit, when set, runs right before a temporary file is renamed
+	// over the file it replaces or linked to the name of a new file. Only
+	// tests set it.
+	beforeCommit func()
+	// syncDir, when set, replaces the flush of a folder after a change. Only
+	// tests set it.
+	syncDir func(*os.File) error
 }
 
 // Seen is a file as Read found it: the hash of its bytes and the size,
@@ -114,20 +118,23 @@ func (d *Dir) TempName(rel string) (string, error) {
 
 // Write replaces the regular file rel with content through the temporary
 // file tmp, which must not exist. It fails with ErrChanged when rel no
-// longer looks as was says, also right before the rename. The new file has
-// the mode of the file it replaces. A temporary file that Write made is
-// removed when Write fails before the rename; one that already existed is
-// left alone.
+// longer looks as was says, also right before the rename, and with
+// ErrHardLinked when rel has more than one link, since a rename would leave
+// the old bytes under the other names. The new file keeps only the
+// permission bits of the file it replaces: setuid, setgid and sticky bits are
+// dropped. A temporary file that Write made is removed when Write fails
+// before the rename; one that already existed is left alone.
+//
+// An error that wraps ErrAfterCommit means the new content is already in
+// place and only flushing the folder failed. Any other error means rel is as
+// it was.
 func (d *Dir) Write(rel string, content []byte, was Seen, tmp string) error {
 	if err := checkTemp(rel, tmp); err != nil {
 		return err
 	}
-	info, err := d.lstatRegular(rel)
+	info, err := d.checkTarget(rel, was)
 	if err != nil {
 		return err
-	}
-	if !was.matches(info) {
-		return fmt.Errorf("writing %s: %w", rel, ErrChanged)
 	}
 	// The owner is not copied: the worker has no CAP_CHOWN, so the new file
 	// belongs to the worker's user.
@@ -135,17 +142,13 @@ func (d *Dir) Write(rel string, content []byte, was Seen, tmp string) error {
 		return err
 	}
 	if err := d.commit(tmp, func() error {
-		if d.beforeRename != nil {
-			d.beforeRename()
-		}
-		now, err := d.lstatRegular(rel)
-		if err != nil {
+		if _, err := d.checkTarget(rel, was); err != nil {
 			return err
 		}
-		if !was.matches(now) {
-			return fmt.Errorf("writing %s: %w", rel, ErrChanged)
+		if err := d.root.Rename(tmp, rel); err != nil {
+			return fmt.Errorf("renaming %s over %s: %w", tmp, rel, err)
 		}
-		return d.root.Rename(tmp, rel)
+		return nil
 	}); err != nil {
 		return err
 	}
@@ -153,7 +156,13 @@ func (d *Dir) Write(rel string, content []byte, was Seen, tmp string) error {
 }
 
 // Create writes the new file rel, which must not exist, through tmp. The
-// file gets mode 0644.
+// file gets mode 0644. It never replaces a file, even one that appears while
+// it runs: the temporary file is linked to rel, which fails when rel exists,
+// and then removed.
+//
+// An error that wraps ErrAfterCommit means rel already holds content and a
+// following step failed: removing tmp or flushing the folder. Any other
+// error means rel was not created.
 func (d *Dir) Create(rel string, content []byte, tmp string) error {
 	if err := checkTemp(rel, tmp); err != nil {
 		return err
@@ -170,31 +179,51 @@ func (d *Dir) Create(rel string, content []byte, tmp string) error {
 	if err := d.writeTemp(tmp, content, createdMode); err != nil {
 		return err
 	}
-	// A hard link fails when rel exists, where a rename would replace it.
-	if err := d.commit(tmp, func() error { return d.root.Link(tmp, rel) }); err != nil {
+	if err := d.commit(tmp, func() error {
+		if err := d.root.Link(tmp, rel); err != nil {
+			return fmt.Errorf("linking %s to %s: %w", tmp, rel, err)
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 	if err := d.root.Remove(tmp); err != nil {
-		return fmt.Errorf("removing temporary file %s: %w", tmp, err)
+		return fmt.Errorf("removing temporary file %s: %w: %w", tmp, ErrAfterCommit, err)
 	}
 	return d.syncParent(rel)
 }
 
 // Remove deletes the regular file rel if it still looks as was says. It
-// fails with ErrNotRegular for anything but a regular file and ErrChanged
-// when the file changed.
+// fails with ErrNotRegular for anything but a regular file, ErrHardLinked
+// when rel has more than one link, since its bytes would stay under the
+// other names, and ErrChanged when the file changed.
+//
+// An error that wraps ErrAfterCommit means rel is already gone and only
+// flushing the folder failed. Any other error means rel is as it was.
 func (d *Dir) Remove(rel string, was Seen) error {
-	info, err := d.lstatRegular(rel)
-	if err != nil {
+	if _, err := d.checkTarget(rel, was); err != nil {
 		return err
-	}
-	if !was.matches(info) {
-		return fmt.Errorf("removing %s: %w", rel, ErrChanged)
 	}
 	if err := d.root.Remove(rel); err != nil {
 		return fmt.Errorf("removing %s: %w", rel, err)
 	}
 	return d.syncParent(rel)
+}
+
+// checkTarget confirms rel is a regular file with one link that still looks
+// as was says, and returns what it is now.
+func (d *Dir) checkTarget(rel string, was Seen) (fs.FileInfo, error) {
+	info, err := d.lstatRegular(rel)
+	if err != nil {
+		return nil, err
+	}
+	if !singleLink(info) {
+		return nil, fmt.Errorf("checking %s: %w", rel, ErrHardLinked)
+	}
+	if !was.matches(info) {
+		return nil, fmt.Errorf("checking %s: %w", rel, ErrChanged)
+	}
+	return info, nil
 }
 
 // RemoveTemp deletes the regular file tmp, a name TempName gave. A
@@ -252,6 +281,9 @@ func (d *Dir) writeTemp(tmp string, content []byte, perm fs.FileMode) (err error
 // commit runs step, which puts the written temporary file tmp in place, and
 // removes tmp if step fails.
 func (d *Dir) commit(tmp string, step func() error) error {
+	if d.beforeCommit != nil {
+		d.beforeCommit()
+	}
 	if err := step(); err != nil {
 		_ = d.root.Remove(tmp) // a leftover is recorded by the caller and removed later
 		return err
@@ -260,18 +292,23 @@ func (d *Dir) commit(tmp string, step func() error) error {
 }
 
 // syncParent flushes the folder that holds rel, so a rename or removal in it
-// survives a crash.
+// survives a crash. It runs after the change, so every error it returns
+// wraps ErrAfterCommit.
 func (d *Dir) syncParent(rel string) error {
 	dir, err := d.root.Open(filepath.Dir(rel))
 	if err != nil {
-		return fmt.Errorf("opening the folder of %s: %w", rel, err)
+		return fmt.Errorf("opening the folder of %s: %w: %w", rel, ErrAfterCommit, err)
 	}
-	if err := dir.Sync(); err != nil {
+	sync := (*os.File).Sync
+	if d.syncDir != nil {
+		sync = d.syncDir
+	}
+	if err := sync(dir); err != nil {
 		_ = dir.Close() // the sync error is the one reported
-		return fmt.Errorf("syncing the folder of %s: %w", rel, err)
+		return fmt.Errorf("syncing the folder of %s: %w: %w", rel, ErrAfterCommit, err)
 	}
 	if err := dir.Close(); err != nil {
-		return fmt.Errorf("closing the folder of %s: %w", rel, err)
+		return fmt.Errorf("closing the folder of %s: %w: %w", rel, ErrAfterCommit, err)
 	}
 	return nil
 }
