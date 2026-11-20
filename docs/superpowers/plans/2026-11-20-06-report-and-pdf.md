@@ -6,7 +6,7 @@
 
 **Architecture:** 리포트는 저장하지 않고 열 때마다 postgres에서 읽어 만든다. `db.Report`가 한 스냅숏 트랜잭션에서 스캔이 찾은 묶음(지금의 판정), 그 스캔이 요청되기 전에 적용된 항목(`apply_item`), 프로젝트의 판정 이력(`audit_event`)을 읽고, 순수 함수 `report.Build`가 절로 나누고 묶고 줄 수를 자른다. 화면과 PDF는 같은 템플릿 블록(`report`)을 쓴다. PDF는 web이 완성한 HTML, 스타일시트, 글꼴 파일을 한 번의 multipart 요청으로 pdf 컨테이너(Gotenberg의 Chromium)에 보내고 PDF 바이트를 돌려받는다. pdf 컨테이너는 바깥으로 나가는 길이 없는 내부 네트워크에만 있고 web만 그 네트워크에 함께 붙는다.
 
-**Tech Stack:** Go 1.27, postgres 18, `html/template`, tailwindcss 4, Gotenberg 8(Chromium 경로만), docker compose. 새 Go 의존성은 없다(`net/http`, `mime/multipart`로 Gotenberg를 부른다).
+**Tech Stack:** Go 1.27, postgres 18, `html/template`, tailwindcss 4, Gotenberg 9(Chromium 경로만, 버전은 Task 4에서 확인), docker compose. 새 Go 의존성은 없다(`net/http`, `mime/multipart`로 Gotenberg를 부른다).
 
 **Spec:** `docs/superpowers/specs/2026-11-18-secret-externalizer-design.md` (2절 실패 조건, 5절 컨테이너 표의 `pdf`, 7절, 8절 "리포트", 10절 7단계). 결정 기록 0006, 0023, 0028, 0029, 0036, 0040, 0041.
 
@@ -16,17 +16,17 @@
 
 1. **[권고안으로 확정] 계획은 하나로 두고 PR을 둘로 나눈다.** PR 1은 Task 1~3(리포트 자료, 조회, 화면)이고 그것만으로 화면에서 리포트를 볼 수 있다. PR 2는 Task 4~6(pdf 컨테이너와 클라이언트, PDF 내보내기, 실제 확인)이다. 다른 안: PR 하나. 검토할 양이 한 번에 몰리고, 컨테이너 구성과 화면이 한 검토에 섞인다.
 2. **[권고안으로 확정] 리포트는 저장하지 않고 열 때마다 만든다. 시점을 고정한 사본은 PDF다.** 리포트 머리와 PDF에 만든 시각을 적는다. 다른 안: 스캔이 끝날 때 리포트를 스냅숏으로 저장한다. 판정은 스캔이 끝난 뒤에 하므로 스캔 종료 시점의 스냅숏에는 판정도 적용도 없다. "언제 확정하는가"를 정할 사건이 없고 테이블이 는다.
-3. **[권고안으로 확정] 스캔 N의 리포트가 보이는 것은 세 가지다.** (가) **찾은 것**: 스캔 N이 찾은 묶음, 판정은 리포트를 만든 시각의 것. (나) **적용한 것**: 그 프로젝트의 적용 실행 가운데 스캔 N이 요청되기 전에 시작된 실행(`apply_run.started_at < scan.requested_at`)이 `applied`로 남긴 `apply_item` 전부(누적). (다) **판정 이력**: 그 프로젝트의 판정, 묶음 옮기기, 적용 확인 기록 전부. 스캔과 적용은 겹치지 않으므로(결정 기록 0036) "요청 전에 시작된 실행"은 "요청 전에 끝난 실행"이다. 그래서 마지막 성공한 스캔의 리포트가 프로젝트의 지금 상태를 말하는 문서이고, 적용 뒤의 확인 스캔 리포트에 방금 외부화한 항목이 실린다. 지난 스캔의 리포트는 머리에 "이후 스캔이 있습니다"와 마지막 스캔 리포트의 링크를 보인다. 다른 안: 스캔 N을 근거로 한 실행(`apply_run.scan_id = N`)만 싣는다. 그러면 확인 스캔의 리포트에 외부화한 항목이 하나도 없고, 공유할 문서가 "적용 전 스캔의 리포트"가 되는데 거기에는 사라졌는지 확인한 결과가 없다. 다른 안: 지난 스캔의 리포트는 판정도 그때의 것으로 되돌려 보인다. `audit_event`를 되감아야 하고 묶음 옮기기 때문에 정확히 되돌릴 수 없다.
+3. **[권고안으로 확정] 스캔 N의 리포트가 보이는 것은 세 가지다.** (가) **찾은 것**: 스캔 N이 찾은 묶음, 판정은 리포트를 만든 시각의 것. (나) **적용한 것**: 그 프로젝트의 적용 실행 가운데 스캔 N이 요청되기 전에 시작된 실행(`coalesce(apply_run.started_at, apply_run.finished_at) < scan.requested_at`)이 `applied`로 남긴 `apply_item` 전부(누적). (다) **판정 이력**: 그 프로젝트의 판정, 묶음 옮기기, 적용 확인 기록 전부. 스캔과 적용은 겹치지 않으므로(결정 기록 0036) "요청 전에 시작된 실행"은 "요청 전에 끝난 실행"이다. `started_at`은 worker가 종료하며 작업을 돌려줄 때 비워지고 그 실행이 다시 시작되지 못한 채 닫힐 수 있어 `finished_at`으로 메운다(`finished_at`만 쓰면 안 된다. 확인 스캔은 실행을 닫는 트랜잭션에서 요청되어 두 시각이 같다). 한 자리를 적용하고, 사람이 되돌리고, 다시 적용하면 `applied` 항목이 둘이라 그 자리가 두 번 실리고 두 번 센다(판정 화면의 "적용됨" 탭과 같은 셈이다). 그래서 마지막 성공한 스캔의 리포트가 프로젝트의 지금 상태를 말하는 문서이고, 적용 뒤의 확인 스캔 리포트에 방금 외부화한 항목이 실린다. 지난 스캔의 리포트는 머리에 "이후 스캔이 있습니다"와 마지막 스캔 리포트의 링크를 보인다. 다른 안: 스캔 N을 근거로 한 실행(`apply_run.scan_id = N`)만 싣는다. 그러면 확인 스캔의 리포트에 외부화한 항목이 하나도 없고, 공유할 문서가 "적용 전 스캔의 리포트"가 되는데 거기에는 사라졌는지 확인한 결과가 없다. 다른 안: 지난 스캔의 리포트는 판정도 그때의 것으로 되돌려 보인다. `audit_event`를 되감아야 하고 묶음 옮기기 때문에 정확히 되돌릴 수 없다.
 4. **[권고안으로 확정] 리포트와 PDF에는 미리보기, 지문, 주변 코드를 싣지 않는다.** 설계 8절은 "값은 들어가지 않는다"이고, `AGENTS.md`는 미리보기와 지문을 "데이터베이스와 화면"에만 허용한다. PDF는 도구 밖으로 나가는 문서이고 화면 리포트는 PDF와 같은 내용이어야 하므로 둘 다 뺀다. 항목은 분류, 종류, 이름, 파일과 줄로 가리킨다. `report` 패키지의 타입에는 미리보기, 지문, 주변 줄을 담을 필드가 없다(테스트로 붙잡는다). 사용자가 쓴 사유(note)는 싣는다. `AGENTS.md`의 Security 절에 한 줄을 더한다.
 5. **[권고안으로 확정] 건수의 단위는 묶음이고 위치 수를 함께 보인다.** 판정 화면의 탭과 같은 단위다. 고객정보는 값마다 묶음 하나이므로 묶음 수가 곧 찾은 값의 수다. 외부화와 삭제·마스킹은 `applied` 항목의 묶음 수(중복 없이)와 항목 수(위치)다.
 6. **[권고안으로 확정] 요약의 숫자는 일곱 개다.** 찾은 항목, 외부화 완료, 삭제·마스킹 완료, 오탐, 보류, 미판정, 적용 대기(판정이 외부화나 삭제·마스킹인데 이 스캔이 아직 찾는 것). 찾은 항목 = 오탐 + 보류 + 미판정 + 적용 대기다. 증감은 같은 계산을 바로 앞의 성공한 스캔에 한 값과의 차이다(판정은 둘 다 지금의 것). 앞의 성공한 스캔이 없으면 증감을 보이지 않는다. 설계의 "탐지, 외부화, 삭제, 오탐, 보류"에 미판정과 적용 대기를 더한 것이다. 둘이 없으면 숫자의 합이 맞지 않는다.
-7. **[권고안으로 확정] 찾은 묶음은 세 절 가운데 정확히 한 곳에 실린다.** 오탐이면 6절. 오탐이 아니고, 구성원이 JSP·JS·HTML 파일에 있거나 보류 사유가 "구조 변경 필요"면 4절(판정 화면의 안내 "리포트의 구조 변경이 필요한 항목에 실립니다"와 같다). 나머지(미판정, 다른 사유의 보류, 적용 대기)는 5절이고, 그래서 5절의 제목은 설계의 "남은 미판정 항목"이 아니라 "남은 항목"이다. 줄마다 상태를 보인다: 미판정, 보류와 사유, "적용 전", "적용됨 · 다시 발견"(이 스캔 전에 적용했는데 이 스캔이 또 찾음), "이후 적용됨"(이 스캔 뒤의 실행이 바꿈. 마지막 스캔에서는 확인 스캔이 실패했거나 아직 돌지 않았을 때만 나온다).
+7. **[권고안으로 확정] 찾은 묶음은 세 절 가운데 정확히 한 곳에 실린다.** 오탐이면 6절. 오탐이 아니고, 비밀 값 묶음의 구성원이 JSP·JS·HTML 파일에 있거나 보류 사유가 "구조 변경 필요"면 4절. 고객정보는 프론트엔드 파일에 있어도 삭제·마스킹할 수 있으므로(`triage.Bundle.Allowed`) 파일 종류로는 4절에 가지 않는다(판정 화면의 안내 "리포트의 구조 변경이 필요한 항목에 실립니다"와 같다). 나머지(미판정, 다른 사유의 보류, 적용 대기)는 5절이고, 그래서 5절의 제목은 설계의 "남은 미판정 항목"이 아니라 "남은 항목"이다. 줄마다 상태를 보인다: 미판정, 보류와 사유, "적용 전", "적용됨 · 다시 발견"(이 스캔 전에 적용했는데 이 스캔이 또 찾음), "이후 적용됨"(이 스캔 뒤의 실행이 바꿈. 마지막 스캔에서는 확인 스캔이 실패했거나 아직 돌지 않았을 때만 나온다).
 8. **[권고안으로 확정] 고객정보는 어느 절에서든 파일, 종류, 판정, 보류 사유, 사유 글이 같은 것끼리 한 줄로 묶어 건수를 보인다.** 설계의 "종류별 건수와 파일"이다. 비밀 값은 묶음마다 한 줄이고 첫 파일과 줄, 파일 수, 위치 수를 보인다. 외부화한 항목(2절)은 소스에 쓰인 이름(`${ext.…}`, `${EXT_…}`)마다 한 줄이고 바뀐 자리(파일과 적용 뒤의 줄, 또는 "파일 제거")를 모두 적는다.
 9. **[권고안으로 확정] 절마다 1,000줄까지만 싣고 "외 N줄"을 적는다. 외부화한 항목 하나의 자리는 50곳까지다.** 건수는 언제나 전체를 센다. 로그 파일이 수천 개인 프로젝트에서도 화면이 5초 안에 그려지고 PDF가 제한 시간 안에 만들어지게 하려는 것이다. 판정 이력은 한 번의 판정 요청이 여러 묶음에 남긴 기록(같은 시각, 같은 사람, 같은 내용)을 한 줄로 합쳐 새것부터 1,000줄이다. 원본 보기 기록은 싣지 않는다(판정 이력이 아니고, 감사 로그는 `admin`의 화면이다).
 10. **[권고안으로 확정] 주소는 `GET /scans/{id}/report`와 `GET /scans/{id}/report.pdf`이고, `user`와 `admin` 모두 볼 수 있다.** 내용이 역할에 따라 다르지 않다. 성공하지 않은 스캔의 리포트 주소는 스캔 화면으로 돌려보낸다(303). 스캔 화면, 프로젝트 화면의 스캔 목록, 적용 결과 화면의 확인 스캔 옆에 리포트 링크를 둔다. PDF 내보내기는 상태를 바꾸지 않으므로 `GET`이고 감사 로그에 남기지 않는다.
-11. **[권고안으로 확정] PDF 변환기는 Gotenberg이고(결정 기록 0006), HTML에 자원을 끼워 넣지 않고 한 요청의 multipart 파일로 함께 보낸다.** 보내는 파일은 `index.html`, `footer.html`, `app.css`(글꼴 주소를 같은 폴더의 파일 이름으로 바꾼 것), woff2 다섯 개다. 설계의 "글꼴, 스타일을 모두 포함한 상태로 보낸다"를 요청 단위로 지킨다. 다른 안: CSS와 글꼴을 `data:` 주소로 HTML에 넣는다. HTML이 6MB가 되고 `template.CSS`로 변환해야 한다. 차트는 이 계획에 없다(요약은 숫자와 `meter` 막대다). 차트 라이브러리는 계획 7이 고른다.
+11. **[권고안으로 확정] PDF 변환기는 Gotenberg이고(결정 기록 0006), HTML에 자원을 끼워 넣지 않고 한 요청의 multipart 파일로 함께 보낸다.** 보내는 파일은 `index.html`, `footer.html`, `app.css`(글꼴 주소를 같은 폴더의 파일 이름으로 바꾼 것), woff2 다섯 개다. 설계의 "글꼴, 스타일을 모두 포함한 상태로 보낸다"를 요청 단위로 지킨다. 다른 안: CSS와 글꼴을 `data:` 주소로 HTML에 넣는다. HTML이 6MB가 되고 `template.CSS`로 변환해야 한다. 설계 8절의 [제안] "한글 글꼴은 pdf 이미지에 넣는다"와 다르다. 이미지를 따로 빌드하지 않고 화면과 같은 글꼴 파일을 쓰려는 것이고, 결정 기록 0043에 적는다. 차트는 이 계획에 없다(요약은 숫자와 `meter` 막대다). 차트 라이브러리는 계획 7이 고른다.
 12. **[권고안으로 확정] pdf 컨테이너는 받은 파일만 읽는다.** compose에 `internal: true`인 네트워크 `pdf`를 만들어 `pdf` 서비스는 거기에만 두고, web은 기본 네트워크와 `pdf` 둘 다에 붙인다. 호스트 포트는 열지 않는다. Gotenberg는 Chromium 경로만 켜고 JavaScript를 끄고, Chromium이 열 수 있는 주소를 자기 작업 폴더의 `file://`로 좁히고, webhook과 "주소에서 내려받기"를 끈다. 이미지는 digest로 고정한다. `docs/next-steps.md`의 "compose의 모든 서비스가 한 네트워크를 쓴다"는 pdf만 나누고 나머지는 그대로 남긴다.
-13. **[권고안으로 확정] 쪽은 A4 세로이고, 바닥글에 `secret-externalizer · scan #N · 쪽/전체`를 넣는다.** 바닥글은 Chromium이 따로 그리는 문서라 보낸 글꼴을 쓰지 못하므로 ASCII만 쓴다(프로젝트 이름은 한글일 수 있어 넣지 않는다). 본문 첫머리에 프로젝트 이름, 스캔 번호, 커밋, 만든 시각이 있다.
+13. **[권고안으로 확정] 쪽은 A4 세로이고, 바닥글에 `secret-externalizer | scan #N | 쪽 / 전체`를 넣는다.** 바닥글은 Chromium이 따로 그리는 문서라 보낸 글꼴을 쓰지 못하므로 ASCII만 쓴다(프로젝트 이름은 한글일 수 있어 넣지 않는다). 본문 첫머리에 프로젝트 이름, 스캔 번호, 커밋, 만든 시각이 있다.
 14. **[권고안으로 확정] PDF 한 건의 제한은 변환 20초, 결과 64MiB다.** web의 `WriteTimeout`(30초) 안이다. 변환기가 없거나 늦으면 503 화면에 "PDF 변환 서비스에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요."를 보이고, 변환기가 문서를 거부하면 500이다. PDF는 버퍼에 다 받은 뒤에만 응답을 쓴다. web은 pdf 컨테이너가 없어도 뜨고 다른 화면은 그대로 동작한다. `PDF_URL`은 필수 환경 변수다.
 15. **[권고안으로 확정] 화면은 시안을 새로 만들지 않고 확인받은 토큰과 구성 요소로 만든다.** 계획 5와 같다. `docs/design/README.md`의 색, 글꼴, 간격과 `app.css`의 `card`, `facts`, `table`, `badge`, `notice`, `bars`를 쓰고 frontend-design 스킬로 구현한다. 계획 4는 리포트 시안을 이 계획에서 만든다고 했는데, 사용자의 "확인받지 말고 진행" 지시에 따라 만들지 않는다. 실제 확인(Task 6)에서 화면과 PDF의 그림을 남겨 나중에 볼 수 있게 한다.
 16. **[권고안으로 확정] `docs/next-steps.md`의 항목은 아래 표대로 한다.**
@@ -40,15 +40,17 @@
 
 ## 구현 전에 확인할 사실
 
-실행해 보지 않았거나 공식 문서로 확인하지 못한 내용이다. 해당 Task의 첫 단계에서 확인하고, 다르면 계획을 고친 뒤 진행한다. 결과는 결정 기록 0043의 "배경"에 적는다.
+실행해 보지 않았거나 공식 문서로 확인하지 못한 내용이다. 해당 Task의 첫 단계에서 확인하고, 다르면 계획을 고친 뒤 진행한다. Task 2, 3의 결과는 결정 기록 0042에, Task 4~6의 결과는 0043의 "배경"에 적는다.
 
 | 내용 | Task |
 |---|---|
 | postgres에서 한 트랜잭션의 `now()`는 트랜잭션 시작 시각이라, `Decide` 한 번이 넣은 `audit_event`의 `at`이 모두 같다. `jsonb` 열로 `GROUP BY`할 수 있다 | 2 |
-| 확인 스캔은 실행을 닫는 트랜잭션에서 요청되므로 `scan.requested_at`은 그 실행의 `started_at`보다 뒤다(같지 않다) | 2 |
-| Gotenberg의 지금 안정 버전과 이미지 이름. Chromium만 든 이미지(`-chromium` 변형)가 있으면 그것을 쓴다. linux/amd64와 linux/arm64 digest | 4 |
+| 확인 스캔은 실행을 닫는 트랜잭션에서 요청되므로 `scan.requested_at`은 그 실행의 `started_at`보다 뒤다(같지 않다). `started_at`이 비어 있는 채 닫힌 실행(`ReleaseJob` 뒤 `FailApply`)은 `finished_at`이 확인 스캔의 `requested_at`과 같고 이후 스캔의 것보다 앞선다 | 2 |
+| Gotenberg의 지금 안정 버전과 이미지 이름(계획 검토 때 본 것은 9.0.0, `gotenberg/gotenberg:9-chromium`). Chromium만 든 이미지를 쓴다. linux/amd64와 linux/arm64 digest. 9는 모르는 양식 필드를 400으로 거부하므로 필드 이름은 9의 문서에서 가져온다(`paperSize` 필드가 있으면 `paperWidth`·`paperHeight` 대신 쓴다) | 4 |
 | `POST /forms/chromium/convert/html`: 파일 필드 이름은 `files`이고 `index.html`이 있어야 하며, 다른 파일은 이름만으로(`app.css`, `X.woff2`) 참조한다. `footer.html`이 바닥글이고 `pageNumber`, `totalPages` 클래스가 채워진다. 양식 필드 `paperWidth`, `paperHeight`, `marginTop`·`marginBottom`·`marginLeft`·`marginRight`(인치), `printBackground`, `preferCssPageSize`의 이름과 단위 | 4 |
-| 같은 요청으로 보낸 woff2를 `@font-face`가 `file://`에서 읽어 한글이 그 글꼴로 그려진다. 5MB쯤의 요청이 기본 본문 한도 안이다 | 4 |
+| 같은 요청으로 보낸 woff2를 `@font-face`가 `file://`에서 읽어 한글이 그 글꼴로 그려진다. 5MB쯤의 요청이 기본 본문 한도 안이다. `app.css`의 `font-display: swap` 때문에 글꼴을 읽기 전에 인쇄되거나 읽기가 거부되면 이미지의 다른 글꼴로 조용히 그려지므로, PDF에 든 글꼴 이름(`pdffonts` 또는 PDF 바이트에서 `IBMPlexSansKR`, `D2Coding` 찾기)으로 확인한다 | 4, 6 |
+| 이미지 안에 healthcheck가 쓸 클라이언트(`curl` 등)가 있다. Chromium을 미리 띄우는 옵션(`--chromium-auto-start`)을 켰을 때와 껐을 때 첫 변환에 걸리는 시간. 컨테이너의 사용자(uid 1001)가 `/tmp` tmpfs에 쓸 수 있다 | 4 |
+| `header.html`도 Gotenberg가 따로 다루는 이름이다 | 4 |
 | Gotenberg의 옵션 이름과 뜻: Chromium 말고 다른 경로 끄기, JavaScript 끄기, Chromium 허용·거부 주소 목록, webhook 끄기, "주소에서 내려받기" 끄기, 요청 제한 시간, 상태 확인 주소(`/health`) | 4 |
 | Gotenberg 컨테이너가 `read_only: true`, `/tmp` tmpfs, `cap_drop: ALL`, `no-new-privileges`로 뜨고 변환한다. 안 되는 것이 있으면 그것만 풀고 이유를 적는다 | 4 |
 | `internal: true` 네트워크에만 붙은 컨테이너는 바깥(인터넷, 호스트)으로 나가지 못하고, 같은 네트워크의 web은 이름 `pdf`로 닿는다 | 4, 6 |
@@ -155,7 +157,7 @@
   	Files     int
   	Bundles   int
   	Locations int
-  	Frontend  bool // a member the scan found is in a triage.Frontend file
+  	Frontend  bool // a secret bundle with a member the scan found in a triage.Frontend file; false for customer data
   	Shell     bool // every member the scan found is in a triage.ShellFile
   	Applied   Applied
   }
@@ -275,7 +277,7 @@
   - 모든 `List`의 `Rows`는 `MaxRows`에서 자르고 `Total`은 자르기 전의 수다. `Delta`는 `Previous`가 0이면 영이다.
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다** (`package report_test`, `cmp.Diff`로 비교).
-  - `TestBuild_Partition`: 표 형태. 오탐(프론트엔드 파일 포함)은 `FalsePositives`, 미판정 프론트엔드와 "구조 변경 필요" 보류는 `Structure`, `HoldLater` 보류와 미판정과 외부화 판정(적용 전)은 `Remaining`에만 있다. 세 목록의 `Total` 합이 줄 수와 같다.
+  - `TestBuild_Partition`: 표 형태. 오탐(프론트엔드 파일 포함)은 `FalsePositives`, 미판정 프론트엔드와 "구조 변경 필요" 보류는 `Structure`, `.jsp`의 고객정보 줄(`Frontend` false, 삭제·마스킹 판정)은 `Remaining`, `HoldLater` 보류와 미판정과 외부화 판정(적용 전)은 `Remaining`에만 있다. 세 목록의 `Total` 합이 줄 수와 같다.
   - `TestBuild_Externalized`: 묶음 하나의 `ext.db.main.password`(`a.yml` 14줄, `b.xml` 31줄)와 `EXT_DB_MAIN_PASSWORD`(`deploy.sh` 3줄)는 항목 둘이고 자리가 파일과 줄 순이다. `remove-file` 항목은 `Removed`가 true이고 `Line`이 0이다. `.java` 자리 하나가 `CodeChange`면 항목도 그렇다. 그 묶음의 줄이 `AppliedBefore`면 `Reappeared`다.
   - `TestBuild_RedactedKinds`: `card` 2개 파일, `phone` 1개 파일을 주면 `RedactedKinds`가 `phone`, `card` 순이고 건수와 파일 수가 맞다.
   - `TestBuild_Caps`: 줄 `MaxRows+5`개는 `Rows` 1,000개, `Total` 1,005, `More()` 5다. 자리 `MaxPlaces+3`곳인 항목은 `Places` 50곳, `PlaceTotal` 53이다. `EventTotal`이 2,400이고 `Events`가 1,000개면 `History.More()`는 1,400이다.
@@ -286,14 +288,14 @@
 - [ ] **Step 2:** `go test ./internal/report/` 가 컴파일 오류로 실패하는 것을 본다.
 - [ ] **Step 3:** `internal/report/report.go`에 위의 타입과 `Build`를 쓴다.
 - [ ] **Step 4:** `go test -race ./internal/report/` 가 통과한다.
-- [ ] **Step 5:** 결정 기록 0042를 쓴다(검토 항목 2~9의 내용과 다른 안). `AGENTS.md` Security 절의 첫 항목 끝에 한 줄을 더한다: "A report and its PDF carry neither the fingerprint nor the preview." `CHANGELOG.md`의 `[Unreleased]`에 한 줄을 더한다.
+- [ ] **Step 5:** 결정 기록 0042를 쓴다(검토 항목 2~9의 내용과 다른 안, 다시 적용한 자리가 두 번 실리는 한계). `AGENTS.md` Security 절의 첫 항목 끝에 한 줄을 더한다: "A report and its PDF carry neither the fingerprint nor the preview." `CHANGELOG.md`의 `[Unreleased]`에 한 줄을 더한다.
 - [ ] **Step 6:** `make check`가 통과한 뒤 커밋한다(`feat(report): shape the report of a scan`).
 
 ### Task 2: 리포트 자료 조회
 
 **Files:**
 - Create: `internal/db/migrations/0008_report_indexes.sql`, `internal/db/report.go`, `internal/db/report_test.go`
-- Modify: `internal/db/export_test.go`(필요한 seed 도우미), `CHANGELOG.md`, `docs/next-steps.md`(`apply_run.project_id` 인덱스 항목 체크)
+- Modify: `internal/db/export_test.go`(seed 도우미: 스캔의 `requested_at`과 상태를 정해 넣기, `apply_run`의 `started_at`·`finished_at`을 NULL을 포함해 정해 넣기, `at`을 정한 `audit_event` 넣기, 항목의 `location`과 `finding`과 `bundle` 행 지우기. 시각은 모두 Go에서 정해 넣어 데이터베이스 시계와 섞지 않는다), `CHANGELOG.md`, `docs/next-steps.md`(`apply_run.project_id` 인덱스 항목 체크)
 
 **Interfaces:**
 - Consumes: Task 1의 `report.Data`, `report.Totals`, `report.Line`, `report.Change`, `report.Redaction`, `report.Event`, `report.MaxRows`.
@@ -319,8 +321,8 @@
 - 읽는 규칙(검토 항목 3, 6~9):
   - `Latest`는 프로젝트의 가장 새 성공한 스캔, `Previous`는 `id`가 이 스캔보다 작은 성공한 스캔 가운데 가장 큰 것이다.
   - 찾은 묶음은 `triagelist.go`의 `scanBundles`와 같은 뜻이다(이 스캔의 `location`이 있는 `finding`의 묶음, 분류와 종류는 ID가 가장 작은 구성원의 것). 미리보기는 고르지 않는다.
-  - `Totals`의 `Found`와 판정별 수는 그 묶음들의 수와 위치 수다. `Externalized`, `Redacted`는 그 프로젝트의 `apply_item` 가운데 `status = 'applied'`이고 실행의 `started_at`이 이 스캔의 `requested_at`보다 앞선 것의 `count(DISTINCT bundle_id)`와 `count(*)`다(`replace`와 `remove-file`은 외부화, `redact`는 삭제·마스킹). `PreviousTotals`는 같은 계산을 `Previous`에 한 것이다.
-  - `Lines`: 비밀 값은 묶음마다 한 줄, 고객정보는 (파일, 종류, 판정, 보류 사유, 사유 글)마다 한 줄이다. `Applied`는 그 묶음의 `applied` 항목이 이 스캔의 요청 뒤에 시작된 실행에 있으면 `after`, 아니고 요청 전에 시작된 실행에 있으면 `before`, 없으면 빈 값이다(고객정보 줄은 묶음 가운데 하나라도 해당하면 그 값이고 `after`가 우선한다).
+  - `Totals`의 `Found`와 판정별 수는 그 묶음들의 수와 위치 수다. `Externalized`, `Redacted`는 그 프로젝트의 `apply_item` 가운데 `status = 'applied'`이고 실행의 `coalesce(started_at, finished_at)`(아래에서 "실행의 시각")이 이 스캔의 `requested_at`보다 앞선 것의 `count(DISTINCT bundle_id)`와 `count(*)`다(`replace`와 `remove-file`은 외부화, `redact`는 삭제·마스킹). `PreviousTotals`는 같은 계산을 `Previous`에 한 것이다.
+  - `Lines`: 비밀 값은 묶음마다 한 줄, 고객정보는 (파일, 종류, 판정, 보류 사유, 사유 글)마다 한 줄이다. `Applied`는 그 묶음의 `applied` 항목이 실행의 시각이 이 스캔의 요청보다 앞서지 않은 실행에 있으면 `after`, 아니고 앞선 실행에 있으면 `before`, 없으면 빈 값이다(고객정보 줄은 묶음 가운데 하나라도 해당하면 그 값이고 `after`가 우선한다).
   - `Changes`: 위의 외부화 항목 전부. 묶음이나 항목(`finding`)이 지워졌어도 `apply_item`의 열만으로 채운다. 이름, 파일, 줄 순이다.
   - `Redactions`: 위의 삭제·마스킹 항목을 (종류, 파일, `tracked`)로 묶은 것이다.
   - `Events`: 그 프로젝트의 `audit_event` 가운데 `action`이 `verdict`, `move`, `apply`인 것을 (`at`, `actor_subject`, `actor_name`, `action`, `detail`)로 묶어 새것부터 `report.MaxRows`줄, `EventTotal`은 묶은 줄의 전체 수다. `Bundles`는 묶인 기록 수이고, `Category`, `Kind`, `File`은 가장 작은 `bundle_id`의 묶음이 지금 가진 첫 항목의 것이다(없으면 빈 값). `move`는 `detail`의 `to`가 달라 묶이지 않는다.
@@ -332,11 +334,11 @@
   - `TestReport_Totals`: 스캔 1(묶음 6개: 외부화 판정 2, 삭제·마스킹 판정 1, 오탐 1, 보류 1, 미판정 1) → 적용(외부화 2개 묶음의 위치 3곳, 삭제 1곳이 `applied`, 1곳은 `skipped`) → 스캔 2(오탐, 보류, 미판정 묶음만 찾음). 스캔 2의 `Totals`는 `Found{3,3}`, `Externalized{2,3}`, `Redacted{1,1}`, `FalsePositive{1,1}`, `Hold{1,1}`, `Undecided{1,1}`, `Pending{0,0}`이고 `Previous`는 스캔 1, `PreviousTotals`는 `Found{6,…}`, `Externalized{0,0}`, `Pending{3,…}`다. 스캔 1의 `Totals`는 `Externalized{0,0}`이고 그 외부화 묶음의 줄은 `Applied`가 `after`다.
   - `TestReport_TotalsMatchLines`: `Lines`의 `Bundles`와 `Locations`를 판정별로 더한 값이 `Totals`의 것과 같다.
   - `TestReport_CustomerDataGrouped`: 한 파일의 전화번호 묶음 37개를 같은 사유로 삭제·마스킹 판정하면 한 줄(`Bundles` 37)이고, 그 가운데 하나의 사유 글이 다르면 두 줄이다. 줄에 `Bundle`이 0이다.
-  - `TestReport_AppliedAsOf`: 이 스캔 전에 적용된 묶음을 이 스캔이 다시 찾으면 그 줄은 `before`이고 항목은 `Changes`에 있다. `skipped`, `failed`, `writing`, `planned` 항목은 어디에도 없다.
+  - `TestReport_AppliedAsOf`: 이 스캔 전에 적용된 묶음을 이 스캔이 다시 찾으면 그 줄은 `before`이고 항목은 `Changes`에 있다. `skipped`, `failed`, `writing`, `planned` 항목은 어디에도 없다. `started_at`이 NULL이고 `finished_at`이 이 스캔의 요청보다 앞선 실행의 `applied` 항목도 `Changes`에 있다.
   - `TestReport_ItemOfMissingBundle`: 적용된 항목의 `finding`과 `bundle` 행을 지워도 `Changes`에 이름, 파일, 줄, 저장 경로가 그대로 있다.
   - `TestReport_Events`: 묶음 37개를 한 번의 `Decide`로 판정하면 줄 하나(`Bundles` 37, `Detail`의 판정)다. `reveal` 기록은 없다. 새것부터다. 묶인 줄이 `MaxRows`보다 많으면 `Events`는 `MaxRows`개이고 `EventTotal`은 전체다(기록을 직접 넣어 만든다).
   - `TestReport_OtherProject`: 다른 프로젝트의 묶음, 적용 항목, 기록이 하나도 섞이지 않는다.
-  - `TestReport_FrontendAndShell`: `.jsp` 구성원이 있는 묶음은 `Frontend`, 구성원이 모두 `.sh`면 `Shell`이다.
+  - `TestReport_FrontendAndShell`: `.jsp` 구성원이 있는 비밀 값 묶음은 `Frontend`, 구성원이 모두 `.sh`면 `Shell`이다. `.jsp`의 고객정보 줄은 `Frontend`가 false다.
 - [ ] **Step 3:** `TEST_DATABASE_URL=… go test ./internal/db/ -run TestReport` 가 실패하는 것을 본다.
 - [ ] **Step 4:** 마이그레이션 `0008`과 `internal/db/report.go`를 쓴다. `s.readOnly` 하나 안에서 읽는다. SQL은 이 파일에만 둔다.
 - [ ] **Step 5:** `make test-integration`(Step 3의 환경 변수와 함께)과 `make check`가 통과한다.
@@ -360,7 +362,7 @@
   }
   ```
 
-  `Stores`에 `Reports ReportStore`를 더한다. `cmd/web`은 `database`를 넣는다. 주소는 `GET /scans/{id}/report`(`usesStore`)이고 handler는 `handleReport(logger, rd, reports, now func() time.Time)`이다. `reportPath(id scan.ID) string`이 `/scans/<id>/report`를 돌려준다. 화면 자료는 `reportPage{User auth.User; View reportView; PDF string}`이고 `newReportView(r report.Report) reportView`가 만든다. `PDF`는 이 Task에서 빈 문자열이고(버튼 없음) Task 5가 채운다. 템플릿의 `{{define "report"}}`는 `reportView`만 받는다(Task 5의 PDF 문서가 같은 블록을 쓴다).
+  `Stores`에 `Reports ReportStore`를 더한다. `cmd/web`은 `database`를 넣는다. 주소는 `GET /scans/{id}/report`(`usesStore`)이고 handler는 `handleReport(logger, rd, reports, now func() time.Time)`이다. `reportPath(id scan.ID) string`이 `/scans/<id>/report`를 돌려준다. 화면 자료는 `reportPage{User auth.User; View reportView; PDF string}`이고 `newReportView(r report.Report) reportView`가 만든다. `PDF`는 이 Task에서 빈 문자열이고(버튼 없음) Task 5가 채운다. 템플릿의 `{{define "report"}}`는 `reportView`만 받고 내용 전체를 `<article id="report">` 하나로 감싼다(Task 5의 PDF 문서가 같은 블록을 쓴다).
 
 - 화면의 내용과 문구(고정):
   - 제목 `리포트 · 스캔 #N`, 위치 표시는 프로젝트 → 스캔 → 리포트.
@@ -453,14 +455,14 @@ PR 1을 만들고, 전체 검토를 거쳐 병합한다.
 
   // Convert returns the PDF of doc on A4 sheets. It fails with an error
   // matching ErrUnavailable or ErrRejected, and without sending anything
-  // when a file name is empty, repeats, is index.html or footer.html, or
+  // when a file name is empty, repeats, is index.html, header.html or footer.html, or
   // holds a slash, a backslash or a control character.
   func (c *Client) Convert(ctx context.Context, doc Document) ([]byte, error)
   ```
 
 - 요청: `POST <baseURL>/forms/chromium/convert/html`, multipart. 양식 필드는 A4(`paperWidth` 8.27, `paperHeight` 11.7), 여백 위·왼쪽·오른쪽 0.6, 아래 0.8(인치), `printBackground` true, `preferCssPageSize` false다. 이름과 단위는 Step 1에서 확인한 것을 쓴다. 오류의 글에는 응답 본문을 넣지 않는다(상태 코드만).
 - compose:
-  - `pdf` 서비스: digest로 고정한 Gotenberg 이미지, `networks: [pdf]`, 호스트 포트 없음, `read_only: true`, `tmpfs: [/tmp]`, `cap_drop: [ALL]`, `no-new-privileges`, `restart: unless-stopped`, `/health` healthcheck. 옵션: Chromium 경로만, JavaScript 끔, Chromium 허용 주소는 자기 작업 폴더의 `file://`뿐, webhook과 주소에서 내려받기 끔, 요청 제한 15초.
+  - `pdf` 서비스: digest로 고정한 Gotenberg 이미지, `networks: [pdf]`, 호스트 포트 없음, `read_only: true`, `tmpfs: [/tmp]`, `cap_drop: [ALL]`, `no-new-privileges`, `restart: unless-stopped`, `/health` healthcheck. 옵션: Chromium 경로만, JavaScript 끔, Chromium 허용 주소는 자기 작업 폴더의 `file://`뿐, webhook과 주소에서 내려받기 끔, 요청 제한 15초(web의 변환 제한 20초보다 짧아 Gotenberg가 먼저 답한다), Chromium 미리 띄우기.
   - `networks: pdf: internal: true`. `web`은 `networks: [default, pdf]`, 환경 변수 `PDF_URL: http://pdf:3000`, `depends_on`에 `pdf: condition: service_started`.
   - `pdf-test` 서비스(`profiles: ["test"]`): 같은 이미지와 옵션, 기본 네트워크, `127.0.0.1:13000:3000`.
 
@@ -468,7 +470,7 @@ PR 1을 만들고, 전체 검토를 거쳐 병합한다.
 - [ ] **Step 2: 실패하는 테스트를 쓴다** (`httptest.Server`가 가짜 Gotenberg다).
   - `TestConvert_SendsDocument`: 서버가 받은 요청이 `POST /forms/chromium/convert/html`이고, multipart에 `index.html`, `footer.html`, 준 파일들이 그 이름과 바이트로 있고, 양식 필드 값이 위와 같다. 서버가 `%PDF-1.7 fake`를 돌려주면 그 바이트를 그대로 받는다.
   - `TestConvert_Errors`: 표 형태. 닫힌 포트, 503, 504, context 제한 초과(서버가 답하지 않음)는 `ErrUnavailable`. 400, 500, 200인데 `%PDF-`로 시작하지 않는 본문, 200인데 `MaxBytes`를 넘는 본문(테스트는 한도를 줄일 수 있게 unexported 필드와 `export_test.go`를 쓴다)은 `ErrRejected`. 어느 오류의 글에도 서버가 보낸 본문이 없다.
-  - `TestConvert_RejectsNames`: 빈 이름, `a/b.css`, `..`, `index.html`, `footer.html`, 같은 이름 둘, 줄바꿈이 든 이름은 서버에 요청이 가지 않고 오류다.
+  - `TestConvert_RejectsNames`: 빈 이름, `a/b.css`, `..`, `index.html`, `header.html`, `footer.html`, 같은 이름 둘, 줄바꿈이 든 이름은 서버에 요청이 가지 않고 오류다.
   - `TestNew_BadURL`: 빈 값, `pdf:3000`, `ftp://pdf`, 경로나 query나 사용자 정보가 있는 주소는 오류다.
   - `TestConvert_Real`(`integration_test.go`): `TEST_PDF_URL`이 없으면 건너뛴다. 한글 문단과 `@font-face`(저장소의 `IBMPlexSansKR-…-Regular.woff2`), `footer.html`을 보내면 `%PDF-`로 시작하는 PDF가 온다. `<script>`와 바깥 주소의 `<img>`가 든 문서도 제한 시간 안에 PDF가 온다(실행되거나 받아 오지 않는다는 것은 Task 6에서 확인한다).
 - [ ] **Step 3:** `go test ./internal/pdf/` 가 컴파일 오류로 실패하는 것을 본다.
@@ -508,8 +510,9 @@ PR 1을 만들고, 전체 검토를 거쳐 병합한다.
 
   ```go
   // printFiles returns the files a PDF document names: app.css with every
-  // font address turned into the bare file name, and the fonts it names. It
-  // panics when the stylesheet names a font a does not hold.
+  // font address turned into the bare file name, and the fonts it names. NewServer
+  // calls it once, before it serves anything, and it panics when the
+  // stylesheet names a font a does not hold.
   func printFiles(a *assets) []pdf.File
 
   // render returns the template tmpl of the named page drawn with data.
@@ -517,14 +520,14 @@ PR 1을 만들고, 전체 검토를 거쳐 병합한다.
   ```
 
 - 주소: `GET /scans/{id}/report.pdf`, `signedIn`만 건다(handler가 DB 읽기에 `limits.Store`, 변환에 `limits.PDF`를 따로 건다). 흐름: 자료 읽기 → 성공하지 않은 스캔이면 303 → `report.Build` → `print`와 `print-footer`를 버퍼에 그린다 → `Convert` → 성공하면 `Content-Type: application/pdf`, `Content-Disposition: attachment; filename="report-project-<프로젝트 ID>-scan-<스캔 ID>.pdf"`, `Content-Length`와 함께 쓴다. `pdf.ErrUnavailable`은 503과 "PDF 변환 서비스에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요.", 그 밖의 오류는 500 화면이다. 오류는 handler에서 한 번 로그로 남긴다.
-- 템플릿: `{{define "print"}}`는 `<!doctype html>`, `lang="ko"`, `<meta charset="utf-8">`, 제목, `<link rel="stylesheet" href="app.css">`, `<body class="print">` 안에 `{{template "report" .}}`만 있다. 머리 띠, 메뉴, 양식, 스크립트가 없다. `{{define "print-footer"}}`는 글자 크기를 정한 자기 `<style>`과 `secret-externalizer · scan #N · <span class="pageNumber"></span> / <span class="totalPages"></span>`만 있는 온전한 HTML 문서다(ASCII만).
+- 템플릿: `{{define "print"}}`는 `<!doctype html>`, `lang="ko"`, `<meta charset="utf-8">`, 제목, `<link rel="stylesheet" href="app.css">`, `<body class="print">` 안에 `{{template "report" .}}`만 있다. 머리 띠, 메뉴, 양식, 스크립트가 없다. `{{define "print-footer"}}`는 글자 크기를 정한 자기 `<style>`과 `secret-externalizer | scan #N | <span class="pageNumber"></span> / <span class="totalPages"></span>`만 있는 온전한 HTML 문서다(ASCII만).
 - CSS: `body.print`와 `@media print`에서 바탕을 흰색으로, 본문 폭을 쪽에 맞추고, 표의 줄과 카드가 쪽 사이에서 잘리지 않게(`break-inside: avoid`) 하고, 절 제목이 쪽 끝에 홀로 남지 않게(`break-after: avoid`) 한다. 링크는 밑줄 없는 본문 색이다.
 - 리포트 화면의 `reportPage.PDF`를 `/scans/<id>/report.pdf`로 채워 머리에 "PDF로 내보내기" 버튼(`btn btn-primary`, 일반 링크)을 보인다.
 
 - [ ] **Step 1: 실패하는 테스트를 쓴다** (`fakes_test.go`에 받은 `Document`를 기억하는 `fakeConverter`를 더한다).
   - `TestHandleReportPDF_OK`: 200, `Content-Type: application/pdf`, `Content-Disposition: attachment; filename="report-project-3-scan-7.pdf"`, 본문은 가짜 변환기가 준 바이트 그대로다.
   - `TestHandleReportPDF_Document`: 변환기가 받은 `Index`에 일곱 절의 제목과 `href="app.css"`가 있고, `/static/`, `<script`, `<form`, `<nav`, `****`가 없다. `Footer`에 `scan #7`, `pageNumber`, `totalPages`가 있다. `Files`는 `app.css`와 woff2 다섯 개이고 `app.css`에 `url(fonts/`가 없다. 파일 이름 `<img src=x onerror=alert(1)>.yml`이 `Index`에 이스케이프되어 있다.
-  - `TestHandleReportPDF_SameAsPage`: 같은 자료로 그린 리포트 화면과 `Index`에서 `report` 블록 부분(시작과 끝 표시 사이)이 같다.
+  - `TestHandleReportPDF_SameAsPage`: 같은 자료로 그린 리포트 화면과 `Index`에서 `<article id="report">`부터 `</article>`까지가 같다.
   - `TestHandleReportPDF_ConverterDown`: 변환기가 `pdf.ErrUnavailable`이면 503, `text/html`, 안내 문구가 있고 `Content-Disposition`이 없다.
   - `TestHandleReportPDF_Rejected`: `pdf.ErrRejected`면 500 화면이다.
   - `TestHandleReportPDF_Deadline`: `Limits.PDF`가 50ms이고 변환기가 context가 끝날 때까지 기다리면(`ctx.Err()`를 `pdf.ErrUnavailable`로 감싸 돌려준다) 503이고, 변환기가 받은 context에 제한이 걸려 있다. `time.Sleep`을 쓰지 않는다.
