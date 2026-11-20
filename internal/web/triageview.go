@@ -5,6 +5,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
@@ -52,10 +53,16 @@ func triagePath(id project.ID) string {
 }
 
 // triagePage is what the triage screen shows. Exactly one of NoScan, Empty,
-// Bundle and Customer describes the detail. Error is the reason a verdict or
-// a move was refused, shown above the detail.
+// Bundle and Customer describes the detail, unless Applied is set: then the
+// screen shows the table of applied bundles instead of the list and detail.
+// Error is the reason a verdict or a move was refused, shown above the
+// detail, and ErrorLink a page that tells more. ApplyHref is the apply page
+// of the project.
 type triagePage struct {
 	Error     string
+	ErrorLink string
+	ApplyHref string
+	Applied   *appliedTable
 	User      auth.User
 	Project   project.Project
 	NoScan    bool
@@ -92,7 +99,8 @@ type categoryOption struct {
 	Selected     bool
 }
 
-// listRow is one line of the triage list.
+// listRow is one line of the triage list. Applied marks a bundle whose
+// value an apply stored.
 type listRow struct {
 	Href         string
 	Current      bool
@@ -101,6 +109,35 @@ type listRow struct {
 	CountText    string
 	Sub          string
 	Verdict      verdictView
+	Applied      bool
+}
+
+// appliedTable is one page of the table of applied bundles.
+type appliedTable struct {
+	ApplyHref string
+	Rows      []appliedRow
+	Page      int
+	Pages     int
+	Total     int
+	PrevHref  string
+	NextHref  string
+}
+
+// appliedRow is one applied bundle: the forms its name took in the source,
+// what it is, where its value went, and whether the latest scan found the
+// value again, with the link to the bundle on the triage screen then.
+type appliedRow struct {
+	Names      []string
+	What       string
+	Preview    string
+	StorePath  string
+	AppliedAt  string
+	Locations  int
+	CodeChange bool
+	RunHref    string
+	Run        string
+	Reappeared bool
+	BundleHref string
 }
 
 // verdictView names a verdict for a label: Class completes "badge-" and
@@ -143,6 +180,51 @@ func statusLabelOf(status string) string {
 		return "미판정"
 	}
 	return verdictOf(triage.Verdict(status)).Label
+}
+
+// entryName returns the form the name of e takes in the list: the shell
+// form when every member is in a shell script.
+func entryName(e triage.Entry) string {
+	if e.Shell {
+		return e.Name.Shell()
+	}
+	return e.Name.Config()
+}
+
+// newAppliedTable shapes one page of applied bundles of project id.
+func newAppliedTable(id project.ID, p triage.AppliedPage) *appliedTable {
+	t := &appliedTable{ApplyHref: applyPath(id), Page: p.Page, Pages: p.Pages, Total: p.Total}
+	for _, a := range p.Entries {
+		row := appliedRow{
+			What:      categoryLabel(a.Category) + " · " + kindLabel(a.Kind),
+			Preview:   a.Preview,
+			StorePath: a.StorePath,
+			AppliedAt: formatTime(a.AppliedAt),
+			Locations: a.Locations, CodeChange: a.CodeChange, Reappeared: a.Reappeared,
+		}
+		if a.Name != "" {
+			if a.Config || !a.Shell {
+				row.Names = append(row.Names, a.Name.Config())
+			}
+			if a.Shell {
+				row.Names = append(row.Names, a.Name.Shell())
+			}
+		}
+		if a.LastRun > 0 {
+			row.Run, row.RunHref = "#"+strconv.FormatInt(a.LastRun, 10), runPath(apply.ID(a.LastRun))
+		}
+		if a.Reappeared {
+			row.BundleHref = triageQuery{Status: triage.StatusAll, Sel: bundleSel(a.Bundle)}.href(id, false)
+		}
+		t.Rows = append(t.Rows, row)
+	}
+	if p.Page > 1 {
+		t.PrevHref = triageQuery{Status: statusApplied, Page: p.Page - 1}.href(id, true)
+	}
+	if p.Page < p.Pages {
+		t.NextHref = triageQuery{Status: statusApplied, Page: p.Page + 1}.href(id, true)
+	}
+	return t
 }
 
 func validStatus(status string) bool {
@@ -244,8 +326,9 @@ func newListRows(id project.ID, q triageQuery, entries []triage.Entry, sel strin
 			r.CountText = strconv.Itoa(e.Count) + "곳"
 			r.Sub = e.File + ":" + strconv.Itoa(e.FirstLine)
 			if e.Name != "" {
-				r.Sub = e.Name.Config()
+				r.Sub = entryName(e)
 			}
+			r.Applied = e.Applied
 		} else {
 			s = groupSel(e.Group)
 			r.CountText = strconv.Itoa(e.Count) + "건"
@@ -260,9 +343,10 @@ func newListRows(id project.ID, q triageQuery, entries []triage.Entry, sel strin
 	return out
 }
 
-// newStatusChips returns the status filter links with their counts. Each
-// link keeps the category and starts at page 1.
-func newStatusChips(id project.ID, q triageQuery, counts map[triage.Verdict]int) []statusChip {
+// newStatusChips returns the status filter links with their counts, and
+// last the link to the applied bundles with their number. Each link keeps
+// the category and starts at page 1.
+func newStatusChips(id project.ID, q triageQuery, counts map[triage.Verdict]int, applied int) []statusChip {
 	total := 0
 	for _, n := range counts {
 		total += n
@@ -284,7 +368,8 @@ func newStatusChips(id project.ID, q triageQuery, counts map[triage.Verdict]int)
 		cq := triageQuery{Category: q.Category, Status: s}
 		out = append(out, statusChip{Label: statusLabelOf(s), Href: cq.href(id, false), N: n, Current: s == q.Status})
 	}
-	return out
+	aq := triageQuery{Status: statusApplied}
+	return append(out, statusChip{Label: "적용됨", Href: aq.href(id, false), N: applied, Current: q.Status == statusApplied})
 }
 
 func newCategoryOptions(current finding.Category) []categoryOption {

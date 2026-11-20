@@ -40,7 +40,7 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	mux.Handle("GET /projects", usesStore(handleProjectList(logger, rd, projects)))
 	mux.Handle("GET /projects/new", signedIn(handleProjectNew(logger, rd)))
 	mux.Handle("POST /projects", usesStore(handleProjectCreate(logger, rd, projects)))
-	mux.Handle("GET /projects/{id}", usesStore(handleProject(logger, rd, projects, scans, triage)))
+	mux.Handle("GET /projects/{id}", usesStore(handleProject(logger, rd, projects, scans, triage, stores.Applies)))
 	mux.Handle("GET /projects/{id}/triage", usesStore(handleTriage(logger, rd, projects, triage, suggester)))
 	tw := triageWriter{logger: logger, rd: rd, projects: projects, store: triage, suggester: suggester}
 	mux.Handle("POST /projects/{id}/bundles/{bundle}/verdict", usesStore(handleBundleVerdict(tw)))
@@ -55,9 +55,10 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	mux.Handle("/projects/{id}/apply", handleNotAllowed(logger, rd, http.MethodGet, http.MethodPost))
 	mux.Handle("POST /projects/{id}/apply/check", usesStore(handleApplyCheck(aw)))
 	mux.Handle("/projects/{id}/apply/check", handlePostOnly(logger, rd))
+	mux.Handle("GET /applies/{id}", usesStore(handleApplyRun(logger, rd, projects, scans, stores.Applies)))
 	mux.Handle("POST /projects/{id}/bundles/{bundle}/original", adminStore(handleOriginal(tw, audits, originals)))
 	mux.Handle("/projects/{id}/bundles/{bundle}/original", handlePostOnly(logger, rd))
 	mux.Handle("POST /projects/{id}/scans", usesStore(handleScanCreate(logger, rd, scans)))
-	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, projects, scans, triage)))
+	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, projects, scans, triage, stores.Applies)))
 	mux.Handle("/", handleNotFound(logger, rd))
 }

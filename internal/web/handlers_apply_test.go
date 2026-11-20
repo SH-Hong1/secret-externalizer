@@ -630,3 +630,257 @@ func TestApplyPage_UnknownProject(t *testing.T) {
 		t.Errorf("GET /projects/x/apply status = %d, want 404", res.status)
 	}
 }
+
+const runPagePath = "/applies/5"
+
+// finishedRun is run 5 of project 1 after an apply that ended in state,
+// with confirmation scan rescan (0 for none).
+func finishedRun(state apply.State, rescan scan.ID) apply.Run {
+	r := *run(state)
+	r.ConfirmedAt = time.Date(2026, 11, 20, 10, 5, 0, 0, time.UTC)
+	r.StartedAt = time.Date(2026, 11, 20, 10, 6, 0, 0, time.UTC)
+	r.FinishedAt = time.Date(2026, 11, 20, 10, 7, 30, 0, time.UTC)
+	r.RescanID = rescan
+	return r
+}
+
+const storePath = "secret/data/projects/1/db.main.password"
+
+// runItems are the outcomes of an apply: the password replaced in a YAML
+// file and in a Java file, the phone number redacted, the password skipped
+// in a file changed since the scan, and a token whose value was not stored.
+func runItems() []apply.Item {
+	return []apply.Item{
+		{
+			BundleID: 101, FindingID: 1001, File: "conf/a.yml", StartLine: 3, Line: 3, Action: apply.ActionReplace, Category: finding.CategoryStorage,
+			Kind: finding.KindPassword, Name: "ext.db.main.password", StorePath: storePath, StoreVersion: 1, Tracked: true, Status: apply.StatusApplied,
+		},
+		{
+			BundleID: 101, FindingID: 1002, File: "src/main/java/shop/Db.java", StartLine: 12, Line: 14, Action: apply.ActionReplace, Category: finding.CategoryStorage,
+			Kind: finding.KindPassword, Name: "ext.db.main.password", StorePath: storePath, StoreVersion: 1, Tracked: true, CodeChange: true, Status: apply.StatusApplied,
+		},
+		{
+			BundleID: 103, FindingID: 1004, File: "logs/x.log", StartLine: 7, Line: 7, Action: apply.ActionRedact, Category: finding.CategoryCustomerData,
+			Kind: finding.KindPhone, Tracked: true, Status: apply.StatusApplied,
+		},
+		{
+			BundleID: 101, FindingID: 1005, File: "conf/b.xml", StartLine: 9, Action: apply.ActionReplace, Category: finding.CategoryStorage,
+			Kind: finding.KindPassword, Name: "ext.db.main.password", Status: apply.StatusSkipped, Reason: apply.ReasonFileChanged,
+		},
+		{
+			BundleID: 102, FindingID: 1006, File: "conf/c.properties", StartLine: 2, Action: apply.ActionReplace, Category: finding.CategoryPartnerSession,
+			Kind: finding.KindToken, Name: "ext.partner.token", Status: apply.StatusFailed, Reason: apply.ReasonStoreFailed,
+		},
+	}
+}
+
+// putRun stores r with items and, when it names one, its confirmation scan
+// sc with the number of reappeared findings.
+func (e *testEnv) putRun(r apply.Run, items []apply.Item, sc *scan.Scan, reappeared int) {
+	e.applies.putRun(r)
+	e.applies.putItems(r.ID, items)
+	if sc != nil {
+		e.scans.put(*sc)
+		e.applies.putReappeared(sc.ID, reappeared)
+	}
+}
+
+// getRun shows the page of run 5 to a signed-in user.
+func (e *testEnv) getRun(t *testing.T) result {
+	t.Helper()
+	res := e.do(t, http.MethodGet, runPagePath, nil, e.user(t))
+	if res.status != http.StatusOK {
+		t.Fatalf("GET %s status = %d, want 200; body:\n%s", runPagePath, res.status, res.body)
+	}
+	return res
+}
+
+func confirmationScan(status scan.Status) *scan.Scan {
+	return &scan.Scan{ID: 8, ProjectID: 1, Status: status, ApplyID: 5, RequestedAt: time.Date(2026, 11, 20, 10, 7, 31, 0, time.UTC)}
+}
+
+func TestApplyRunPage(t *testing.T) {
+	succeededWithFailure := finishedRun(apply.StateSucceeded, 8)
+	failed := finishedRun(apply.StateFailed, 8)
+	failed.FailureReason = apply.FailureSecretStore
+	gaveUp := finishedRun(apply.StateFailed, 0)
+	gaveUp.FailureReason = "worker stopped during the apply three times"
+	unreached := runItems()
+	unreached = append(unreached, apply.Item{
+		BundleID: 104, FindingID: 1007, File: "deploy/run.sh", StartLine: 4, Action: apply.ActionReplace,
+		Category: finding.CategoryStorage, Kind: finding.KindPassword, Name: "EXT_DB_MAIN_PASSWORD", Status: apply.StatusPlanned,
+	})
+	partial := confirmationScan(scan.StatusSucceeded)
+	partial.Skipped = 2
+	notApplied := []apply.Item{runItems()[3]}
+
+	tests := []struct {
+		name       string
+		run        apply.Run
+		items      []apply.Item
+		scan       *scan.Scan
+		reappeared int
+		want       []string
+		wantNot    []string
+	}{
+		{
+			name: "succeeded", run: succeededWithFailure, items: runItems(), scan: confirmationScan(scan.StatusSucceeded),
+			want: []string{
+				`<span class="badge badge-lg badge-succeeded">적용 완료</span>`, "Fake User", "2026-11-20 10:00:00 UTC", "2026-11-20 10:07:30 UTC",
+				`<span class="tile-label">적용</span><span class="tile-figure">3</span>`,
+				`<span class="tile-label">건너뜀</span><span class="tile-figure">1</span>`,
+				`<span class="tile-label">실패</span><span class="tile-figure">1</span>`,
+				`<a href="/scans/8">확인 스캔 #8</a>`, "적용한 값이 모두 사라졌습니다",
+				"ext.db.main.password", storePath, "conf/a.yml", "src/main/java/shop/Db.java", ">14<", "코드 수정 필요",
+				"[REDACTED]로 가림", "logs/x.log",
+				"재스캔 필요", "conf/b.xml:9", "비밀 저장소에 저장하지 못함", "conf/c.properties:2",
+				"실패한 위치 1곳이 있습니다", `href="/projects/1/apply"`,
+			},
+			wantNot: []string{refresh, "처리하지 않음", "git diff", fakePhone, "Sh0p"},
+		},
+		{
+			name: "failed after changing files", run: failed, items: runItems(), scan: confirmationScan(scan.StatusQueued),
+			want: []string{
+				`<span class="badge badge-lg badge-failed">적용 실패</span>`, "비밀 저장소에 연결할 수 없었습니다",
+				"이미 바꾼 파일 3개는 그대로입니다. <code>git diff</code>로 확인하세요. 다음 점검이 기록을 맞춥니다.",
+				`<a href="/scans/8">확인 스캔 #8</a>`, "확인 스캔이 진행 중입니다",
+			},
+			wantNot: []string{"적용한 값이 모두 사라졌습니다", "스캔을 시작해 주세요"},
+		},
+		{
+			name: "given up by the queue", run: gaveUp, items: runItems(),
+			want: []string{
+				"worker가 세 번 멈춰 적용을 포기했습니다", "이미 바꾼 파일 3개는 그대로입니다",
+				"확인 스캔이 요청되지 않았습니다", `<a class="btn btn-primary" href="/projects/1">프로젝트에서 스캔 시작</a>`,
+			},
+		},
+		{
+			name: "failed before changing anything", run: gaveUp, items: notApplied,
+			want:    []string{"소스는 바뀌지 않았습니다"},
+			wantNot: []string{"이미 바꾼 파일", "확인 스캔이 요청되지 않았습니다"},
+		},
+		{
+			name: "places not reached", run: failed, items: unreached, scan: confirmationScan(scan.StatusQueued),
+			want: []string{"처리하지 않음 · 1곳", "deploy/run.sh:4"},
+		},
+		{
+			name: "values found again", run: succeededWithFailure, items: runItems(), scan: confirmationScan(scan.StatusSucceeded), reappeared: 2,
+			want:    []string{"적용한 묶음의 값이 2개 항목에서 다시 발견되었습니다", `href="/projects/1/triage?status=applied"`},
+			wantNot: []string{"적용한 값이 모두 사라졌습니다"},
+		},
+		{
+			name: "confirmation scan skipped files", run: succeededWithFailure, items: runItems(), scan: partial,
+			want: []string{
+				"이 스캔이 검사한 범위에서는 적용한 값이 다시 발견되지 않았습니다. 건너뛴 파일이나 버린 결과가 있습니다.",
+				`href="/scans/8#unchecked"`,
+			},
+			wantNot: []string{"적용한 값이 모두 사라졌습니다"},
+		},
+		{
+			name: "confirmation scan failed", run: succeededWithFailure, items: runItems(), scan: confirmationScan(scan.StatusFailed),
+			want: []string{"확인 스캔이 실패했습니다"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := applyEnv(t)
+			e.putRun(tt.run, tt.items, tt.scan, tt.reappeared)
+			res := e.getRun(t)
+			wantIn(t, "GET "+runPagePath, res.body, tt.want...)
+			wantNotIn(t, "GET "+runPagePath, res.body, tt.wantNot...)
+		})
+	}
+}
+
+func TestApplyRunPage_Refresh(t *testing.T) {
+	for _, tt := range []struct {
+		state    apply.State
+		status   int
+		location string
+		refresh  bool
+	}{
+		{apply.StateQueued, http.StatusOK, "", true},
+		{apply.StateRunning, http.StatusOK, "", true},
+		{apply.StateSucceeded, http.StatusOK, "", false},
+		{apply.StateFailed, http.StatusOK, "", false},
+		{apply.StateChecking, http.StatusSeeOther, applyPagePath, false},
+		{apply.StateReady, http.StatusSeeOther, applyPagePath, false},
+		{apply.StateBlocked, http.StatusSeeOther, applyPagePath, false},
+		{apply.StateSuperseded, http.StatusSeeOther, applyPagePath, false},
+	} {
+		t.Run(string(tt.state), func(t *testing.T) {
+			e := applyEnv(t)
+			e.putRun(*run(tt.state), nil, nil, 0)
+			res := e.do(t, http.MethodGet, runPagePath, nil, e.user(t))
+			if res.status != tt.status || res.location() != tt.location {
+				t.Fatalf("GET %s of a %s run = %d to %q, want %d to %q", runPagePath, tt.state, res.status, res.location(), tt.status, tt.location)
+			}
+			if got := strings.Contains(res.body, refresh); got != tt.refresh {
+				t.Errorf("GET %s of a %s run has the refresh tag = %v, want %v", runPagePath, tt.state, got, tt.refresh)
+			}
+		})
+	}
+	t.Run("unknown", func(t *testing.T) {
+		e := applyEnv(t)
+		e.putRun(*run(apply.StateSucceeded), nil, nil, 0)
+		other := *run(apply.StateSucceeded)
+		other.ID, other.ProjectID = 6, 9
+		e.putRun(other, nil, nil, 0)
+		for _, target := range []string{"/applies/99", "/applies/abc", "/applies/0", "/applies/6"} {
+			if res := e.do(t, http.MethodGet, target, nil, e.user(t)); res.status != http.StatusNotFound {
+				t.Errorf("GET %s status = %d, want 404", target, res.status)
+			}
+		}
+	})
+	t.Run("signed out", func(t *testing.T) {
+		e := applyEnv(t)
+		e.putRun(*run(apply.StateSucceeded), nil, nil, 0)
+		if res := e.do(t, http.MethodGet, runPagePath, nil); res.status != http.StatusSeeOther || !strings.HasPrefix(res.location(), "/login") {
+			t.Errorf("GET %s signed out = %d to %q, want 303 to the login", runPagePath, res.status, res.location())
+		}
+	})
+}
+
+func TestProjectPage_Apply(t *testing.T) {
+	const scanButton = `<button class="btn btn-secondary btn-lg" type="submit">스캔 시작</button>`
+	done := finishedRun(apply.StateSucceeded, 8)
+	done.Applied, done.Skipped, done.Failed = 3, 1, 1
+	check := *run(apply.StateReady)
+	check.ID = 6
+
+	t.Run("after an apply", func(t *testing.T) {
+		e := applyEnv(t)
+		e.putRun(done, nil, nil, 0)
+		e.putRun(check, nil, nil, 0)
+		res := e.do(t, http.MethodGet, "/projects/1", nil, e.user(t))
+		if res.status != http.StatusOK {
+			t.Fatalf("GET /projects/1 status = %d, want 200", res.status)
+		}
+		wantIn(t, "GET /projects/1", res.body,
+			`<a class="btn btn-secondary btn-lg" href="/projects/1/apply">적용</a>`, scanButton,
+			"적용 기록", `<a class="row-link" href="/applies/5">#5</a>`, "2026-11-20 10:05:00 UTC", "Fake User",
+			`<span class="badge badge-succeeded">적용 완료</span>`, "적용 3 · 건너뜀 1 · 실패 1",
+		)
+		wantNotIn(t, "GET /projects/1", res.body, `href="/applies/6"`, "스캔을 시작할 수 없습니다")
+	})
+	t.Run("while applying", func(t *testing.T) {
+		e := applyEnv(t)
+		running := *run(apply.StateRunning)
+		running.ConfirmedAt = time.Date(2026, 11, 20, 10, 5, 0, 0, time.UTC)
+		e.putRun(running, nil, nil, 0)
+		res := e.do(t, http.MethodGet, "/projects/1", nil, e.user(t))
+		wantIn(t, "GET /projects/1", res.body,
+			`<button class="btn btn-secondary btn-lg" type="button" disabled>스캔 시작</button>`,
+			`<a href="/applies/5">적용 #5</a>이 적용 중이라 스캔을 시작할 수 없습니다`,
+			`<span class="badge badge-running">적용 중</span>`, "끝나면 보입니다",
+		)
+		wantNotIn(t, "GET /projects/1", res.body, scanButton)
+	})
+	t.Run("while checking", func(t *testing.T) {
+		e := applyEnv(t)
+		e.putRun(*run(apply.StateChecking), nil, nil, 0)
+		res := e.do(t, http.MethodGet, "/projects/1", nil, e.user(t))
+		wantIn(t, "GET /projects/1", res.body, `<a href="/projects/1/apply">조건 점검</a>이 진행 중이라 스캔을 시작할 수 없습니다`)
+		wantNotIn(t, "GET /projects/1", res.body, scanButton, "적용 기록")
+	})
+}

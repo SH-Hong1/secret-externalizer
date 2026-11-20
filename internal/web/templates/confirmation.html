@@ -1,0 +1,15 @@
+{{/* The outcome of the scan that confirms an apply, shared by the page of
+the run and the page of the scan. */}}
+{{define "confirmation"}}{{if eq .Kind "active"}}<p class="notice-soft">확인 스캔이 진행 중입니다. 끝나면 적용한 값이 소스에서 사라졌는지 여기에 보입니다.</p>
+{{else if eq .Kind "failed"}}<p class="failure">확인 스캔이 실패했습니다. 프로젝트에서 다시 스캔해야 적용한 값이 사라졌는지 알 수 있습니다.</p>
+{{else if eq .Kind "gone"}}<p class="notice-ok">적용한 값이 모두 사라졌습니다. 확인 스캔이 모든 파일을 검사했고 적용한 묶음의 값을 다시 찾지 못했습니다.</p>
+{{else if eq .Kind "partial"}}<div class="notice-warn flex flex-col gap-2.5">
+<p>이 스캔이 검사한 범위에서는 적용한 값이 다시 발견되지 않았습니다. 건너뛴 파일이나 버린 결과가 있습니다.</p>
+<p><a href="{{.UncheckedHref}}">검사하지 못한 것 보기</a></p>
+</div>
+{{else}}<div class="notice-warn flex flex-col gap-2.5">
+<p><strong>적용한 묶음의 값이 {{.Reappeared}}개 항목에서 다시 발견되었습니다.</strong></p>
+<p>적용한 위치에서 다시 나왔거나, 적용이 건너뛴 위치나 적용 뒤에 찾은 위치에 남아 있는 값입니다. 판정은 그대로이므로 다시 점검하고 적용하면 같은 이름으로 바꿉니다.</p>
+<p><a href="{{.AppliedHref}}">적용됨 탭에서 보기</a></p>
+</div>
+{{end}}{{end}}

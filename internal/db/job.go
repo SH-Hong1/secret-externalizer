@@ -15,11 +15,15 @@ import (
 // maxJobAttempts is how many times a job is handed out before it is given up.
 const maxJobAttempts = 3
 
-// The failure reasons of a scan or apply run whose job ran out of attempts.
+// gaveUpReason is the failure reason of a scan whose job ran out of
+// attempts.
+const gaveUpReason = "worker stopped during the scan three times"
+
+// The failure reasons of an apply run whose apply or check job ran out of
+// attempts. The pages name them.
 const (
-	gaveUpReason      = "worker stopped during the scan three times"
-	applyGaveUpReason = "worker stopped during the apply three times"
-	checkGaveUpReason = "worker stopped during the check three times"
+	ApplyGaveUpReason = "worker stopped during the apply three times"
+	CheckGaveUpReason = "worker stopped during the check three times"
 )
 
 // ClaimJob hands one job to the worker and leases it for lease. The lease
@@ -54,7 +58,7 @@ func (s *Store) ClaimJob(ctx context.Context, workerID string, lease time.Durati
 		WHERE r.id = g.apply_id
 			AND ((g.kind = 'apply' AND r.state IN ('queued', 'running'))
 				OR (g.kind = 'apply-check' AND r.state = 'checking'))`,
-		maxJobAttempts, gaveUpReason, applyGaveUpReason, checkGaveUpReason); err != nil {
+		maxJobAttempts, gaveUpReason, ApplyGaveUpReason, CheckGaveUpReason); err != nil {
 		return job.Job{}, fmt.Errorf("failing exhausted jobs: %w", err)
 	}
 

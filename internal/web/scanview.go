@@ -35,7 +35,8 @@ func categoryOrder() []finding.Category {
 // the project's latest succeeded scan when it is newer than this one.
 // SkippedMore counts the skipped files and folders whose path is not listed,
 // SkippedCapped tells whether the list stopped at scan.MaxSkippedFiles, and
-// Unchecked whether the scan left anything unchecked at all.
+// Unchecked whether the scan left anything unchecked at all. Confirmation
+// is set for a scan that confirms an apply.
 type scanPage struct {
 	User          auth.User
 	ProjectName   string
@@ -56,6 +57,7 @@ type scanPage struct {
 	Triage        string
 	Undecided     int
 	LaterScan     scan.ID
+	Confirmation  *confirmationView
 }
 
 type toolVersion struct {
@@ -179,7 +181,7 @@ func newScanPage(sc scan.Scan) scanPage {
 		SkippedCapped: len(sc.SkippedFiles) >= scan.MaxSkippedFiles,
 		ScannerErrors: scannerErrors(sc.ScannerErrors),
 	}
-	p.Unchecked = sc.Skipped > 0 || sc.Dropped > 0 || len(p.ScannerErrors) > 0
+	p.Unchecked = leftUnchecked(sc)
 	return p
 }
 

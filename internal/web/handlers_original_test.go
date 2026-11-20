@@ -381,3 +381,30 @@ func TestAuditPages(t *testing.T) {
 		t.Errorf("GET /audit with the store down status = %d, want 500", res.status)
 	}
 }
+
+func TestAuditPage_Apply(t *testing.T) {
+	e := newTestEnv(t)
+	e.audits.events = []audit.Event{
+		{
+			ID: 50, At: time.Date(2026, 11, 20, 10, 5, 0, 0, time.UTC), Actor: fakeActor, Action: audit.ActionApply, ProjectID: 1, ProjectName: "shop",
+			Detail: map[string]string{audit.DetailApply: "5", audit.DetailIrreversible: "yes"},
+		},
+		{
+			ID: 49, At: time.Date(2026, 11, 20, 9, 5, 0, 0, time.UTC), Actor: fakeActor, Action: audit.ActionApply, ProjectID: 1, ProjectName: "shop",
+			Detail: map[string]string{audit.DetailApply: "4", audit.DetailIrreversible: "no"},
+		},
+		{
+			ID: 48, At: time.Date(2026, 11, 20, 8, 5, 0, 0, time.UTC), Actor: fakeActor, Action: audit.ActionApply, ProjectID: 1, ProjectName: "shop",
+			Detail: map[string]string{audit.DetailApply: "<b>x</b>"},
+		},
+	}
+	res := e.do(t, http.MethodGet, "/audit", nil, e.admin(t))
+	rows := strings.Split(section(res.body, "tbody", "audit-rows"), "<tr")
+	if len(rows) != 4 {
+		t.Fatalf("GET /audit shows %d rows, want 3; body:\n%s", len(rows)-1, res.body)
+	}
+	wantIn(t, "consented apply row", rows[1], `<span class="badge badge-queued">적용</span>`, `<a href="/applies/5">적용 #5</a>`, "복구 불가 동의함")
+	wantIn(t, "apply row", rows[2], `<a href="/applies/4">적용 #4</a>`, "복구 불가 동의 안 함")
+	wantNotIn(t, "apply row with a bad run", rows[3], "<b>x</b>", "/applies/")
+	wantNotIn(t, "audit page", res.body, "적용 요청")
+}

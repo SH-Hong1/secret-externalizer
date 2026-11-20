@@ -1,0 +1,99 @@
+{{define "title"}}적용 #{{.Run.ID}} · {{.Project.Name}}{{end}}
+{{define "section"}}projects{{end}}
+{{define "head"}}{{if .Active}}<meta http-equiv="refresh" content="3">
+{{end}}{{end}}
+{{define "place-groups"}}{{range .}}<details class="skips">
+<summary>{{.Label}}{{with .Code}} <span class="mono">{{.}}</span>{{end}} · {{len .Items}}곳</summary>
+<div class="skips-body">
+{{with .Action}}<p class="text-2">{{.}}</p>
+{{end}}<ul class="skips-list">
+{{range .Items}}<li>{{.File}}:{{.Line}} · {{.Kind}}{{with .Name}} · {{.}}{{end}}</li>
+{{end}}</ul>
+</div>
+</details>
+{{end}}{{end}}
+{{define "body"}}<main class="page">
+<div>
+<nav class="crumbs" aria-label="위치"><a href="/projects">프로젝트</a> / <a href="{{.ProjectHref}}">{{.Project.Name}}</a> / <a href="{{.ApplyHref}}">적용</a> /</nav>
+<div class="page-head">
+<h1 class="page-title">적용 #{{.Run.ID}}</h1>
+<span class="badge badge-lg badge-{{.State.Class}}">{{.State.Label}}</span>
+<span class="grow"></span>
+{{if not .Active}}<a class="btn btn-secondary btn-lg" href="{{.ApplyHref}}">적용 확인 화면</a>
+{{end}}</div>
+</div>
+{{if .Active}}<div class="card card-pad flex flex-col gap-2.5">
+{{if eq .Run.State "running"}}<div class="progress" role="progressbar" aria-label="적용 중"></div>
+{{end}}<p class="text-2">{{.Run.Requester.Name}} · <span class="mono">{{.RequestedAt}}</span>에 요청{{with .ConfirmedAt}}, <span class="mono">{{.}}</span>에 적용 확인{{end}}. {{if eq .Run.State "queued"}}worker가 가져가기를 기다립니다.{{else}}worker가 값을 비밀 저장소로 옮기고 파일을 바꾸고 있습니다. 파일 사이에서만 멈추므로 중간에 멈춰도 값은 사라지지 않습니다.{{end}} 이 화면은 3초마다 새로 고쳐집니다.</p>
+</div>
+{{else}}{{with .Failure}}<div class="card card-pad card-failed flex flex-col gap-2.5">
+<p class="failure"><strong>실패 사유</strong> {{.Label}}{{with .Code}} <span class="mono text-sm">{{.}}</span>{{end}}</p>
+{{with .Action}}<p class="text-2">{{.}}</p>
+{{end}}{{if $.Changed}}<p>이미 바꾼 파일 {{$.Changed}}개는 그대로입니다. <code>git diff</code>로 확인하세요. 다음 점검이 기록을 맞춥니다.</p>
+{{else}}<p class="text-2">소스는 바뀌지 않았습니다.</p>
+{{end}}{{if $.NeedScan}}<p>확인 스캔이 요청되지 않았습니다. 바뀐 소스를 다시 스캔해야 판정 화면이 지금 상태를 보여 줍니다. 스캔을 시작해 주세요.</p>
+<div><a class="btn btn-primary" href="{{$.ProjectHref}}">프로젝트에서 스캔 시작</a></div>
+{{end}}</div>
+{{end}}{{end}}<dl class="facts">
+<div><dt>요청</dt><dd>{{.Run.Requester.Name}} · <span class="mono">{{.RequestedAt}}</span></dd></div>
+<div><dt>적용 확인</dt><dd>{{if .ConfirmedAt}}<span class="mono">{{.ConfirmedAt}}</span>{{else}}<span class="muted">—</span>{{end}}</dd></div>
+<div><dt>시작</dt><dd>{{if .StartedAt}}<span class="mono">{{.StartedAt}}</span>{{else}}<span class="muted">—</span>{{end}}</dd></div>
+<div><dt>끝난 시각</dt><dd>{{if .FinishedAt}}<span class="mono">{{.FinishedAt}}</span>{{else}}<span class="muted">—</span>{{end}}</dd></div>
+<div><dt>기준 스캔</dt><dd><a href="/scans/{{.Run.ScanID}}">#{{.Run.ScanID}}</a></dd></div>
+{{with .Irreversible}}<div><dt>복구 불가 동의</dt><dd>{{.}}</dd></div>
+{{end}}</dl>
+{{if not .Active}}<section class="tiles" aria-label="결과">
+<div class="tile tile-applied"><span class="tile-label">적용</span><span class="tile-figure">{{.Applied}}</span></div>
+<div class="tile tile-skipped"><span class="tile-label">건너뜀</span><span class="tile-figure">{{.Skipped}}</span></div>
+<div class="tile tile-failed{{if .Failed}} tile-alert{{end}}"><span class="tile-label">실패</span><span class="tile-figure">{{.Failed}}</span></div>
+</section>
+{{if and (eq .Run.State "succeeded") .Failed}}<p class="notice-warn"><strong>실패한 위치 {{.Failed}}곳이 있습니다.</strong> 그 값은 소스에 그대로 남아 있습니다. 아래 "실패한 위치"의 사유를 확인하고 다시 점검해 적용해 주세요.</p>
+{{end}}<section class="flex flex-col gap-2.5">
+<h2 class="section-title mb-0">확인 스캔</h2>
+{{with .Rescan}}<p><a href="{{.ScanHref}}">확인 스캔 #{{.ScanID}}</a></p>
+{{template "confirmation" .}}{{else}}{{if not .Changed}}<p class="notice-soft">바꾼 파일이 없어 확인 스캔을 하지 않았습니다.</p>
+{{else if not .NeedScan}}<p class="notice-soft">확인 스캔이 없습니다. 프로젝트에서 스캔을 시작하면 바뀐 소스를 다시 검사합니다.</p>
+{{end}}{{end}}</section>
+{{with .Bundles}}<section class="flex flex-col gap-2.5">
+<h2 class="section-title mb-0">적용한 위치 {{$.Applied}}곳</h2>
+{{range .}}<div class="card run-bundle">
+<div class="run-bundle-head">
+{{if .Names}}<span class="mono run-bundle-name">{{range $i, $n := .Names}}{{if $i}} · {{end}}{{$n}}{{end}}</span>{{end}}
+<span class="text-2">{{.KindLabel}} · {{.Action}}</span>
+{{with .StorePath}}<span class="run-bundle-store"><span class="muted">저장 경로</span> <span class="mono">{{.}}</span></span>
+{{end}}</div>
+<div class="table-wrap run-bundle-table">
+<table class="table">
+<thead><tr><th>파일</th><th class="num">적용 뒤의 줄</th><th>결과</th></tr></thead>
+<tbody>
+{{range .Places}}<tr><td class="mono">{{.File}}</td><td class="num">{{if .Line}}{{.Line}}{{else}}<span class="muted">파일 지움</span>{{end}}</td><td><span class="badge badge-succeeded">적용</span>{{if .CodeChange}} <span class="badge badge-hold">코드 수정 필요</span>{{end}}</td></tr>
+{{end}}</tbody>
+</table>
+</div>
+</div>
+{{end}}{{if $.CodeChanges}}<p class="muted">코드 수정 필요: Java 소스의 값을 placeholder 이름으로 바꿨습니다. 이 값을 비밀 저장소나 설정에서 읽도록 코드를 고쳐야 빌드한 프로그램이 동작합니다.</p>
+{{end}}</section>
+{{end}}{{with .Skips}}<section class="flex flex-col gap-2.5">
+<h2 class="section-title mb-0">건너뛴 위치 {{$.Skipped}}곳</h2>
+{{template "place-groups" .}}</section>
+{{end}}{{with .Failures}}<section class="flex flex-col gap-2.5">
+<h2 class="section-title mb-0">실패한 위치 {{$.Failed}}곳</h2>
+<p class="text-2">값을 소스에서 지우지 않았습니다. 사유를 확인한 뒤 다시 점검하고 적용하면 이어서 바꿉니다.</p>
+{{template "place-groups" .}}</section>
+{{end}}{{with .Writing}}<section class="flex flex-col gap-2.5">
+<h2 class="section-title mb-0">바꾸던 중에 멈춘 위치 {{len .}}곳</h2>
+<p class="text-2">파일을 바꾸는 중에 실행이 멈췄습니다. 다음 점검이 디스크를 보고 바뀌었는지 맞춥니다.</p>
+<ul class="skips-list">
+{{range .}}<li>{{.File}}:{{.Line}} · {{.Kind}}{{with .Name}} · {{.}}{{end}}</li>
+{{end}}</ul>
+</section>
+{{end}}{{with .Untouched}}<details class="skips">
+<summary>처리하지 않음 · {{len .}}곳</summary>
+<div class="skips-body">
+<p class="text-2">실행이 멈춰 이 위치에는 닿지 못했습니다. 소스는 그대로입니다. 다시 점검하고 적용하면 바꿉니다.</p>
+<ul class="skips-list">
+{{range .}}<li>{{.File}}:{{.Line}} · {{.Kind}}{{with .Name}} · {{.}}{{end}}</li>
+{{end}}</ul>
+</div>
+</details>
+{{end}}{{end}}</main>{{end}}

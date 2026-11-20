@@ -3,7 +3,7 @@
 {{define "body"}}<main class="page">
 <div>
 <h1 class="page-title">감사 로그</h1>
-<p class="lede">판정, 묶음 옮기기, 원본 보기가 최신순으로 남습니다. 값은 기록하지 않습니다.</p>
+<p class="lede">판정, 묶음 옮기기, 원본 보기, 적용이 최신순으로 남습니다. 값은 기록하지 않습니다.</p>
 </div>
 {{if .Rows}}<div class="table-wrap">
 <table class="table min-w-[860px]">
@@ -14,7 +14,7 @@
 <td>{{.User}}</td>
 <td><span class="badge badge-{{.ActionClass}}">{{.ActionLabel}}</span></td>
 <td><a href="{{.ProjectHref}}">{{.ProjectName}}</a></td>
-<td>{{if .Move}}{{.Finding}} · {{.Bundle}} → {{.To}}{{else}}{{.Bundle}}{{with .Kind}} · {{.}}{{end}}{{with .File}} · <span class="mono">{{.}}</span>{{end}}{{with .Name}} · 이름 <span class="mono">{{.}}</span>{{end}}{{with .Reason}} · {{.}}{{end}}{{with .Note}} · 메모 "{{.}}"{{end}}{{end}}</td>
+<td>{{if .RunHref}}<a href="{{.RunHref}}">{{.Run}}</a>{{with .Consent}} · {{.}}{{end}}{{else if .Consent}}{{.Consent}}{{else if .Move}}{{.Finding}} · {{.Bundle}} → {{.To}}{{else}}{{.Bundle}}{{with .Kind}} · {{.}}{{end}}{{with .File}} · <span class="mono">{{.}}</span>{{end}}{{with .Name}} · 이름 <span class="mono">{{.}}</span>{{end}}{{with .Reason}} · {{.}}{{end}}{{with .Note}} · 메모 "{{.}}"{{end}}{{end}}</td>
 </tr>
 {{end}}</tbody>
 </table>

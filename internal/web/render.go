@@ -58,10 +58,14 @@ func newRenderer(a *assets) *renderer {
 
 // partialsOf returns the template files that the page name uses besides the
 // layout. The triage screen draws the slot of the original value, which the
-// reveal also renders on its own from original.html.
+// reveal also renders on its own from original.html. The pages of a scan
+// and of an apply run both tell what a confirmation scan found.
 func partialsOf(name string) []string {
-	if name == "triage.html" {
+	switch name {
+	case "triage.html":
 		return []string{"templates/original.html"}
+	case "scan.html", "apply_run.html":
+		return []string{"templates/confirmation.html"}
 	}
 	return nil
 }

@@ -6,14 +6,17 @@
 <div class="page-head">
 <h1 class="page-title">{{.Project.Name}}</h1>
 <span class="mono text-2 grow">{{.Project.Path}}</span>
-<form method="post" action="/projects/{{.Project.ID}}/scans">
+{{if .ActiveApply}}<button class="btn btn-secondary btn-lg" type="button" disabled>스캔 시작</button>
+{{else}}<form method="post" action="/projects/{{.Project.ID}}/scans">
 <button class="btn btn-secondary btn-lg" type="submit">스캔 시작</button>
 </form>
+{{end}}<a class="btn btn-secondary btn-lg" href="{{.ApplyHref}}">적용</a>
 {{with .Tiles}}<a class="btn btn-primary btn-lg" href="{{$.Triage}}">판정하기 · 미판정 {{(index . 0).N}}</a>
 {{end}}</div>
 <p class="lede mt-1.5">제외 경로: {{if .Project.Excludes}}{{range $i, $e := .Project.Excludes}}{{if $i}}, {{end}}<span class="mono text-2">{{$e}}</span>{{end}}{{else}}없음{{end}}</p>
 </div>
-{{with .Tiles}}<section class="tiles" aria-label="판정 현황">
+{{with .ActiveApply}}<p class="notice-soft"><a href="{{.Href}}">{{.Label}}</a>이 {{.State}}이라 스캔을 시작할 수 없습니다. 끝나면 스캔할 수 있습니다.</p>
+{{end}}{{with .Tiles}}<section class="tiles" aria-label="판정 현황">
 {{range .}}<a class="tile tile-{{.Class}}" href="{{.Href}}"><span class="tile-label">{{.Label}}</span><span class="tile-figure">{{.N}}</span></a>
 {{end}}</section>
 {{end}}<section>
@@ -34,4 +37,20 @@
 </div>
 {{else}}<p class="notice">스캔한 적이 없습니다. 스캔 시작을 누르면 이 프로젝트의 파일을 검사합니다.</p>
 {{end}}</section>
-</main>{{end}}
+{{with .Applies}}<section>
+<h2 class="section-title">적용 기록</h2>
+<div class="table-wrap">
+<table class="table min-w-[680px]">
+<thead><tr><th>번호</th><th>적용 확인</th><th>상태</th><th>위치</th></tr></thead>
+<tbody>
+{{range .}}<tr>
+<td><a class="row-link" href="{{.Href}}">#{{.ID}}</a></td>
+<td><span class="mono">{{.ConfirmedAt}}</span> · <span class="text-2">{{.Requester}}</span></td>
+<td><span class="badge badge-{{.State.Class}}">{{.State.Label}}</span></td>
+<td>{{if .Counts}}{{.Counts}}{{else}}<span class="muted">끝나면 보입니다</span>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</div>
+</section>
+{{end}}</main>{{end}}

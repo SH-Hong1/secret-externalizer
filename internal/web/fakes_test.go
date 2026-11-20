@@ -422,6 +422,10 @@ func (b *blockingStore) MoveFinding(ctx context.Context, _ project.ID, _ finding
 	return 0, b.wait(ctx)
 }
 
+func (b *blockingStore) AppliedBundles(ctx context.Context, _ project.ID, _ int) (triage.AppliedPage, error) {
+	return triage.AppliedPage{}, b.wait(ctx)
+}
+
 func (b *blockingStore) SameValueBundles(ctx context.Context, _ project.ID, _ scan.ID, _ triage.BundleID) ([]triage.Entry, error) {
 	return nil, b.wait(ctx)
 }
@@ -459,6 +463,7 @@ type fakeTriage struct {
 	same    map[triage.BundleID][]triage.Entry
 	decides []decideCall
 	moves   []moveCall
+	applied map[project.ID][]triage.Applied
 }
 
 // decideCall is the arguments of one Decide call.
@@ -486,7 +491,26 @@ func newFakeTriage() *fakeTriage {
 		groups:  make(map[triage.GroupKey]triage.Group),
 		past:    make(map[string]triage.Decision),
 		same:    make(map[triage.BundleID][]triage.Entry),
+		applied: make(map[project.ID][]triage.Applied),
 	}
+}
+
+// putApplied stores the applied bundles of project id, newest first.
+func (f *fakeTriage) putApplied(id project.ID, applied ...triage.Applied) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.applied[id] = applied
+}
+
+func (f *fakeTriage) AppliedBundles(_ context.Context, projectID project.ID, page int) (triage.AppliedPage, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	all := f.applied[projectID]
+	p := triage.AppliedPage{Total: len(all), Pages: max(1, (len(all)+triage.AppliedPageSize-1)/triage.AppliedPageSize)}
+	p.Page = min(max(page, 1), p.Pages)
+	start := (p.Page - 1) * triage.AppliedPageSize
+	p.Entries = slices.Clone(all[start:min(start+triage.AppliedPageSize, len(all))])
+	return p, nil
 }
 
 func (f *fakeTriage) LatestScan(_ context.Context, projectID project.ID) (scan.Scan, error) {
@@ -661,6 +685,13 @@ func (f *fakeTriage) PastDecision(_ context.Context, fingerprint string, _ triag
 	defer f.mu.Unlock()
 	d, ok := f.past[fingerprint]
 	return d, ok, nil
+}
+
+// stored returns the stored bundle id.
+func (f *fakeTriage) stored(id triage.BundleID) triage.Bundle {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.bundles[id]
 }
 
 // putBundle stores b, so Bundle returns it.
@@ -868,12 +899,13 @@ type fakeApplies struct {
 	requestErr error
 	confirmErr error
 
-	mu        sync.Mutex
-	summaries map[project.ID]apply.Summary
-	runs      map[apply.ID]apply.Run
-	items     map[apply.ID][]apply.Item
-	checks    []checkCall
-	confirms  []confirmCall
+	mu         sync.Mutex
+	summaries  map[project.ID]apply.Summary
+	runs       map[apply.ID]apply.Run
+	items      map[apply.ID][]apply.Item
+	reappeared map[scan.ID]int
+	checks     []checkCall
+	confirms   []confirmCall
 }
 
 type checkCall struct {
@@ -890,10 +922,25 @@ type confirmCall struct {
 
 func newFakeApplies() *fakeApplies {
 	return &fakeApplies{
-		summaries: make(map[project.ID]apply.Summary),
-		runs:      make(map[apply.ID]apply.Run),
-		items:     make(map[apply.ID][]apply.Item),
+		summaries:  make(map[project.ID]apply.Summary),
+		runs:       make(map[apply.ID]apply.Run),
+		items:      make(map[apply.ID][]apply.Item),
+		reappeared: make(map[scan.ID]int),
 	}
+}
+
+// putItems stores the items of run id.
+func (f *fakeApplies) putItems(id apply.ID, items []apply.Item) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.items[id] = items
+}
+
+// putReappeared sets what Reappeared returns for scan id.
+func (f *fakeApplies) putReappeared(id scan.ID, n int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reappeared[id] = n
 }
 
 // put stores the summary of project 1, the project of the apply tests. When
@@ -976,7 +1023,11 @@ func (f *fakeApplies) ApplyItems(_ context.Context, id apply.ID) ([]apply.Item, 
 	return f.items[id], nil
 }
 
-func (f *fakeApplies) Reappeared(context.Context, scan.ID) (int, error) { return 0, nil }
+func (f *fakeApplies) Reappeared(_ context.Context, id scan.ID) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reappeared[id], nil
+}
 
 func (f *fakeApplies) checkCalls() []checkCall {
 	f.mu.Lock()

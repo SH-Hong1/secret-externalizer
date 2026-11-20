@@ -216,6 +216,9 @@ type GroupKey struct {
 // Bundles equal to one. Customer data is listed by group: Bundle is zero,
 // Group is set, and Bundles counts the bundles in the group. File is the
 // first file of the line and Count the number of locations in the scan.
+// Shell reports that every member the scan found is in a ShellFile, so the
+// name takes its shell form there. Applied reports that an apply stored the
+// bundle's value and changed the source for it.
 type Entry struct {
 	Bundle    BundleID
 	Group     GroupKey
@@ -228,6 +231,47 @@ type Entry struct {
 	Count     int
 	Bundles   int
 	Verdict   Verdict
+	Shell     bool
+	Applied   bool
+}
+
+// AppliedPageSize is the number of lines on one page of the table of
+// applied bundles.
+const AppliedPageSize = 50
+
+// Applied is one line of the table of a project's applied bundles. Category,
+// Kind and Preview are those of the bundle's member with the lowest ID.
+// Locations counts the places applies changed for the bundle, and Shell and
+// Config tell whether the name went into a ShellFile and into any other
+// file. CodeChange reports that a changed place is in a file whose code has
+// to read the value from the secret store. LastRun is the ID of the newest
+// apply run that changed a place of the bundle. Reappeared reports that the
+// project's latest succeeded scan, requested after that run started, still
+// finds the bundle's value.
+type Applied struct {
+	Bundle     BundleID
+	Name       Name
+	Category   finding.Category
+	Kind       finding.Kind
+	Preview    string
+	StorePath  string
+	AppliedAt  time.Time
+	Locations  int
+	Shell      bool
+	Config     bool
+	CodeChange bool
+	LastRun    int64
+	Reappeared bool
+}
+
+// AppliedPage is one page of the table of applied bundles, newest first.
+// Total is the number of applied bundles and Pages the number of pages they
+// fill.
+type AppliedPage struct {
+	Entries []Applied
+	Total   int
+	Page    int
+	Pages   int
 }
 
 // Page is one page of the triage list. Total is the number of entries that

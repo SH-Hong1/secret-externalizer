@@ -1122,3 +1122,79 @@ func TestReappeared(t *testing.T) {
 		t.Errorf("Reappeared(%d) = %d, %v, want 0", clean, n, err)
 	}
 }
+
+func TestAppliedBundles(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, _, pw, _ := decidedProject(t, s, "shop")
+	if p, err := s.AppliedBundles(ctx, pid, 1); err != nil || p.Total != 0 || p.Page != 1 || p.Pages != 1 || len(p.Entries) != 0 {
+		t.Fatalf("AppliedBundles(%d, 1) before an apply = %+v, %v, want an empty first page", pid, p, err)
+	}
+	id, j := claimApply(t, s, pid)
+	java := replaceItem(t, s, pid, pw, "conf/a.yml")
+	java.CodeChange = true
+	writeFile(t, s, id, "conf/a.yml", hashOf("1"), java)
+	writeFile(t, s, id, "conf/b.xml", hashOf("2"), replaceItem(t, s, pid, pw, "conf/b.xml"))
+	if err := s.FinishApply(ctx, j.ID, "worker-a", id, nil); err != nil {
+		t.Fatalf("FinishApply(%d) error = %v", id, err)
+	}
+
+	got, err := s.AppliedBundles(ctx, pid, 9)
+	if err != nil {
+		t.Fatalf("AppliedBundles(%d, 9) error = %v", pid, err)
+	}
+	if got.Total != 1 || got.Page != 1 || got.Pages != 1 || len(got.Entries) != 1 {
+		t.Fatalf("AppliedBundles(%d, 9) = %+v, want the one applied bundle on page 1", pid, got)
+	}
+	a := got.Entries[0]
+	if a.AppliedAt.IsZero() {
+		t.Errorf("AppliedBundles(%d)[0].AppliedAt is zero, want the apply time", pid)
+	}
+	a.AppliedAt = time.Time{}
+	want := triage.Applied{
+		Bundle: pw, Name: "db.main.password", Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "****",
+		StorePath: java.StorePath, Locations: 2, Config: true, CodeChange: true, LastRun: int64(id),
+	}
+	if diff := cmp.Diff(want, a); diff != "" {
+		t.Errorf("AppliedBundles(%d)[0] before the confirmation scan (-want +got):\n%s", pid, diff)
+	}
+
+	// The confirmation scan finds the password again in b.xml.
+	rescan := assertRescan(t, s, pid, id)
+	if err := s.SaveResult(ctx, claimRescan(t, s, rescan).ID, "worker-a", rescan, result(password("conf/b.xml"))); err != nil {
+		t.Fatalf("SaveResult(scan %d) error = %v", rescan, err)
+	}
+	if got, err := s.AppliedBundles(ctx, pid, 1); err != nil || len(got.Entries) != 1 || !got.Entries[0].Reappeared {
+		t.Errorf("AppliedBundles(%d, 1) after the value reappeared = %+v, %v, want it reappeared", pid, got, err)
+	}
+	page, err := s.Entries(ctx, pid, rescan, triage.Filter{Status: triage.StatusAll, Page: 1})
+	if err != nil {
+		t.Fatalf("Entries(%d) error = %v", rescan, err)
+	}
+	if len(page.Entries) != 1 || !page.Entries[0].Applied || page.Entries[0].Shell {
+		t.Errorf("Entries(%d) = %+v, want the applied bundle, not in a shell script", rescan, page.Entries)
+	}
+
+	clean := save(t, s, pid, host("conf/a.yml"))
+	if got, err := s.AppliedBundles(ctx, pid, 1); err != nil || len(got.Entries) != 1 || got.Entries[0].Reappeared {
+		t.Errorf("AppliedBundles(%d, 1) after scan %d = %+v, %v, want it gone", pid, clean, got, err)
+	}
+}
+
+func TestEntries_Shell(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	sid := save(t, s, pid, password("bin/run.sh"), password("deploy/start.SH"), host("bin/run.sh"), host("conf/a.yml"))
+	page, err := s.Entries(t.Context(), pid, sid, triage.Filter{Status: triage.StatusAll, Page: 1})
+	if err != nil {
+		t.Fatalf("Entries(%d) error = %v", sid, err)
+	}
+	shell := map[string]bool{}
+	for _, e := range page.Entries {
+		shell[string(e.Kind)+" "+e.File] = e.Shell
+	}
+	want := map[string]bool{"password bin/run.sh": true, "host bin/run.sh": true, "host conf/a.yml": false}
+	if diff := cmp.Diff(want, shell); diff != "" {
+		t.Errorf("Entries(%d) shell by line (-want +got):\n%s", sid, diff)
+	}
+}

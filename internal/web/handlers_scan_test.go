@@ -491,3 +491,80 @@ func TestScan_ProjectFailure(t *testing.T) {
 		t.Errorf("GET /scans/4 with a failing project read status = %d, want 500", res.status)
 	}
 }
+
+func TestScanCreate_WhileApplying(t *testing.T) {
+	e := newTestEnv(t)
+	pid := e.newProject(t)
+	e.scans.requestErr = fmt.Errorf("requesting scan: %w", db.ErrApplyActive)
+	target := "/projects/" + itoa(pid) + "/scans"
+	res := e.postScan(t, target, e.user(t))
+	if res.status != http.StatusConflict {
+		t.Fatalf("POST %s while an apply is active status = %d, want 409", target, res.status)
+	}
+	wantIn(t, "POST "+target, res.body, "이 프로젝트의 적용이 진행 중이라 스캔을 시작할 수 없습니다")
+}
+
+func TestScanPage_Confirmation(t *testing.T) {
+	const unchecked = "이 스캔이 검사한 범위에서는 적용한 값이 다시 발견되지 않았습니다. 건너뛴 파일이나 버린 결과가 있습니다."
+	for _, tt := range []struct {
+		name       string
+		scan       scan.Scan
+		reappeared int
+		want       []string
+		wantNot    []string
+	}{
+		{
+			name: "values found again", scan: scan.Scan{Status: scan.StatusSucceeded}, reappeared: 3,
+			want:    []string{"적용한 묶음의 값이 3개 항목에서 다시 발견되었습니다", `href="/projects/1/triage?status=applied"`},
+			wantNot: []string{"적용한 값이 모두 사라졌습니다", unchecked},
+		},
+		{
+			name: "all gone", scan: scan.Scan{Status: scan.StatusSucceeded},
+			want:    []string{"적용한 값이 모두 사라졌습니다"},
+			wantNot: []string{unchecked, "다시 발견되었습니다"},
+		},
+		{
+			name: "skipped files", scan: scan.Scan{Status: scan.StatusSucceeded, Skipped: 1},
+			want:    []string{unchecked, `href="/scans/8#unchecked"`, `id="unchecked"`},
+			wantNot: []string{"적용한 값이 모두 사라졌습니다"},
+		},
+		{
+			name: "dropped results", scan: scan.Scan{Status: scan.StatusSucceeded, Dropped: 2},
+			want: []string{unchecked},
+		},
+		{
+			name: "scanner errors", scan: scan.Scan{Status: scan.StatusSucceeded, ScannerErrors: map[string]int{"opengrep": 1}},
+			want: []string{unchecked},
+		},
+		{
+			name: "running", scan: scan.Scan{Status: scan.StatusRunning},
+			want:    []string{"확인 스캔이 진행 중입니다"},
+			wantNot: []string{"적용한 값이 모두 사라졌습니다"},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			pid := e.newProject(t)
+			sc := tt.scan
+			sc.ID, sc.ProjectID, sc.ApplyID = 8, pid, 4
+			e.scans.put(sc)
+			if sc.Status == scan.StatusSucceeded {
+				e.triage.setScan(sc, map[triage.Verdict]int{})
+			}
+			e.applies.putReappeared(8, tt.reappeared)
+			res := e.do(t, http.MethodGet, "/scans/8", nil, e.user(t))
+			if res.status != http.StatusOK {
+				t.Fatalf("GET /scans/8 status = %d, want 200", res.status)
+			}
+			wantIn(t, "GET /scans/8", res.body, append([]string{`<a href="/applies/4">적용 #4</a>의 확인 스캔`}, tt.want...)...)
+			wantNotIn(t, "GET /scans/8", res.body, tt.wantNot...)
+		})
+	}
+	t.Run("a user's scan", func(t *testing.T) {
+		e := newTestEnv(t)
+		pid := e.newProject(t)
+		e.scans.put(scan.Scan{ID: 8, ProjectID: pid, Status: scan.StatusSucceeded})
+		res := e.do(t, http.MethodGet, "/scans/8", nil, e.user(t))
+		wantNotIn(t, "GET /scans/8", res.body, "확인 스캔", "/applies/")
+	})
+}

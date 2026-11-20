@@ -162,8 +162,10 @@ func parseExcludes(text string) ([]string, error) {
 }
 
 // handleProject shows one project, the verdict counts of its newest
-// succeeded scan, and its scans, newest first.
-func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore, store TriageStore) http.Handler {
+// succeeded scan, its scans, newest first, and its latest applies. While a
+// check or an apply of the project is active the scan button is disabled,
+// since the database would refuse the scan.
+func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore, store TriageStore, applies ApplyStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
 		n, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -200,16 +202,25 @@ func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, sca
 			}
 			tiles = newVerdictTiles(p.ID, page.Counts)
 		}
+		runs, err := applies.ApplyRunsByProject(r.Context(), p.ID)
+		if err != nil {
+			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("listing apply runs: %w", err))
+			return
+		}
 		rows := newScanRows(list)
 		for i := range rows {
 			rows[i].Basis = tiles != nil && rows[i].ID == sc.ID
 		}
+		applyRows, active := newApplyRows(runs)
 		rd.page(w, r, logger, http.StatusOK, "project.html", struct {
-			User    auth.User
-			Project project.Project
-			Scans   []scanRow
-			Tiles   []verdictTile
-			Triage  string
-		}{u, p, rows, tiles, triagePath(p.ID)})
+			User        auth.User
+			Project     project.Project
+			Scans       []scanRow
+			Tiles       []verdictTile
+			Triage      string
+			ApplyHref   string
+			Applies     []applyRow
+			ActiveApply *activeApply
+		}{u, p, rows, tiles, triagePath(p.ID), applyPath(p.ID), applyRows, active})
 	})
 }
