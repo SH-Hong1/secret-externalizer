@@ -456,8 +456,9 @@ func TestCheck_ChangesNothing(t *testing.T) {
 	if diff := cmp.Diff(before, snapshot(t, f.root)); diff != "" {
 		t.Errorf("Check() changed the workspace (-before +after):\n%s", diff)
 	}
-	if f.vault.puts != 0 || f.vault.deletes != 0 {
-		t.Errorf("Check() called PutStored %d times and DeletePending %d times, want none", f.vault.puts, f.vault.deletes)
+	if f.vault.reads != 0 || f.vault.puts != 0 || f.vault.deletes != 0 {
+		t.Errorf("Check() called ReadStored %d, PutStored %d and DeletePending %d times, want none",
+			f.vault.reads, f.vault.puts, f.vault.deletes)
 	}
 	if len(saved.Blockers) != 0 || len(saved.Dirty) != 0 || len(saved.Irreversible) != 0 {
 		t.Errorf("SaveCheck got blockers %v, dirty %v, irreversible %v, want none", saved.Blockers, saved.Dirty, saved.Irreversible)
@@ -880,5 +881,155 @@ func TestCheck_NoValueOutside(t *testing.T) {
 			}
 			f.assertNoValue(err)
 		})
+	}
+}
+
+func TestCheck_ReconcileRemovesTempFirst(t *testing.T) {
+	f := newShop(t, inRepository)
+	f.secret("deploy.ssh.password", shValue, shFile)
+	tmp := jdbcFile + ".se-apply-0123456789abcdef.tmp"
+	write(t, f.dir, tmp, "temporary\n")
+	record := apply.OpenFile{Run: 9, File: jdbcFile, AfterHash: strings.Repeat("a", 64), TempName: tmp}
+	f.store.open = []apply.OpenFile{record}
+	f.store.errs["ResolveFile"] = errors.New("fake database refused the request")
+
+	err := f.check(t.Context())
+	if err != nil {
+		t.Fatalf("Check() error = %v, want nil", err)
+	}
+	if f.store.failed == nil || f.store.failed.Reason != apply.FailureOther {
+		t.Errorf("FailApply = %+v, want reason %q", f.store.failed, apply.FailureOther)
+	}
+	if _, err := os.Lstat(filepath.Join(f.dir, tmp)); !errors.Is(err, fs.ErrNotExist) {
+		t.Errorf("Lstat(%s) error = %v, want the temporary file removed before the record is closed", tmp, err)
+	}
+	if diff := cmp.Diff([]apply.OpenFile{record}, f.store.open); diff != "" {
+		t.Errorf("open records (-want +got):\n%s", diff)
+	}
+	f.assertNoValue(err)
+}
+
+func TestCheck_ReconcileLeavesOddTemp(t *testing.T) {
+	f := newShop(t, inRepository)
+	f.secret("deploy.ssh.password", shValue, shFile)
+	linkTemp := jdbcFile + ".se-apply-0123456789abcdef.tmp"
+	folderTemp := ymlFile + ".se-apply-fedcba9876543210.tmp"
+	if err := os.Symlink("jdbc.properties", filepath.Join(f.dir, linkTemp)); err != nil {
+		t.Fatalf("making a link: %v", err)
+	}
+	if err := os.Mkdir(filepath.Join(f.dir, folderTemp), 0o750); err != nil {
+		t.Fatalf("making a folder: %v", err)
+	}
+	link := apply.OpenFile{Run: 9, File: jdbcFile, AfterHash: strings.Repeat("a", 64), TempName: linkTemp}
+	folder := apply.OpenFile{Run: 9, File: ymlFile, AfterHash: strings.Repeat("b", 64), TempName: folderTemp}
+	f.store.open = []apply.OpenFile{link, folder}
+
+	f.mustCheck()
+
+	if diff := cmp.Diff([]resolvedFile{{link, false}, {folder, false}}, f.store.resolved); diff != "" {
+		t.Errorf("ResolveFile calls (-want +got):\n%s", diff)
+	}
+	for _, tmp := range []string{linkTemp, folderTemp} {
+		if _, err := os.Lstat(filepath.Join(f.dir, tmp)); err != nil {
+			t.Errorf("Lstat(%s) error = %v, want it left in place", tmp, err)
+		}
+	}
+}
+
+func TestCheck_ReconcileNotDone(t *testing.T) {
+	f := newShop(t, inRepository)
+	f.secret("deploy.ssh.password", shValue, shFile)
+	if err := os.Remove(filepath.Join(f.dir, jdbcFile)); err != nil {
+		t.Fatalf("removing %s: %v", jdbcFile, err)
+	}
+	if err := os.Mkdir(filepath.Join(f.dir, jdbcFile), 0o750); err != nil {
+		t.Fatalf("making a folder: %v", err)
+	}
+	if err := os.Remove(filepath.Join(f.dir, ymlFile)); err != nil {
+		t.Fatalf("removing %s: %v", ymlFile, err)
+	}
+	if err := os.Symlink("jdbc.properties", filepath.Join(f.dir, ymlFile)); err != nil {
+		t.Fatalf("making a link: %v", err)
+	}
+	present := apply.OpenFile{Run: 9, File: pemFile}
+	folder := apply.OpenFile{Run: 9, File: jdbcFile, AfterHash: strings.Repeat("a", 64)}
+	link := apply.OpenFile{Run: 9, File: ymlFile, AfterHash: strings.Repeat("b", 64)}
+	f.store.open = []apply.OpenFile{present, folder, link}
+
+	f.mustCheck()
+
+	want := []resolvedFile{{present, false}, {folder, false}, {link, false}}
+	if diff := cmp.Diff(want, f.store.resolved); diff != "" {
+		t.Errorf("ResolveFile calls (-want +got):\n%s", diff)
+	}
+}
+
+func TestCheck_DirtyDespiteRecords(t *testing.T) {
+	f := newShop(t, inRepository)
+	f.secret("deploy.ssh.password", shValue, shFile)
+	write(t, f.dir, ymlFile, "spring: {}\n")
+	f.store.written[ymlFile] = []apply.Written{{AfterHash: strings.Repeat("a", 64)}}
+	write(t, f.dir, pemFile, "-----BEGIN RSA PRIVATE KEY-----\n-----END RSA PRIVATE KEY-----\n")
+	f.store.written[pemFile] = []apply.Written{{AfterHash: ""}}
+
+	saved := f.mustCheck()
+
+	if !slices.Contains(saved.Blockers, apply.BlockerDirty) {
+		t.Errorf("SaveCheck blockers = %v, want dirty", saved.Blockers)
+	}
+	if diff := cmp.Diff([]string{pemFile, ymlFile}, saved.Dirty); diff != "" {
+		t.Errorf("SaveCheck dirty (-want +got):\n%s", diff)
+	}
+}
+
+func TestCheck_DirtyUnreadable(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads a file without permission")
+	}
+	f := newShop(t, inRepository)
+	f.secret("deploy.ssh.password", shValue, shFile)
+	full := filepath.Join(f.dir, filepath.FromSlash(ymlFile))
+	write(t, f.dir, ymlFile, "spring: {}\n")
+	f.store.written[ymlFile] = []apply.Written{{AfterHash: sha(read(t, f.dir, ymlFile))}}
+	if err := os.Chmod(full, 0); err != nil {
+		t.Fatalf("taking away read permission: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(full, 0o600) }) // lets t.TempDir remove it; nothing to report if it fails
+
+	saved := f.mustCheck()
+
+	if diff := cmp.Diff([]string{ymlFile}, saved.Dirty); diff != "" {
+		t.Errorf("SaveCheck dirty (-want +got):\n%s", diff)
+	}
+}
+
+func TestCheck_DirtySubtractedInSubfolder(t *testing.T) {
+	f := newShop(t, inSubfolder)
+	f.secret("deploy.ssh.password", shValue, shFile)
+	write(t, f.dir, ymlFile, "spring: {}\n")
+	f.store.written[ymlFile] = []apply.Written{{AfterHash: sha(read(t, f.dir, ymlFile))}}
+
+	saved := f.mustCheck()
+
+	if slices.Contains(saved.Blockers, apply.BlockerDirty) || len(saved.Dirty) != 0 {
+		t.Errorf("SaveCheck blockers = %v, dirty = %v, want the file the apply wrote not dirty", saved.Blockers, saved.Dirty)
+	}
+}
+
+func TestCheck_SpanPastEnd(t *testing.T) {
+	f := newShop(t, inRepository)
+	l := f.locate(ymlFile, ymlValue)
+	l.EndLine, l.EndCol = 999, 1
+	f.values = append(f.values, ymlValue)
+	k := f.add(triage.Bundle{
+		Fingerprint: sha([]byte(ymlValue)), Category: finding.CategoryStorage, Kind: finding.KindPassword,
+		Decision: triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.yaml.password"},
+		Members:  []triage.Member{{File: ymlFile, Locations: []finding.Location{l}}},
+	})[0]
+
+	saved := f.mustCheck()
+
+	if got := outcomes(saved.Items)[k]; got != skippedFor(apply.ReasonValueMismatch) {
+		t.Errorf("SaveCheck outcome of %s = %q, want %q", k, got, skippedFor(apply.ReasonValueMismatch))
 	}
 }

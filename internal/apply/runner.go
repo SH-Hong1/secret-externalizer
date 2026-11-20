@@ -231,8 +231,9 @@ func (value) MarshalJSON() ([]byte, error) { return json.Marshal(redactedText) }
 // target is a target of the plan and what the run found at its place.
 type target struct {
 	Target
-	// value is what the place holds. A text value is a copy; a whole-file
-	// value is the file's buffer itself. It is nil until read.
+	// value is what the place holds, a copy that shares no bytes with the
+	// file's buffers or another value, so zeroing it changes nothing else.
+	// It is nil until read.
 	value value
 	// reason is why the target is skipped, empty while it is planned.
 	reason Reason
@@ -248,6 +249,23 @@ type sourceFile struct {
 	// decodeErr is why the file could not be decoded as text.
 	decodeErr error
 	targets   []*target
+}
+
+// sourceText is what fmt and slog print for a sourceFile.
+const sourceText = "apply.sourceFile{[redacted]}"
+
+// String returns the file's path and a fixed text; the file's bytes can
+// hold values, so they are never printed.
+func (f *sourceFile) String() string { return sourceText + " " + f.rel }
+
+// Format prints the form String returns for every fmt verb.
+func (f *sourceFile) Format(s fmt.State, _ rune) {
+	_, _ = s.Write([]byte(f.String())) // a failed write to a fmt buffer has no one to report to
+}
+
+// LogValue returns the file's path and the number of its targets.
+func (f *sourceFile) LogValue() slog.Value {
+	return slog.GroupValue(slog.String("file", f.rel), slog.Int("targets", len(f.targets)))
 }
 
 // skipAll skips every planned target of f for reason.
@@ -294,6 +312,24 @@ type prepared struct {
 	// irreversible holds, for a check, the untracked files with customer
 	// data to redact.
 	irreversible []string
+}
+
+// preparedText is what fmt prints for a prepared run.
+const preparedText = "apply.prepared{[redacted]}"
+
+// String returns a fixed text; a prepared run holds values read from the
+// source, so they are never printed.
+func (p *prepared) String() string { return preparedText }
+
+// Format prints the form String returns for every fmt verb.
+func (p *prepared) Format(s fmt.State, _ rune) {
+	_, _ = s.Write([]byte(preparedText)) // a failed write to a fmt buffer has no one to report to
+}
+
+// LogValue returns the run's ID, its blockers and the number of files.
+func (p *prepared) LogValue() slog.Value {
+	return slog.GroupValue(slog.Int64("apply_id", int64(p.in.Run.ID)), slog.Any("blockers", p.blockers),
+		slog.Int("files", len(p.files)))
 }
 
 // close zeroes every value and file buffer of p and releases the folder.
@@ -428,7 +464,7 @@ func (r *Runner) openFolder(ctx context.Context, j job.Job, p *prepared) error {
 		return err
 	}
 	p.folder, p.dir = folder, dir
-	if err := r.reconcile(ctx, p.in.Project.ID, dir); err != nil {
+	if err := r.reconcile(ctx, j, p.in.Project.ID, dir); err != nil {
 		return err
 	}
 	in, err := r.store.ApplyInput(ctx, ID(j.ApplyID))
@@ -441,10 +477,10 @@ func (r *Runner) openFolder(ctx context.Context, j job.Job, p *prepared) error {
 
 // reconcile closes every change of a file that a run of the project
 // announced and did not confirm (R1): the change happened when the file now
-// has the announced hash, or, for a removal, is gone. The record goes to
-// ResolveFile as it was read, and its temporary file, if any, is removed
-// after.
-func (r *Runner) reconcile(ctx context.Context, projectID project.ID, dir *rewrite.Dir) error {
+// has the announced hash, or, for a removal, is gone. The record's
+// temporary file, if any, is removed first; then the record goes to
+// ResolveFile as it was read.
+func (r *Runner) reconcile(ctx context.Context, j job.Job, projectID project.ID, dir *rewrite.Dir) error {
 	open, err := r.store.OpenFiles(ctx, projectID)
 	if err != nil {
 		return fmt.Errorf("listing open file records: %w", err)
@@ -457,15 +493,32 @@ func (r *Runner) reconcile(ctx context.Context, projectID project.ID, dir *rewri
 		if err != nil {
 			return err
 		}
+		if err := r.removeTemp(ctx, j, dir, f); err != nil {
+			return err
+		}
 		if err := r.store.ResolveFile(ctx, f, done); err != nil {
 			return fmt.Errorf("closing the record of %s: %w", f.File, err)
 		}
-		if f.TempName == "" {
-			continue
-		}
-		if err := dir.RemoveTemp(f.TempName); err != nil {
-			return fmt.Errorf("removing a temporary file: %w", err)
-		}
+	}
+	return nil
+}
+
+// removeTemp removes the temporary file f names, if any, before its record
+// is closed: once closed, no record names the file and the tool would never
+// remove it. A link, a folder or anything else that is not a regular file
+// at that name is not the tool's and is left in place.
+func (r *Runner) removeTemp(ctx context.Context, j job.Job, dir *rewrite.Dir, f OpenFile) error {
+	if f.TempName == "" {
+		return nil
+	}
+	err := dir.RemoveTemp(f.TempName)
+	if errors.Is(err, rewrite.ErrNotRegular) {
+		r.logger.WarnContext(ctx, "apply temporary file left in place", "apply_id", j.ApplyID, "job_id", j.ID,
+			"error", err.Error())
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("removing a temporary file: %w", err)
 	}
 	return nil
 }
@@ -527,11 +580,7 @@ func (r *Runner) inspect(ctx context.Context, j job.Job, p *prepared) error {
 		return fmt.Errorf("listing written files: %w", err)
 	}
 	for _, rel := range st.Dirty {
-		own, err := r.ownChange(p.dir, rel, written[rel])
-		if err != nil {
-			return err
-		}
-		if !own {
+		if !r.ownChange(p.dir, rel, written[rel]) {
 			p.dirty = append(p.dirty, rel)
 		}
 	}
@@ -543,21 +592,23 @@ func (r *Runner) inspect(ctx context.Context, j job.Job, p *prepared) error {
 
 // ownChange reports whether the file rel is as one of the changes in
 // written left it: it has the hash of one, or one removed it and it is
-// gone.
-func (r *Runner) ownChange(dir *rewrite.Dir, rel string, written []Written) (bool, error) {
+// gone. A file that cannot be read is not.
+func (r *Runner) ownChange(dir *rewrite.Dir, rel string, written []Written) bool {
 	if len(written) == 0 {
-		return false, nil
+		return false
 	}
 	hash, exists, err := r.hashOf(dir, rel)
 	if err != nil {
-		return false, err
+		// A file that cannot be read now cannot be shown to be the
+		// apply's own change, so it stays dirty.
+		return false
 	}
 	for _, w := range written {
 		if w.AfterHash == "" && !exists || exists && hash != "" && w.AfterHash == hash {
-			return true, nil
+			return true
 		}
 	}
-	return false, nil
+	return false
 }
 
 // blockerFor returns the blocker for an error of worktree.Inspect.
@@ -645,14 +696,16 @@ func (r *Runner) readTargets(ctx context.Context, p *prepared) error {
 		}
 		f.raw, f.seen = value(raw), seen
 		for _, t := range f.targets {
-			t.reason, t.value = f.valueAt(t)
+			t.reason, t.value = f.valueAt(t, r.opts.MaxStoredBytes)
 		}
 	}
 	return nil
 }
 
-// valueAt returns the value of t, a target in f, or why it is skipped.
-func (f *sourceFile) valueAt(t *target) (Reason, value) {
+// valueAt returns a copy of the value of t, a target in f, or why it is
+// skipped. A whole-file value longer than maxStored is too large and is
+// not copied.
+func (f *sourceFile) valueAt(t *target, maxStored int) (Reason, value) {
 	if t.Location.FileHash != f.seen.Hash {
 		return ReasonFileChanged, nil
 	}
@@ -663,7 +716,10 @@ func (f *sourceFile) valueAt(t *target) (Reason, value) {
 				return ReasonKeyInSourceFile, nil
 			}
 		}
-		return "", f.raw
+		if len(f.raw) > maxStored {
+			return ReasonTooLarge, nil
+		}
+		return "", value(bytes.Clone(f.raw))
 	}
 	text, err := f.decode()
 	if err != nil {
