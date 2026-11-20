@@ -51,6 +51,9 @@ var (
 	ErrNotRegular = errors.New("not a regular file")
 	// ErrOutOfRange means a line or column lies outside the text.
 	ErrOutOfRange = errors.New("position is outside the text")
+	// ErrRawMismatch means the bytes given as a file's raw content are not
+	// the bytes it was decoded from.
+	ErrRawMismatch = errors.New("bytes do not match the decoded text")
 )
 
 // probeLen is the number of leading bytes searched for a NUL byte.
@@ -121,10 +124,20 @@ func Read(path string, maxBytes int64) (File, error) {
 	if err != nil {
 		return File{}, err
 	}
+	f, err := Decode(raw)
+	if err != nil {
+		return File{}, fmt.Errorf("reading %s: %w", path, err)
+	}
+	return f, nil
+}
+
+// Decode returns raw, the bytes of a file on disk, as a File. It fails as
+// Read does for binary content and unknown encodings.
+func Decode(raw []byte) (File, error) {
 	sum := sha256.Sum256(raw)
 	text, enc, err := decode(raw)
 	if err != nil {
-		return File{}, fmt.Errorf("reading %s: %w", path, err)
+		return File{}, err
 	}
 	return File{Encoding: enc, Text: text, Hash: hex.EncodeToString(sum[:])}, nil
 }
@@ -222,17 +235,9 @@ func (f File) Offset(line, byteCol int) (int, error) {
 	if line < 1 || byteCol < 1 {
 		return 0, fmt.Errorf("line %d, column %d: %w", line, byteCol, ErrOutOfRange)
 	}
-	start := 0
-	for i := 1; i < line; i++ {
-		n := bytes.IndexByte(f.Text[start:], '\n')
-		if n < 0 {
-			return 0, fmt.Errorf("line %d: %w", line, ErrOutOfRange)
-		}
-		start += n + 1
-	}
-	end := len(f.Text)
-	if n := bytes.IndexByte(f.Text[start:], '\n'); n >= 0 {
-		end = start + n
+	start, end, err := f.lineStart(line)
+	if err != nil {
+		return 0, err
 	}
 	if byteCol-1 > end-start {
 		return 0, fmt.Errorf("line %d, column %d: %w", line, byteCol, ErrOutOfRange)
@@ -260,4 +265,101 @@ func (f File) Lines(first, last int) []string {
 		}
 	}
 	return out
+}
+
+// lineStart returns the byte offset in Text where the 1-based line starts and
+// the offset of its end, which is its "\n" or the end of the text. A line
+// after a final "\n" counts as an empty line.
+func (f File) lineStart(line int) (start, end int, err error) {
+	if line < 1 {
+		return 0, 0, fmt.Errorf("line %d: %w", line, ErrOutOfRange)
+	}
+	for i := 1; i < line; i++ {
+		n := bytes.IndexByte(f.Text[start:], '\n')
+		if n < 0 {
+			return 0, 0, fmt.Errorf("line %d: %w", line, ErrOutOfRange)
+		}
+		start += n + 1
+	}
+	end = len(f.Text)
+	if n := bytes.IndexByte(f.Text[start:], '\n'); n >= 0 {
+		end = start + n
+	}
+	return start, end, nil
+}
+
+// CharOffset converts a 1-based line and a 1-based column that counts
+// characters to a byte offset in Text. The column may be one past the last
+// character of the line. It fails with ErrOutOfRange.
+func (f File) CharOffset(line, col int) (int, error) {
+	if col < 1 {
+		return 0, fmt.Errorf("line %d, column %d: %w", line, col, ErrOutOfRange)
+	}
+	off, end, err := f.lineStart(line)
+	if err != nil {
+		return 0, err
+	}
+	for range col - 1 {
+		if off >= end {
+			return 0, fmt.Errorf("line %d, column %d: %w", line, col, ErrOutOfRange)
+		}
+		_, size := utf8.DecodeRune(f.Text[off:end])
+		off += size
+	}
+	return off, nil
+}
+
+// DiskOffset converts offset, a byte offset in Text on a character
+// boundary, to the offset of the same character in raw, the bytes Decode
+// made f from. For an EUC-KR file it walks raw from its first byte, one
+// character at a time.
+//
+// The walk relies on what Decode accepts: a byte below 0x80 at the start of a
+// character is that character, and any other byte starts a two-byte
+// character at or above U+0080. A second byte may be an ASCII letter, so the
+// width of a character is known only by walking from the start of the file.
+func (f File) DiskOffset(raw []byte, offset int) (int, error) {
+	if offset < 0 || offset > len(f.Text) || (offset < len(f.Text) && !utf8.RuneStart(f.Text[offset])) {
+		return 0, fmt.Errorf("offset %d: %w", offset, ErrOutOfRange)
+	}
+	switch f.Encoding {
+	case UTF8:
+		bom := 0
+		if bytes.HasPrefix(raw, []byte{0xEF, 0xBB, 0xBF}) {
+			bom = 3
+		}
+		if len(raw)-bom != len(f.Text) {
+			return 0, ErrRawMismatch
+		}
+		return offset + bom, nil
+	case EUCKR:
+		return f.eucKROffset(raw, offset)
+	default:
+		return 0, fmt.Errorf("encoding %v: %w", f.Encoding, ErrUnknownEncoding)
+	}
+}
+
+// eucKROffset walks raw and Text side by side up to offset in Text.
+func (f File) eucKROffset(raw []byte, offset int) (int, error) {
+	d := 0
+	for t := 0; t < offset; {
+		if d >= len(raw) {
+			return 0, ErrRawMismatch
+		}
+		if raw[d] < utf8.RuneSelf {
+			if f.Text[t] != raw[d] {
+				return 0, ErrRawMismatch
+			}
+			d++
+			t++
+			continue
+		}
+		r, size := utf8.DecodeRune(f.Text[t:])
+		if d+1 >= len(raw) || r < utf8.RuneSelf {
+			return 0, ErrRawMismatch
+		}
+		d += 2
+		t += size
+	}
+	return d, nil
 }

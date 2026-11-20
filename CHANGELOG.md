@@ -76,6 +76,8 @@
 - `*db.Store`의 `CategoryCounts`: 스캔 하나가 분류마다 찾은 항목 수와 위치 수.
 - `internal/worktree`: 프로젝트 폴더의 git 작업본을 점검한다. `Inspect`는 폴더 아래 추적되는 파일 가운데 staged, unstaged 변경이 있거나 assume-unchanged, skip-worktree로 표시된 파일(`Dirty`)과 추적 여부(`Tracked`)를 돌려준다. 작업본 루트, git 폴더, 공용 git 폴더 가운데 하나라도 작업 공간 밖이면 `ErrNotRepository`, 커밋이 없으면 `ErrNoCommit`, 저장소 설정에 `filter.*.clean`, `filter.*.process`, `core.worktree`가 있으면 `ErrUnsafeConfig`다. 저장소 설정의 fsmonitor, hook, pager, filter, promisor remote를 실행하지 않고 인덱스를 쓰지 않는다. `Nested`는 파일이 프로젝트 폴더 안의 다른 저장소에 있는지 알려 준다. 테스트용 `worktreetest`가 임시 폴더를 git 저장소로 만든다.
 - 결정 기록 0033 (git 작업본 점검)
+- `internal/rewrite`: 소스 파일의 텍스트에서 범위를 바꾸고 나머지 바이트(인코딩, BOM, 줄바꿈)를 그대로 둔다. `Span`은 항목의 위치를 텍스트의 범위로, `Replace`는 겹치지 않는 범위를 출력 가능한 ASCII로 바꾼 바이트와 그 SHA-256, 치환이 시작하는 줄을 돌려준다. `Dir`은 `os.Root`로 연 프로젝트 폴더에서 일반 파일만 읽고, 같은 폴더의 임시 파일(`<이름>.se-apply-<16자리>.tmp`, `O_EXCL`)을 거쳐 원래 모드로 바꿔 쓴다. 읽은 뒤 파일이 바뀌었으면(같은 파일, 크기, 수정 시각) `rename` 직전에도 확인해 `ErrChanged`로 거부하고, 심볼릭 링크와 링크인 중간 폴더, 폴더 밖 경로를 거부한다. `Create`는 없는 파일만 만들고(0644), `RemoveTemp`는 `TempName` 모양의 일반 파일만 지운다.
+- `textfile.Decode`(디스크의 바이트를 `File`로), `File.CharOffset`(글자로 센 줄과 열을 텍스트의 바이트 위치로), `File.DiskOffset`(텍스트의 위치를 디스크 바이트의 위치로. EUC-KR은 파일의 처음부터 글자 단위로 따라간다), `textfile.ErrRawMismatch`. `Read`는 `Decode`를 쓴다(동작은 같다).
 
 ### 변경
 
