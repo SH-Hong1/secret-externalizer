@@ -1,4 +1,5 @@
-// Command worker runs the scans that the web program queues.
+// Command worker runs the scans, apply checks, and applies that the web
+// program queues.
 package main
 
 import (
@@ -17,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/betterleaks"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
@@ -48,32 +50,35 @@ func main() {
 // Asking for help prints the usage to stdout and is not an error. Otherwise it
 // reads the configuration, prepares the OpenBao client and the scanners,
 // reads the rules version, opens and migrates the database, and runs queued
-// scans until SIGINT, SIGTERM or cancellation of ctx.
+// scans, apply checks, and applies until SIGINT, SIGTERM or cancellation of
+// ctx.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
-	return runWith(ctx, args, getenv, stdout, stderr, nil, newScanDeps)
+	return runWith(ctx, args, getenv, stdout, stderr, nil, newDeps)
 }
 
-// scanDeps are what a scan runs with besides the database.
-type scanDeps struct {
+// workerDeps are what scans and applies run with besides the database.
+type workerDeps struct {
 	fingerprints scan.Fingerprinter
 	originals    scan.Originals
+	vault        apply.Vault
 	scanners     []scan.Scanner
 }
 
 // scannerPath is the PATH the scanners run with.
 const scannerPath = "/usr/local/bin:/usr/bin:/bin"
 
-// newScanDeps returns the OpenBao client and the three scanners that cfg
-// describes. The client does not contact OpenBao until it is first used.
-func newScanDeps(cfg config) (scanDeps, error) {
+// newDeps returns the OpenBao client, as fingerprinter, originals store and
+// vault, and the three scanners that cfg describes. The client does not contact OpenBao until it is first used.
+func newDeps(cfg config) (workerDeps, error) {
 	client, err := bao.New(cfg.baoAddr, cfg.baoCreds, &http.Client{Timeout: 10 * time.Second})
 	if err != nil {
-		return scanDeps{}, fmt.Errorf("preparing openbao client: %w", err)
+		return workerDeps{}, fmt.Errorf("preparing openbao client: %w", err)
 	}
 	env := scanexec.Env{Path: scannerPath, Home: scanHome(cfg), TmpDir: scanTmp(cfg)}
-	return scanDeps{
+	return workerDeps{
 		fingerprints: client,
 		originals:    client,
+		vault:        client,
 		scanners: []scan.Scanner{
 			betterleaks.New(cfg.betterleaksBin, filepath.Join(cfg.rulesDir, "betterleaks.toml"), env),
 			// The wrapper always excludes .git, target, build, and
@@ -93,10 +98,10 @@ func scanCopies(cfg config) string { return filepath.Join(cfg.scanTempDir, "copi
 
 // runWith is run with a function that adjusts the configuration after it is
 // loaded, so tests can shorten the queue intervals, and a function that
-// builds the fingerprinter, the originals store, and the scanners, so tests
-// can replace them. A nil tune changes nothing.
+// builds the fingerprinter, the originals store, the vault of applies, and
+// the scanners, so tests can replace them. A nil tune changes nothing.
 func runWith(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer,
-	tune func(*config), deps func(config) (scanDeps, error),
+	tune func(*config), deps func(config) (workerDeps, error),
 ) error {
 	flags := flag.NewFlagSet(args[0], flag.ContinueOnError)
 	flags.SetOutput(io.Discard)
@@ -165,8 +170,20 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 		MaxFileBytes: scan.DefaultMaxFileBytes,
 		TimeLimit:    scan.DefaultTimeLimit,
 	})
+	// Scans read cfg.root, the read-only mount. Only an apply the user
+	// confirmed changes files, through cfg.applyRoot.
+	applier := apply.NewRunner(logger, database, sd.vault, apply.Options{
+		WorkerID:     workerID,
+		Root:         cfg.applyRoot,
+		Git:          cfg.gitBin,
+		MaxFileBytes: scan.DefaultMaxFileBytes,
+	})
 	opts := job.Options{WorkerID: workerID, Poll: cfg.poll, Lease: cfg.lease, Heartbeat: cfg.heartbeat}
-	handle := job.Dispatch(map[job.Kind]job.Handler{job.KindScan: runner.Handle})
+	handle := job.Dispatch(map[job.Kind]job.Handler{
+		job.KindScan:       runner.Handle,
+		job.KindApplyCheck: applier.Check,
+		job.KindApply:      applier.Apply,
+	})
 	if err := job.Run(ctx, logger, database, handle, opts); err != nil {
 		return fmt.Errorf("running jobs: %w", err)
 	}

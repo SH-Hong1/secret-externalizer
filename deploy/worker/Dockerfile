@@ -3,6 +3,11 @@
 # and the git state of a project with git, and run the betterleaks and
 # opengrep executables pinned in scanners.lock. Both are statically linked,
 # so they run on alpine's musl. The rules they run with are in /rules.
+# Apply checks and applies read the git state of a project with git and
+# never run a git command that changes the repository. An apply writes the
+# project's files through the read-write workspace mount compose gives it,
+# and compose may run the worker as another user (SE_UID, SE_GID) so the
+# files it writes keep the owner of the workspace.
 
 FROM golang:1.27.4-alpine3.24@sha256:70bd7ddea8b6cbe5d6943cde279d6b67feb10cc924fb9100d1d8757c1575b280 AS build
 

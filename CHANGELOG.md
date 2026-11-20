@@ -96,6 +96,11 @@
 - 적용 실행기(`apply.Runner.Apply`): `apply` 작업에서 점검과 같은 맞추기와 조건 점검을 처음부터 다시 하고, 막는 조건이 하나라도 있으면 파일과 OpenBao를 건드리지 않고 정해진 사유로 실패시킨다. 저장 단계에서 저장 키마다 한 번 경로를 읽어, 저장된 바이트의 지문을 다시 계산해 같으면 쓰지 않고, 없으면 `cas 0`, 다르거나 지워졌으면 읽은 버전으로 새 버전을 쓴 뒤 다시 읽어 버전과 지문을 확인한다. 버전 충돌은 다시 읽고 한 번 더 쓰고(쓰기는 많아야 두 번), 응답이 오류여도 다시 읽은 값이 맞으면 저장된 것으로 본다. 확인하지 못한 키의 위치는 `store-failed`(실패)이고 소스에서 바뀌지 않는다. 파일 전체 값이 확인된 키 파일만 제거하고, 확인되지 않으면 그 파일의 모든 위치가 `store-failed`다. 제거하는 파일의 다른 외부화 위치는 저장이 확인되면 "파일 제거"로 적용되고 아니면 `file-removed`로 건너뛴다. 이어서 파일순으로 파일 하나를 한 번에 바꾼다: 바꾸기 전 기록(`BeginFile`), 같은 폴더의 임시 파일과 `rename`(또는 제거), 바꾼 뒤 기록(`EndFile`, 작업의 context와 떼어 낸 5초 제한). 쓰기에 실패한 파일은 기록을 "바뀌지 않음"으로 닫고 `write-failed`로 둔 채 다음 파일로 간다. 작업의 context가 끝나면 파일 사이에서만 멈추고, 제한 시간(30분)이 지나면 `apply took longer than the time limit`으로 실패한다. 그 뒤 아직 manifest에 없는 적용된 비밀 값(앞 실행의 것 포함)을 `secrets-manifest.yml`에 합쳐 내용이 달라질 때만 같은 두 기록을 거쳐 쓰고 `MarkInManifest`한다. 쓰지 못하면 새 실패 사유 `the manifest could not be written; see the worker log`로 실패한다. 마지막으로 실행을 닫고, 프로젝트에서 모든 묶음이 오탐인 지문의 임시 원본을 OpenBao에서 지운다(실패는 로그 한 줄). 값은 저장 단계가 끝나면, 파일 내용은 그 파일을 바꾼 뒤 0으로 지운다. 고객정보는 `PutStored`에 가지 않는다.
 - 결정 기록 0032 (적용의 순서, 중단 뒤 맞추기, 두 번 마운트와 남는 위험)
 - `AGENTS.md` Security 절: worker는 사용자가 확인한 적용에서만, 외부화·삭제 판정 묶음의 위치만 바꾸고, 값은 OpenBao에서 다시 읽어 지문이 맞은 뒤에만 소스에서 빠진다는 규칙
+- worker가 스캔과 함께 적용의 점검(`apply-check`)과 적용(`apply`) 작업을 처리한다. 새 환경 변수 `APPLY_WORKSPACE_ROOT`(선택, 절대 경로인 폴더)가 적용이 파일을 바꾸는 작업 공간이고, 없으면 모든 점검이 `workspace-read-only`로 막힌다. 스캔은 계속 `WORKSPACE_ROOT`만 읽는다. 기동 로그의 설정에 `apply_workspace_root`가 더해졌다.
+- compose의 worker가 `SE_WORKSPACE`를 `/workspace`에 읽기 전용으로, `/workspace-rw`에 읽기-쓰기로 두 번 마운트한다(`APPLY_WORKSPACE_ROOT=/workspace-rw`). 스캔과 스캐너는 읽기 전용 마운트만 쓴다.
+- compose의 worker를 `SE_UID`, `SE_GID`(기본 65532)로 정한 사용자로 실행할 수 있다. `openbao-secrets`는 뜰 때마다 worker의 secret-id와 그 폴더의 소유자를 `SE_UID`로 맞춘다. web의 것은 65532 그대로다.
+- compose의 worker에 `restart: unless-stopped`를 두어, 죽은 worker가 다시 떠서 임대가 끝난 작업을 이어 간다.
+- 실제 postgres, `openbao-test`, git 작업본으로 예제 프로젝트의 점검과 적용을 끝까지 돌리는 통합 테스트 `TestIntegration_ApplyLegacyShop`
 
 ### 변경
 

@@ -164,6 +164,61 @@ func TestLoadConfig_BadScanSettings(t *testing.T) {
 	}
 }
 
+func TestLoadConfig_ApplyRoot(t *testing.T) {
+	dir := t.TempDir()
+	file := filepath.Join(dir, "file")
+	writeFile(t, file)
+	tests := []struct {
+		name    string
+		root    string
+		want    string
+		wantErr bool
+	}{
+		{name: "not set", root: "", want: ""},
+		{name: "a folder", root: dir, want: dir},
+		{name: "relative", root: "workspace-rw", wantErr: true},
+		{name: "missing", root: filepath.Join(dir, "missing"), wantErr: true},
+		{name: "a file", root: file, wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv(t)
+			if tt.root != "" {
+				env["APPLY_WORKSPACE_ROOT"] = tt.root
+			}
+			got, err := loadConfig(getenvFrom(env))
+			if tt.wantErr {
+				if err == nil || !strings.Contains(err.Error(), "APPLY_WORKSPACE_ROOT") {
+					t.Errorf("loadConfig() with APPLY_WORKSPACE_ROOT=%q error = %v, want an error naming APPLY_WORKSPACE_ROOT", tt.root, err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("loadConfig() with APPLY_WORKSPACE_ROOT=%q error = %v", tt.root, err)
+			}
+			if got.applyRoot != tt.want {
+				t.Errorf("loadConfig() with APPLY_WORKSPACE_ROOT=%q apply root = %q, want %q", tt.root, got.applyRoot, tt.want)
+			}
+		})
+	}
+}
+
+func TestConfig_ShowsApplyRoot(t *testing.T) {
+	env := validEnv(t)
+	env["APPLY_WORKSPACE_ROOT"] = t.TempDir()
+	cfg, err := loadConfig(getenvFrom(env))
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "config", cfg)
+	for _, out := range []string{buf.String(), cfg.String()} {
+		if !strings.Contains(out, "apply_workspace_root") || !strings.Contains(out, env["APPLY_WORKSPACE_ROOT"]) {
+			t.Errorf("config output %q, want apply_workspace_root with %q", out, env["APPLY_WORKSPACE_ROOT"])
+		}
+	}
+}
+
 func TestLoadConfig_GitDefault(t *testing.T) {
 	env := validEnv(t)
 	delete(env, "GIT_BIN")

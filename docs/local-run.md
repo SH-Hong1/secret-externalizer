@@ -20,7 +20,14 @@ docker compose down -v         # 볼륨까지 지운다. 다음 기동 때 realm
 
 ## 작업 공간과 worker
 
-worker는 등록한 프로젝트 폴더를 읽어 스캔한다. 프로젝트는 작업 공간 루트 아래의 폴더이므로, 루트로 쓸 폴더를 `SE_WORKSPACE`에 절대 경로로 준다. compose가 이 폴더를 worker 컨테이너의 `/workspace`에 읽기 전용으로 마운트한다.
+worker는 등록한 프로젝트 폴더를 읽어 스캔한다. 프로젝트는 작업 공간 루트 아래의 폴더이므로, 루트로 쓸 폴더를 `SE_WORKSPACE`에 절대 경로로 준다. compose는 이 폴더를 worker 컨테이너에 두 번 마운트한다.
+
+| 컨테이너 안의 경로 | 마운트 | 쓰는 것 |
+|---|---|---|
+| `/workspace` (`WORKSPACE_ROOT`) | 읽기 전용 | 스캔과 스캐너(betterleaks, opengrep) |
+| `/workspace-rw` (`APPLY_WORKSPACE_ROOT`) | 읽기-쓰기 | 사용자가 확인한 적용과 그 점검 |
+
+스캔과 스캐너는 읽기 전용 마운트만 쓰고, 사용자가 확인한 적용만 읽기-쓰기 마운트로 파일을 바꾼다. 외부에서 받은 스캐너 실행 파일이 쓸 수 있는 작업 공간 위에서 돌지 않게 하려는 것이다(`docs/decisions/0032-apply-order-and-resuming.md`).
 
 ```sh
 export SE_WORKSPACE=$HOME/work     # 프로젝트 폴더들이 들어 있는 폴더
@@ -30,7 +37,8 @@ docker compose up --build -d
 - `SE_WORKSPACE`가 없으면 compose가 안내 문구와 함께 멈춘다. worker를 띄우지 않는 명령(`ps`, `down`)에도 compose 파일을 읽을 때 같은 오류가 나므로 셸에 계속 설정해 둔다.
 - macOS에서는 Docker가 공유하는 경로(보통 홈 폴더 아래)여야 한다. `/tmp` 같은 경로는 컨테이너에서 빈 폴더로 보인다.
 - 프로젝트를 등록할 때의 경로는 `SE_WORKSPACE` 기준의 상대 경로다. 예를 들어 `$HOME/work/shop`을 스캔하려면 `shop`으로 등록한다.
-- worker는 uid 65532로 실행된다. Linux 호스트의 Docker(네이티브)에서는 bind mount가 호스트 소유권을 그대로 유지하므로, 스캔할 파일과 폴더를 uid 65532가 읽을 수 있어야 한다. 읽을 수 없는 파일과 폴더(예: `0700` 폴더, `0600` 개인키나 `.env`)는 오류 없이 건너뛰고 건너뛴 수를 센다. macOS의 colima나 Docker Desktop에서는 소유권이 바뀌어 보이므로 이 문제가 생기지 않는다.
+- worker는 `SE_UID`와 `SE_GID`로 정한 사용자로 실행된다. 기본값은 둘 다 65532다. Linux 호스트의 Docker(네이티브)에서는 bind mount가 호스트 소유권을 그대로 유지하므로, 스캔할 파일과 폴더를 그 사용자가 읽을 수 있어야 하고, 적용하려면 쓸 수 있어야 한다. 작업 공간의 주인으로 실행하려면 `SE_UID=$(id -u) SE_GID=$(id -g) docker compose up -d`처럼 띄운다. worker가 적용으로 쓴 파일의 소유자는 worker의 사용자다. 읽을 수 없는 파일과 폴더(예: `0700` 폴더, `0600` 개인키나 `.env`)는 스캔에서 오류 없이 건너뛰고 건너뛴 수를 센다. macOS의 colima나 Docker Desktop에서는 소유권이 바뀌어 보이므로 이 문제가 생기지 않는다.
+- `openbao-secrets`는 뜰 때마다 worker의 secret-id(`worker/secret-id`)와 그 폴더의 소유자를 `SE_UID`로 맞춘다(web의 것은 65532 그대로). `SE_UID`를 바꾸면 `docker compose up -d`가 `openbao-secrets`를 다시 실행해 이미 있는 볼륨의 소유자도 바꾼다. `SE_UID`는 숫자여야 한다.
 - worker는 큐에 쌓인 스캔을 하나씩 실행한다. 파일마다 UTF-8이나 EUC-KR 텍스트로 읽고, betterleaks, opengrep, 키 파일 탐지기를 돌려 찾은 값을 항목으로 저장한다. postgres에는 값의 지문, 가린 미리보기, 위치, 가린 주변 줄만 남고, 비밀 값의 원본은 OpenBao에 보관한다. 고객정보는 원본을 보관하지 않고 주변 줄도 남기지 않는다. 실패하면 화면에는 정해진 사유만 보이고 자세한 오류는 `docker compose logs worker`에 남는다.
 - 스캔 하나는 30분을 넘기면 `scan took longer than the time limit`으로 실패한다. 20MiB가 넘는 파일, 바이너리 파일, UTF-8도 EUC-KR도 아닌 파일은 텍스트로 스캔하지 않고 건너뛴 수에 센다. 경로가 UTF-8이 아니거나 제어 문자가 든 파일도 건너뛴 수에 센다. 키 저장소(`.jks`, `.p12` 등)는 바이너리라도 키 파일 항목이 된다.
 - 스캔이 성공하면 worker 로그(`docker compose logs worker`)에 `scan finished` 기록이 하나 남는다. 스캔 ID(`scan_id`), 스캔이 목록에 넣은 일반 파일 수(`files`, 텍스트로 읽지 못하거나 경로를 저장할 수 없어 건너뛴 파일도 센다), 건너뛴 수(`skipped`), 버린 건수(`dropped`), 항목 수(`findings`), 텍스트로 읽지 못해 건너뛴 파일에 스캐너가 낸 결과 수(`results_in_skipped_files`), 도구별로 파일을 일부만 분석했다고 알린 오류 수(`scanner_errors`, opengrep의 파일별 10초 시간 초과나 부분 파싱 등)가 들어 있다. 건너뛴 파일이 있으면 `scan skipped files` 기록에 처음 50개의 상대 경로(`paths`)와 전체 수(`total`)가 남는다. 경로의 제어 문자와 깨진 UTF-8은 `U+FFFD`로 바뀐다. 읽지 못한 폴더는 수만 `skipped`에 들어가고 경로는 남지 않는다. 건너뛴 파일의 이름(경로순 처음 200개, UTF-8이 아니거나 제어 문자가 든 경로는 빼고 수에만 센다)과 도구별 스캐너 오류 수는 데이터베이스에도 저장되어 스캔 화면의 "검사하지 못한 것"에 보인다.
@@ -39,6 +47,9 @@ docker compose up --build -d
 - OpenBao에 닿지 않으면 스캔은 `the secret store could not be reached; see the worker log`로 실패하고 postgres에는 항목을 하나도 저장하지 않는다. 그 실행이 실패하기 전에 OpenBao에 이미 보관한 원본은 남아 있다가, 그 프로젝트의 다음 스캔이 성공하면 그 스캔에 없는 것이 지워진다.
 - 커밋 해시는 프로젝트 폴더가 git 저장소 안에 있을 때만 기록한다. 저장소가 아니거나 커밋이 없으면 비워 둔다.
 - worker가 스캔 중에 멈추면 임대(2분)가 끝난 뒤 다시 실행한다. 세 번 멈추면 스캔이 `failed`로 끝난다.
+- worker는 스캔과 함께 적용의 점검(`apply-check`)과 적용(`apply`) 작업도 처리한다. 둘 다 `/workspace-rw`의 프로젝트 폴더를 git으로 확인하고, 저장소를 바꾸는 git 명령은 실행하지 않는다. `APPLY_WORKSPACE_ROOT`가 없으면 모든 점검이 `workspace-read-only`로, git이 없으면 `git-missing`으로 막힌다.
+- compose의 worker는 `restart: unless-stopped`다. worker가 적용 중에 죽으면 다시 뜬 worker가 임대(2분)가 끝난 뒤 그 작업을 이어 간다. 이어 가는 적용과 다음 점검은 먼저 기록과 디스크를 맞추고(이미 바꾼 파일은 적용된 것으로 센다), 저장이 확인된 값만 소스에서 지운다. 세 번 멈추면 적용이 `failed`로 끝난다.
+- 적용은 파일을 같은 폴더의 임시 파일(`<이름>.se-apply-<난수 16자리>.tmp`)에 쓴 뒤 바꿔 넣는다. 중간에 죽어 남은 임시 파일은 그 프로젝트의 다음 점검이나 적용이 지운다. 도구는 스스로 만들었다고 기록한 임시 파일만 지운다.
 
 ## 스캔을 끝까지 해 보기
 
@@ -79,7 +90,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
 
 | 서비스 | 내용 |
 |---|---|
-| `openbao-secrets` | 한 번 실행되고 끝난다. `openbao-secrets` 볼륨에 봉인 해제 키(`unseal/key`)와 AppRole secret-id(`worker/secret-id`, `web/secret-id`)를 난수로 만든다. 이미 있는 파일은 그대로 둔다 |
+| `openbao-secrets` | 한 번 실행되고 끝난다. `openbao-secrets` 볼륨에 봉인 해제 키(`unseal/key`)와 AppRole secret-id(`worker/secret-id`, `web/secret-id`)를 난수로 만든다. 이미 있는 파일은 그대로 두고, worker의 secret-id와 그 폴더의 소유자만 매번 `SE_UID`(기본 65532)로 맞춘다 |
 | `openbao` | 원본을 보관한다. 호스트에 포트를 열지 않고, compose 네트워크의 worker(쓰기)와 web(원본 보기의 읽기)만 쓴다. 데이터는 `openbao-data` 볼륨에 있다 |
 | `openbao-test` | `test` 프로필에서만 뜬다. 통합 테스트용 `-dev` 서버이며 `127.0.0.1:18200`에 열린다. 메모리에만 저장하고 루트 토큰은 `dev-only-openbao-test-root-token`이다 |
 
@@ -156,7 +167,8 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 | 이름 | 필수 | 내용 |
 |---|---|---|
 | `DATABASE_URL` | 예 | web과 같은 postgres 주소. worker도 기동할 때 마이그레이션을 실행한다 |
-| `WORKSPACE_ROOT` | 예 | 작업 공간 루트. 절대 경로이고 폴더여야 한다. compose에서는 `/workspace` |
+| `WORKSPACE_ROOT` | 예 | 스캔이 읽는 작업 공간 루트. 절대 경로이고 폴더여야 한다. compose에서는 읽기 전용 마운트 `/workspace` |
+| `APPLY_WORKSPACE_ROOT` | | 적용이 파일을 바꾸는 작업 공간 루트. `WORKSPACE_ROOT`와 같은 폴더를 읽기-쓰기로 마운트한 경로다. 절대 경로이고 폴더여야 한다. 비우면 적용의 모든 점검이 `workspace-read-only`로 막힌다. compose에서는 `/workspace-rw` |
 | `BAO_ADDR` | 예 | OpenBao 주소. compose에서는 `http://openbao:8200` |
 | `BAO_ROLE_ID` | 예 | AppRole role-id. compose에서는 `se-worker` |
 | `BAO_SECRET_ID_FILE` | 예 | AppRole secret-id가 든 파일. 앞뒤 공백은 뗀다. compose에서는 `openbao-secrets` 볼륨의 `worker` 폴더만 `/run/secrets/openbao`에 읽기 전용으로 마운트하고 `/run/secrets/openbao/secret-id`를 쓴다. secret-id는 로그와 오류 메시지에 남지 않는다 |
@@ -164,7 +176,7 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 | `OPENGREP_BIN` | 예 | opengrep 실행 파일의 절대 경로. compose에서는 `/usr/local/bin/opengrep` |
 | `RULES_DIR` | 예 | 탐지 규칙 폴더의 절대 경로. `betterleaks.toml` 파일과 `opengrep` 폴더가 있어야 한다. compose에서는 `/rules` |
 | `SCAN_TEMP_DIR` | 예 | 스캐너의 HOME(`home`)과 TMPDIR(`tmp`), 스캔마다의 EUC-KR 사본(`copies/<스캔 ID>`)을 두는 폴더의 절대 경로. 없으면 worker가 만든다. tmpfs 위에 둔다. compose에서는 `/tmp/scan` |
-| `GIT_BIN` | | 커밋 해시를 읽는 git 실행 파일. 비우면 `/usr/bin/git`이 있을 때 그것을 쓰고, 없으면 커밋 해시를 기록하지 않는다 |
+| `GIT_BIN` | | 커밋 해시와 적용 전의 작업본 상태를 읽는 git 실행 파일. 비우면 `/usr/bin/git`이 있을 때 그것을 쓰고, 없으면 커밋 해시를 기록하지 않고 적용의 모든 점검이 `git-missing`으로 막힌다 |
 
 실행 파일이나 규칙 폴더가 없으면 worker가 기동하지 않는다. 기동할 때 규칙 버전을 계산해 로그에 남긴다.
 

@@ -111,6 +111,9 @@ services:
   openbao-secrets:
     image: openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
     entrypoint: ["/bin/sh", "/make-secrets.sh"]
+    environment:
+      # The user the worker runs as, which must own the worker's secret-id.
+      SE_UID: ${SE_UID:-65532}
     volumes:
       - ./deploy/openbao/make-secrets.sh:/make-secrets.sh:ro
       - openbao-secrets:/secrets
@@ -239,6 +242,7 @@ services:
     environment:
       DATABASE_URL: postgres://se_app:dev-only-se-app-password@postgres:5432/secret_externalizer # local development only
       WORKSPACE_ROOT: /workspace
+      APPLY_WORKSPACE_ROOT: /workspace-rw
       BAO_ADDR: http://openbao:8200
       BAO_ROLE_ID: se-worker
       BAO_SECRET_ID_FILE: /run/secrets/openbao/secret-id
@@ -250,8 +254,11 @@ services:
       # UTF-8 copies of a scan's EUC-KR files, removed when the scan ends.
       SCAN_TEMP_DIR: /tmp/scan
     volumes:
-      # The workspace is read-only: scans read it and never change it.
+      # The same host folder twice. Scans and the scanners use only the
+      # read-only mount; only an apply the user confirmed changes files,
+      # through the read-write mount.
       - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace:ro
+      - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace-rw
       # Only the worker's own directory of the openbao-secrets volume, so the
       # worker cannot read the unseal key or the web role's secret-id.
       - type: volume
@@ -260,7 +267,9 @@ services:
         read_only: true
         volume:
           subpath: worker
-    user: "65532:65532"
+    # Files an apply writes belong to this user. On a Linux host, set
+    # SE_UID=$(id -u) SE_GID=$(id -g) so that is the owner of the workspace.
+    user: "${SE_UID:-65532}:${SE_GID:-65532}"
     read_only: true
     tmpfs:
       # Holds the UTF-8 copies of the EUC-KR files of the scan that is
@@ -271,6 +280,8 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 15s
+    # A worker that stopped takes up its jobs again once their leases end.
+    restart: unless-stopped
     depends_on:
       postgres:
         condition: service_healthy
