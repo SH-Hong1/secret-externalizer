@@ -534,8 +534,10 @@ func finishRun(ctx context.Context, tx pgx.Tx, id apply.ID, from []string, state
 }
 
 // requestRescan adds, in tx, the scan that confirms the changes of run id
-// and its job, when the run has an applied item, and records the scan as
-// the run's rescan. The scan is requested by whoever requested the run. It
+// and its job, when the run has an item that is applied or still writing,
+// and records the scan as the run's rescan. A writing item's file may have
+// been renamed although its record was not written; a scan that finds the
+// file unchanged costs only the scan. The scan is requested by whoever requested the run. It
 // runs after the run is closed, so the exclusion of scans and applies does
 // not refuse it. It returns ErrScanActive when the project already has a
 // queued or running scan, which the exclusion keeps from happening.
@@ -544,7 +546,7 @@ func requestRescan(ctx context.Context, tx pgx.Tx, id apply.ID) error {
 	err := tx.QueryRow(ctx, `
 		INSERT INTO scan (project_id, requested_by, requester_name, apply_id)
 		SELECT project_id, requested_by, requester_name, id FROM apply_run r
-		WHERE id = $1 AND EXISTS (SELECT 1 FROM apply_item WHERE apply_id = r.id AND status = 'applied')
+		WHERE id = $1 AND EXISTS (SELECT 1 FROM apply_item WHERE apply_id = r.id AND status IN ('applied', 'writing'))
 		RETURNING id`, id).Scan(&scanID)
 	var pgErr *pgconn.PgError
 	switch {
@@ -584,8 +586,8 @@ func lockRunProject(ctx context.Context, tx pgx.Tx, id apply.ID) error {
 // transaction: items are merged into the run's items, never replacing one
 // that is writing or applied, or failed for a reason other than an
 // interruption; the run becomes succeeded with its
-// finish time and counts; the job is done. When the run has an applied
-// item, the same transaction then requests the scan that confirms the
+// finish time and counts; the job is done. When the run has an applied or
+// a writing item, the same transaction then requests the scan that confirms the
 // changes (requestRescan); if that fails, nothing is saved. It returns
 // job.ErrLeaseLost, saving nothing, when the worker does not hold the job,
 // and ErrNotFound when the run is not running.
@@ -610,9 +612,9 @@ func (s *Store) FinishApply(ctx context.Context, jobID int64, workerID string, i
 // one of the fixed failure reasons (knownFailureReason), and blockers.
 // items, which only an apply may give, are merged into the run's items as
 // FinishApply merges them; the run's other items and its file records stay
-// as they are. A run that changed a file before it failed (it has an
-// applied item) gets its confirmation scan in the same transaction, as in
-// FinishApply. It returns job.ErrLeaseLost, changing nothing, when the
+// as they are. A run that may have changed a file before it failed (it has
+// an applied or a writing item) gets its confirmation scan in the same
+// transaction, as in FinishApply. It returns job.ErrLeaseLost, changing nothing, when the
 // worker does not hold the job, and ErrNotFound when the run is in no state
 // a job works on.
 func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id apply.ID, reason string,

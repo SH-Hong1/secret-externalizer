@@ -947,6 +947,53 @@ func TestMoveFinding_KeepsAppliedPlaces(t *testing.T) {
 	}
 }
 
+// TestMoveFinding_SettledItemsDoNotBlock moves findings whose apply items
+// are failed, interrupted or skipped: no apply changed those places, so they
+// move as any other finding does.
+func TestMoveFinding_SettledItemsDoNotBlock(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, _, pw, _ := decidedProject(t, s, "shop")
+	// e.ini stays in the bundle, so none of the moved findings is its last.
+	save(t, s, pid, append(mixed(), password("conf/d.properties"), password("conf/e.ini"))...)
+	id, j := claimApply(t, s, pid)
+	interrupted := replaceItem(t, s, pid, pw, "conf/a.yml")
+	beginFile(t, s, id, "conf/a.yml", hashOf("1"), interrupted)
+	for _, f := range openFiles(t, s, pid) {
+		if err := s.ResolveFile(ctx, f, false); err != nil {
+			t.Fatalf("ResolveFile(%q, not done) error = %v", f.File, err)
+		}
+	}
+	failed := replaceItem(t, s, pid, pw, "conf/b.xml")
+	failed.Status, failed.Reason = apply.StatusFailed, apply.ReasonStoreFailed
+	skipped := replaceItem(t, s, pid, pw, "conf/d.properties")
+	skipped.Status, skipped.Reason = apply.StatusSkipped, apply.ReasonFileChanged
+	if err := s.FailApply(ctx, j.ID, "worker-a", id, apply.FailureSecretStore, nil, []apply.Item{failed, skipped}); err != nil {
+		t.Fatalf("FailApply(%d) error = %v", id, err)
+	}
+	statuses := map[string]apply.Reason{}
+	for _, it := range applyItems(t, s, id) {
+		statuses[it.File] = it.Reason
+	}
+	want := map[string]apply.Reason{
+		"conf/a.yml": apply.ReasonInterrupted, "conf/b.xml": apply.ReasonStoreFailed, "conf/d.properties": apply.ReasonFileChanged,
+	}
+	if diff := cmp.Diff(want, statuses); diff != "" {
+		t.Fatalf("ApplyItems(%d) reasons (-want +got):\n%s", id, diff)
+	}
+
+	for _, file := range []string{"conf/a.yml", "conf/b.xml", "conf/d.properties"} {
+		moved, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, file), 0, tester)
+		if err != nil {
+			t.Errorf("MoveFinding(%s, new bundle) with a %s item error = %v, want nil", file, want[file], err)
+			continue
+		}
+		if moved == pw || bundleOf(t, s, pid, fpA, file) != moved {
+			t.Errorf("MoveFinding(%s, new bundle) = %d, want a new bundle holding it", file, moved)
+		}
+	}
+}
+
 func TestMoveFinding_KeepsLastFindingOfAppliedBundle(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()

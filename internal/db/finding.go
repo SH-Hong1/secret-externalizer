@@ -212,8 +212,10 @@ func (s *Store) CategoryCounts(ctx context.Context, id scan.ID) ([]scan.Category
 }
 
 // Reappeared returns the number of findings the scan found that are in a
-// bundle an apply externalized: values an apply replaced that the scan
-// still finds in the source.
+// bundle with an apply time, that is a bundle whose value an apply stored
+// in the secret store: values of applied bundles that the scan still finds
+// in the source, whether at a place an apply replaced or at one it never
+// replaced (a member the apply skipped or that was found after it).
 func (s *Store) Reappeared(ctx context.Context, id scan.ID) (int, error) {
 	var n int
 	err := s.pool.QueryRow(ctx, `

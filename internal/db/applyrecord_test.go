@@ -1003,8 +1003,8 @@ func TestFinishApply_RequestsRescan(t *testing.T) {
 		if err != nil {
 			t.Fatalf("InsertRawScanJob(%d) error = %v", pid, err)
 		}
-		if err := s.FinishApply(ctx, j.ID, "worker-a", id, nil); err == nil {
-			t.Fatalf("FinishApply(%d) with a scan in the way error = nil, want an error", id)
+		if err := s.FinishApply(ctx, j.ID, "worker-a", id, nil); !errors.Is(err, db.ErrScanActive) {
+			t.Fatalf("FinishApply(%d) with a scan in the way error = %v, want ErrScanActive", id, err)
 		}
 		if r := readRun(t, s, id); r.State != apply.StateRunning || r.RescanID != 0 || !r.FinishedAt.IsZero() {
 			t.Errorf("ApplyRun(%d) after a failed finish = %+v, want running, no confirmation scan", id, r)
@@ -1022,6 +1022,7 @@ func TestFailApply_RequestsRescan(t *testing.T) {
 	t.Run("files changed", func(t *testing.T) {
 		s := newMigratedStore(t)
 		pid, _, pw, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
 		id, j := claimApply(t, s, pid)
 		writeFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
 		if err := s.FailApply(t.Context(), j.ID, "worker-a", id, apply.FailureManifestWrite, nil, nil); err != nil {
@@ -1031,6 +1032,47 @@ func TestFailApply_RequestsRescan(t *testing.T) {
 			t.Errorf("ApplyRun(%d) = %+v, want failed with 1 applied", id, r)
 		}
 		assertRescan(t, s, pid, id)
+		if n := jobsOfKind(t, s, "scan"); n != scans+1 {
+			t.Errorf("scan jobs after failing = %d, want %d", n, scans+1)
+		}
+	})
+	// A file announced and not confirmed may have been renamed although its
+	// record failed; the run is rescanned as if it had changed the file.
+	t.Run("file being written", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, pw, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
+		id, j := claimApply(t, s, pid)
+		beginFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+		if err := s.FailApply(t.Context(), j.ID, "worker-a", id, apply.FailureOther, nil, nil); err != nil {
+			t.Fatalf("FailApply(%d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateFailed || r.Applied != 0 {
+			t.Errorf("ApplyRun(%d) = %+v, want failed with nothing applied", id, r)
+		}
+		assertRescan(t, s, pid, id)
+		if n := jobsOfKind(t, s, "scan"); n != scans+1 {
+			t.Errorf("scan jobs after failing = %d, want %d", n, scans+1)
+		}
+	})
+	t.Run("check", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, _, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
+		id := requestCheck(t, s, pid)
+		j, err := s.ClaimJob(t.Context(), "worker-a", time.Minute)
+		if err != nil {
+			t.Fatalf("ClaimJob() error = %v", err)
+		}
+		if err := s.FailApply(t.Context(), j.ID, "worker-a", id, apply.FailureNotRepository, nil, nil); err != nil {
+			t.Fatalf("FailApply(check %d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateFailed || r.RescanID != 0 {
+			t.Errorf("ApplyRun(%d) = %+v, want failed with no confirmation scan", id, r)
+		}
+		if n := jobsOfKind(t, s, "scan"); n != scans {
+			t.Errorf("scan jobs after failing the check = %d, want %d", n, scans)
+		}
 	})
 	t.Run("nothing changed", func(t *testing.T) {
 		s := newMigratedStore(t)
