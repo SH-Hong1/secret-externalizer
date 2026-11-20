@@ -50,13 +50,15 @@ func redactItem(t *testing.T, s *db.Store, pid project.ID, bundle triage.BundleI
 // writeFile announces and confirms a change of file by run id.
 func writeFile(t *testing.T, s *db.Store, id apply.ID, file, after string, items ...apply.Item) {
 	t.Helper()
-	beginFile(t, s, id, file, after, items...)
-	if err := s.EndFile(t.Context(), id, file); err != nil {
+	temp := beginFile(t, s, id, file, after, items...)
+	if err := s.EndFile(t.Context(), id, file, after, temp); err != nil {
 		t.Fatalf("EndFile(%d, %q) error = %v", id, file, err)
 	}
 }
 
-func beginFile(t *testing.T, s *db.Store, id apply.ID, file, after string, items ...apply.Item) {
+// beginFile announces a change of file by run id to the hash after and
+// returns the temporary file name it announced.
+func beginFile(t *testing.T, s *db.Store, id apply.ID, file, after string, items ...apply.Item) string {
 	t.Helper()
 	temp := ""
 	if after != "" {
@@ -65,6 +67,7 @@ func beginFile(t *testing.T, s *db.Store, id apply.ID, file, after string, items
 	if err := s.BeginFile(t.Context(), id, file, fileHash, after, temp, items); err != nil {
 		t.Fatalf("BeginFile(%d, %q) error = %v", id, file, err)
 	}
+	return temp
 }
 
 func applyItems(t *testing.T, s *db.Store, id apply.ID) []apply.Item {
@@ -325,6 +328,21 @@ func TestSaveCheck(t *testing.T) {
 			t.Errorf("ApplyJob(%d, apply-check) = %+v, %v, want still running", id, jr, err)
 		}
 	})
+	t.Run("same location twice", func(t *testing.T) {
+		pid, _, pw, _ := decidedProject(t, s, "twice")
+		id := requestCheck(t, s, pid)
+		j, err := s.ClaimJob(ctx, "worker-a", time.Minute)
+		if err != nil {
+			t.Fatalf("ClaimJob() error = %v", err)
+		}
+		it := replaceItem(t, s, pid, pw, "conf/a.yml")
+		if err := s.SaveCheck(ctx, j.ID, "worker-a", id, nil, nil, nil, []apply.Item{it, it}); err == nil {
+			t.Errorf("SaveCheck(two items at one location) error = nil, want an error")
+		}
+		if r := readRun(t, s, id); r.State != apply.StateChecking {
+			t.Errorf("ApplyRun(%d) after a refused save = %s, want checking", id, r.State)
+		}
+	})
 	t.Run("blocked", func(t *testing.T) {
 		pid, _, _, _ := decidedProject(t, s, "blocked")
 		id := requestCheck(t, s, pid)
@@ -375,7 +393,13 @@ func TestBeginEndFile(t *testing.T) {
 		t.Errorf("ApplyItems(%d) after a second BeginFile = %d items, want 1", id, len(got))
 	}
 
-	if err := s.EndFile(ctx, id, "conf/a.yml"); err != nil {
+	if err := s.EndFile(ctx, id, "conf/a.yml", hashOf("1"), tempOf("conf/a.yml")); !errors.Is(err, db.ErrSuperseded) {
+		t.Fatalf("EndFile(%d) of the first announcement error = %v, want ErrSuperseded", id, err)
+	}
+	if got := openFiles(t, s, pid); len(got) != 1 {
+		t.Fatalf("OpenFiles(%d) after a superseded EndFile = %+v, want the second announcement still open", pid, got)
+	}
+	if err := s.EndFile(ctx, id, "conf/a.yml", hashOf("2"), "conf/a.yml.se-apply-fedcba9876543210.tmp"); err != nil {
 		t.Fatalf("EndFile(%d) error = %v", id, err)
 	}
 	it.Status = apply.StatusApplied
@@ -391,7 +415,7 @@ func TestBeginEndFile(t *testing.T) {
 	if b := readBundle(t, s, pid, sid, pw); b.AppliedAt.IsZero() || b.StorePath != it.StorePath {
 		t.Errorf("Bundle(%d) after EndFile applied at %v, store path %q, want a time and %q", pw, b.AppliedAt, b.StorePath, it.StorePath)
 	}
-	if err := s.EndFile(ctx, id, "conf/a.yml"); err != nil {
+	if err := s.EndFile(ctx, id, "conf/a.yml", hashOf("2"), "conf/a.yml.se-apply-fedcba9876543210.tmp"); err != nil {
 		t.Errorf("EndFile(%d) of a written file error = %v, want nil", id, err)
 	}
 
@@ -399,7 +423,7 @@ func TestBeginEndFile(t *testing.T) {
 		if err := s.BeginFile(ctx, id, "secrets-manifest.yml", "", hashOf("3"), tempOf("secrets-manifest.yml"), nil); err != nil {
 			t.Fatalf("BeginFile(manifest) error = %v", err)
 		}
-		if err := s.EndFile(ctx, id, "secrets-manifest.yml"); err != nil {
+		if err := s.EndFile(ctx, id, "secrets-manifest.yml", hashOf("3"), tempOf("secrets-manifest.yml")); err != nil {
 			t.Fatalf("EndFile(manifest) error = %v", err)
 		}
 		if got := writtenFiles(t, s, pid)["secrets-manifest.yml"]; len(got) != 1 || got[0].AfterHash != hashOf("3") {
@@ -407,7 +431,7 @@ func TestBeginEndFile(t *testing.T) {
 		}
 	})
 	t.Run("refused", func(t *testing.T) {
-		if err := s.EndFile(ctx, id, "conf/none.yml"); !errors.Is(err, db.ErrNotFound) {
+		if err := s.EndFile(ctx, id, "conf/none.yml", hashOf("4"), tempOf("conf/none.yml")); !errors.Is(err, db.ErrNotFound) {
 			t.Errorf("EndFile(not announced) error = %v, want ErrNotFound", err)
 		}
 		other := it
@@ -581,14 +605,14 @@ func TestFailApply(t *testing.T) {
 	writeFile(t, s, id, "conf/a.yml", hashOf("1"), applied)
 
 	blockers := []apply.Blocker{apply.BlockerDirty}
-	if err := s.FailApply(ctx, j.ID, "worker-b", id, "conditions-changed", blockers); !errors.Is(err, job.ErrLeaseLost) {
+	if err := s.FailApply(ctx, j.ID, "worker-b", id, "the work tree has uncommitted changes", blockers); !errors.Is(err, job.ErrLeaseLost) {
 		t.Fatalf("FailApply(worker-b) error = %v, want ErrLeaseLost", err)
 	}
-	if err := s.FailApply(ctx, j.ID, "worker-a", id, "conditions-changed", blockers); err != nil {
+	if err := s.FailApply(ctx, j.ID, "worker-a", id, "the work tree has uncommitted changes", blockers); err != nil {
 		t.Fatalf("FailApply(%d) error = %v", id, err)
 	}
 	r := readRun(t, s, id)
-	if r.State != apply.StateFailed || r.FailureReason != "conditions-changed" || r.FinishedAt.IsZero() {
+	if r.State != apply.StateFailed || r.FailureReason != "the work tree has uncommitted changes" || r.FinishedAt.IsZero() {
 		t.Errorf("ApplyRun(%d) after failing = %+v, want failed with the reason and a finish time", id, r)
 	}
 	if diff := cmp.Diff(blockers, r.Blockers); diff != "" {
@@ -605,6 +629,20 @@ func TestFailApply(t *testing.T) {
 		t.Errorf("WrittenFiles(%d) after failing (-want +got):\n%s", pid, diff)
 	}
 
+	t.Run("unknown reason", func(t *testing.T) {
+		pid, _, _, _ := decidedProject(t, s, "reason")
+		id := requestCheck(t, s, pid)
+		j, err := s.ClaimJob(ctx, "worker-a", time.Minute)
+		if err != nil {
+			t.Fatalf("ClaimJob() error = %v", err)
+		}
+		if err := s.FailApply(ctx, j.ID, "worker-a", id, "fake reason from an error", nil); err == nil {
+			t.Errorf("FailApply(unknown reason) error = nil, want an error")
+		}
+		if r := readRun(t, s, id); r.State != apply.StateChecking || r.FailureReason != "" {
+			t.Errorf("ApplyRun(%d) after a refused failure = %+v, want unchanged", id, r)
+		}
+	})
 	t.Run("check", func(t *testing.T) {
 		pid, _, _, _ := decidedProject(t, s, "check")
 		id := requestCheck(t, s, pid)
@@ -612,14 +650,140 @@ func TestFailApply(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ClaimJob() error = %v", err)
 		}
-		if err := s.FailApply(ctx, j.ID, "worker-a", id, "check-failed", nil); err != nil {
+		if err := s.FailApply(ctx, j.ID, "worker-a", id, "the project folder is not a git work tree", nil); err != nil {
 			t.Fatalf("FailApply(check %d) error = %v", id, err)
 		}
-		if r := readRun(t, s, id); r.State != apply.StateFailed || r.FailureReason != "check-failed" {
+		if r := readRun(t, s, id); r.State != apply.StateFailed || r.FailureReason != "the project folder is not a git work tree" {
 			t.Errorf("ApplyRun(%d) after failing the check = %+v, want failed", id, r)
 		}
 		if jr, err := s.ApplyJob(ctx, int64(id), "apply-check"); err != nil || jr.State != "failed" {
 			t.Errorf("ApplyJob(%d, apply-check) = %+v, %v, want failed", id, jr, err)
 		}
 	})
+}
+
+// TestBeginFile_ReopensInterrupted follows a retry of a run that stopped
+// after announcing a file and before changing it: the next start settles the
+// record as not done, the retry announces the file again with the same
+// items, and confirming it applies them.
+func TestBeginFile_ReopensInterrupted(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, sid, pw, _ := decidedProject(t, s, "shop")
+	id := applyRunIn(t, s, pid, sid, apply.StateRunning)
+	it := replaceItem(t, s, pid, pw, "conf/a.yml")
+	beginFile(t, s, id, "conf/a.yml", hashOf("1"), it)
+	for _, f := range openFiles(t, s, pid) {
+		if err := s.ResolveFile(ctx, f, false); err != nil {
+			t.Fatalf("ResolveFile(%q, not done) error = %v", f.File, err)
+		}
+	}
+	if got := applyItems(t, s, id); len(got) != 1 || got[0].Status != apply.StatusFailed || got[0].Reason != apply.ReasonInterrupted {
+		t.Fatalf("ApplyItems(%d) after the interruption = %+v, want one failed, interrupted item", id, got)
+	}
+
+	writeFile(t, s, id, "conf/a.yml", hashOf("1"), it)
+	it.Status = apply.StatusApplied
+	if diff := cmp.Diff([]apply.Item{it}, applyItems(t, s, id)); diff != "" {
+		t.Errorf("ApplyItems(%d) after the retry (-want +got):\n%s", id, diff)
+	}
+	if b := readBundle(t, s, pid, sid, pw); b.AppliedAt.IsZero() || b.StorePath != it.StorePath {
+		t.Errorf("Bundle(%d) after the retry applied at %v, store path %q, want a time and %q", pw, b.AppliedAt, b.StorePath, it.StorePath)
+	}
+}
+
+func TestBeginFile_SettledItem(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, sid, pw, _ := decidedProject(t, s, "shop")
+	id := applyRunIn(t, s, pid, sid, apply.StateRunning)
+	applied := replaceItem(t, s, pid, pw, "conf/a.yml")
+	writeFile(t, s, id, "conf/a.yml", hashOf("1"), applied)
+	failed := replaceItem(t, s, pid, pw, "conf/b.xml")
+	failed.Status, failed.Reason = apply.StatusFailed, apply.ReasonWriteFailed
+	if err := s.InsertApplyItem(ctx, id, failed); err != nil {
+		t.Fatalf("InsertApplyItem(%d) error = %v", id, err)
+	}
+	before := applyItems(t, s, id)
+	wantWritten := writtenFiles(t, s, pid)
+
+	for _, it := range []apply.Item{applied, failed} {
+		other := it
+		other.FindingID, other.StartLine = 0, 99 // a new location, stored before the settled one
+		if err := s.BeginFile(ctx, id, it.File, fileHash, hashOf("2"), tempOf(it.File), []apply.Item{other, it}); !errors.Is(err, db.ErrItemSettled) {
+			t.Errorf("BeginFile(%q) with a %s item error = %v, want ErrItemSettled", it.File, it.Status, err)
+		}
+	}
+	if diff := cmp.Diff(before, applyItems(t, s, id)); diff != "" {
+		t.Errorf("ApplyItems(%d) after refused announcements (-want +got):\n%s", id, diff)
+	}
+	if got := openFiles(t, s, pid); len(got) != 0 {
+		t.Errorf("OpenFiles(%d) after refused announcements = %+v, want none", pid, got)
+	}
+	if diff := cmp.Diff(wantWritten, writtenFiles(t, s, pid)); diff != "" {
+		t.Errorf("WrittenFiles(%d) after refused announcements (-want +got):\n%s", pid, diff)
+	}
+}
+
+// TestBeginFile_RewriteWritten announces again a file the run has written,
+// as a retry that rewrites the manifest does, and settles the new record
+// both ways.
+func TestBeginFile_RewriteWritten(t *testing.T) {
+	const manifest = "secrets-manifest.yml"
+	for _, c := range []struct {
+		name   string
+		settle func(t *testing.T, s *db.Store, id apply.ID, f apply.OpenFile)
+		want   string
+	}{
+		{"not done", func(t *testing.T, s *db.Store, _ apply.ID, f apply.OpenFile) {
+			t.Helper()
+			if err := s.ResolveFile(t.Context(), f, false); err != nil {
+				t.Fatalf("ResolveFile(not done) error = %v", err)
+			}
+		}, hashOf("1")},
+		{"resolved done", func(t *testing.T, s *db.Store, _ apply.ID, f apply.OpenFile) {
+			t.Helper()
+			if err := s.ResolveFile(t.Context(), f, true); err != nil {
+				t.Fatalf("ResolveFile(done) error = %v", err)
+			}
+		}, hashOf("2")},
+		{"ended", func(t *testing.T, s *db.Store, id apply.ID, f apply.OpenFile) {
+			t.Helper()
+			if err := s.EndFile(t.Context(), id, f.File, f.AfterHash, f.TempName); err != nil {
+				t.Fatalf("EndFile() error = %v", err)
+			}
+		}, hashOf("2")},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			s := newMigratedStore(t)
+			pid, sid, _, _ := decidedProject(t, s, "shop")
+			id := applyRunIn(t, s, pid, sid, apply.StateRunning)
+			writeFile(t, s, id, manifest, hashOf("1"))
+			beginFile(t, s, id, manifest, hashOf("2"))
+			if got := writtenFiles(t, s, pid); len(got) != 0 {
+				t.Errorf("WrittenFiles(%d) while the rewrite is open = %+v, want none", pid, got)
+			}
+			open := openFiles(t, s, pid)
+			if len(open) != 1 {
+				t.Fatalf("OpenFiles(%d) = %+v, want the rewrite", pid, open)
+			}
+			c.settle(t, s, id, open[0])
+
+			if diff := cmp.Diff(map[string][]apply.Written{manifest: {{AfterHash: c.want}}}, writtenFiles(t, s, pid)); diff != "" {
+				t.Errorf("WrittenFiles(%d) (-want +got):\n%s", pid, diff)
+			}
+			if got := openFiles(t, s, pid); len(got) != 0 {
+				t.Errorf("OpenFiles(%d) = %+v, want none", pid, got)
+			}
+			// A later rewrite that does not happen goes back to what is
+			// written now, not to an older hash.
+			beginFile(t, s, id, manifest, hashOf("3"))
+			if err := s.ResolveFile(t.Context(), openFiles(t, s, pid)[0], false); err != nil {
+				t.Fatalf("ResolveFile(second rewrite, not done) error = %v", err)
+			}
+			if diff := cmp.Diff(map[string][]apply.Written{manifest: {{AfterHash: c.want}}}, writtenFiles(t, s, pid)); diff != "" {
+				t.Errorf("WrittenFiles(%d) after a second rewrite did not happen (-want +got):\n%s", pid, diff)
+			}
+		})
+	}
 }

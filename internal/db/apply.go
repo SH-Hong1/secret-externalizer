@@ -393,19 +393,15 @@ func (s *Store) ApplyItems(ctx context.Context, id apply.ID) ([]apply.Item, erro
 			return fmt.Errorf("reading items of apply run %d: %w", id, ErrNotFound)
 		}
 		rows, err := tx.Query(ctx, `
-			SELECT bundle_id, finding_id, file_path, start_line, start_col, line, action, category, kind, name,
-				store_path, store_version, tracked, code_change, status, reason
-			FROM apply_item WHERE apply_id = $1
+			SELECT `+itemColumns+` FROM apply_item WHERE apply_id = $1
 			ORDER BY file_path, start_line, start_col, id`, id)
 		if err != nil {
 			return fmt.Errorf("listing items of apply run %d: %w", id, err)
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var it apply.Item
-			if err := rows.Scan(&it.BundleID, &it.FindingID, &it.File, &it.StartLine, &it.StartCol, &it.Line, &it.Action,
-				&it.Category, &it.Kind, &it.Name, &it.StorePath, &it.StoreVersion, &it.Tracked, &it.CodeChange,
-				&it.Status, &it.Reason); err != nil {
+			it, err := scanItem(rows)
+			if err != nil {
 				return fmt.Errorf("reading apply item row: %w", err)
 			}
 			out = append(out, it)

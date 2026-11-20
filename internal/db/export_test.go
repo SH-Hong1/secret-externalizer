@@ -322,6 +322,14 @@ func (s *Store) ApplyRecords(ctx context.Context, applyID int64) (statuses []str
 	return statuses, written, err
 }
 
+// SetPrevAfterHash stores hash as the prev_after_hash of the apply_file
+// row of the run for file.
+func (s *Store) SetPrevAfterHash(ctx context.Context, applyID int64, file, hash string) error {
+	_, err := s.pool.Exec(ctx,
+		"UPDATE apply_file SET prev_after_hash = $3 WHERE apply_id = $1 AND file_path = $2", applyID, file, hash)
+	return err
+}
+
 // CloseApplyJob runs closeApplyJob.
 func (s *Store) CloseApplyJob(ctx context.Context, jobID int64, workerID string, applyID int64, kind job.Kind, state string, write func(pgx.Tx) error) error {
 	return s.closeApplyJob(ctx, jobID, workerID, applyID, kind, state, write)

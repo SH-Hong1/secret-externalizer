@@ -8,6 +8,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
+	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 )
@@ -20,6 +21,16 @@ import (
 // a run stops is settled by the next check or apply of the project through
 // OpenFiles and ResolveFile.
 
+// ErrItemSettled means an item given to BeginFile is already applied, or
+// failed for a reason other than an interruption, so the file must not
+// change for it.
+var ErrItemSettled = errors.New("an item of the file is already applied or failed")
+
+// ErrSuperseded means the record of a file was announced again, with
+// another hash or temporary file, since the change being confirmed was
+// announced.
+var ErrSuperseded = errors.New("the file was announced again")
+
 const itemColumns = `bundle_id, finding_id, file_path, start_line, start_col, line, action, category, kind, name,
 	store_path, store_version, tracked, code_change, status, reason`
 
@@ -31,15 +42,28 @@ func scanItem(row pgx.Row) (apply.Item, error) {
 	return it, err
 }
 
+// The rows of apply_item that a later write may replace: replaceByCheck for
+// a check, which starts from an empty list; replaceByBegin for BeginFile,
+// which may also reopen an item an earlier attempt of the run was
+// interrupted on before its file changed; replaceByFinish for FinishApply,
+// which never replaces an item that is writing, applied or failed.
+const (
+	replaceByCheck  = "false"
+	replaceByBegin  = "apply_item.status IN ('planned', 'skipped', 'writing') OR (apply_item.status = 'failed' AND apply_item.reason = 'interrupted')"
+	replaceByFinish = "apply_item.status IN ('planned', 'skipped')"
+)
+
 // upsertItems stores items as rows of the run. An item whose location the
-// run already has replaces that row only when the row's status is one of
-// replaceable; status, when not empty, is stored in place of each item's.
-func upsertItems(ctx context.Context, tx pgx.Tx, id apply.ID, items []apply.Item, status apply.Status, replaceable []string) error {
+// run already has replaces that row only when the row meets replaceable, a
+// condition from the constants above; status, when not empty, is stored in
+// place of each item's. With strict, an item that could not be stored is
+// ErrItemSettled.
+func upsertItems(ctx context.Context, tx pgx.Tx, id apply.ID, items []apply.Item, status apply.Status, replaceable string, strict bool) error {
 	for _, it := range items {
 		if status != "" {
 			it.Status, it.Reason = status, ""
 		}
-		if _, err := tx.Exec(ctx, `
+		tag, err := tx.Exec(ctx, `
 			INSERT INTO apply_item (apply_id, `+itemColumns+`)
 			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
 			ON CONFLICT (apply_id, finding_id, start_line, start_col) DO UPDATE SET
@@ -47,10 +71,14 @@ func upsertItems(ctx context.Context, tx pgx.Tx, id apply.ID, items []apply.Item
 				action = excluded.action, category = excluded.category, kind = excluded.kind, name = excluded.name,
 				store_path = excluded.store_path, store_version = excluded.store_version, tracked = excluded.tracked,
 				code_change = excluded.code_change, status = excluded.status, reason = excluded.reason
-			WHERE apply_item.status = ANY($18)`,
+			WHERE `+replaceable,
 			id, it.BundleID, it.FindingID, it.File, it.StartLine, it.StartCol, it.Line, it.Action, it.Category, it.Kind,
-			it.Name, it.StorePath, it.StoreVersion, it.Tracked, it.CodeChange, it.Status, it.Reason, replaceable); err != nil {
+			it.Name, it.StorePath, it.StoreVersion, it.Tracked, it.CodeChange, it.Status, it.Reason)
+		if err != nil {
 			return fmt.Errorf("storing item of apply %d: %w", id, err)
+		}
+		if strict && tag.RowsAffected() == 0 {
+			return fmt.Errorf("storing item of finding %d in apply %d: %w", it.FindingID, id, ErrItemSettled)
 		}
 	}
 	return nil
@@ -168,9 +196,11 @@ func (s *Store) OpenFiles(ctx context.Context, projectID project.ID) ([]apply.Op
 
 // ResolveFile closes an open file. done marks it written, its writing
 // items applied and their bundles applied; otherwise the items become
-// failed with reason interrupted and the row is removed. A record that is
-// already closed, or that was announced again with another hash or
-// temporary file since f was read, is left as it is.
+// failed with reason interrupted and the record is removed, or, when it
+// announced again a change the run had already written, goes back to that
+// written change. A record that is already closed, or that was announced
+// again with another hash or temporary file since f was read, is left as
+// it is.
 func (s *Store) ResolveFile(ctx context.Context, f apply.OpenFile, done bool) (err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -179,18 +209,15 @@ func (s *Store) ResolveFile(ctx context.Context, f apply.OpenFile, done bool) (e
 	defer rollback(ctx, tx, &err)
 
 	if done {
-		if _, err := markWritten(ctx, tx, f.Run, f.File, "AND after_hash = $3 AND temp_name = $4", f.AfterHash, f.TempName); err != nil {
+		if _, err := markWritten(ctx, tx, f.Run, f.File, f.AfterHash, f.TempName); err != nil {
 			return err
 		}
 	} else {
-		tag, err := tx.Exec(ctx, `
-			DELETE FROM apply_file
-			WHERE apply_id = $1 AND file_path = $2 AND NOT written AND after_hash = $3 AND temp_name = $4`,
-			f.Run, f.File, f.AfterHash, f.TempName)
+		closed, err := undoAnnouncement(ctx, tx, f)
 		if err != nil {
-			return fmt.Errorf("removing file record of apply %d: %w", f.Run, err)
+			return err
 		}
-		if tag.RowsAffected() > 0 {
+		if closed {
 			if _, err := tx.Exec(ctx, `
 				UPDATE apply_item SET status = 'failed', reason = 'interrupted'
 				WHERE apply_id = $1 AND file_path = $2 AND status = 'writing'`, f.Run, f.File); err != nil {
@@ -204,14 +231,41 @@ func (s *Store) ResolveFile(ctx context.Context, f apply.OpenFile, done bool) (e
 	return nil
 }
 
-// markWritten marks the open record of file in run id written, the file's
-// writing items applied, and the bundles of the items that stored a value
-// applied with their store path. cond narrows the record with args from $3
-// on. It reports whether there was such an open record.
-func markWritten(ctx context.Context, tx pgx.Tx, id apply.ID, file, cond string, args ...any) (bool, error) {
-	tag, err := tx.Exec(ctx,
-		"UPDATE apply_file SET written = true WHERE apply_id = $1 AND file_path = $2 AND NOT written "+cond,
-		append([]any{id, file}, args...)...)
+// undoAnnouncement closes the open record f that did not happen: a record
+// that announced again a change the run had written goes back to that
+// change, any other is removed. It reports whether there was such an open
+// record.
+func undoAnnouncement(ctx context.Context, tx pgx.Tx, f apply.OpenFile) (bool, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE apply_file SET written = true, after_hash = prev_after_hash, prev_after_hash = NULL, temp_name = ''
+		WHERE apply_id = $1 AND file_path = $2 AND NOT written AND after_hash = $3 AND temp_name = $4
+			AND prev_after_hash IS NOT NULL`,
+		f.Run, f.File, f.AfterHash, f.TempName)
+	if err != nil {
+		return false, fmt.Errorf("restoring file record of apply %d: %w", f.Run, err)
+	}
+	if tag.RowsAffected() > 0 {
+		return true, nil
+	}
+	tag, err = tx.Exec(ctx, `
+		DELETE FROM apply_file
+		WHERE apply_id = $1 AND file_path = $2 AND NOT written AND after_hash = $3 AND temp_name = $4`,
+		f.Run, f.File, f.AfterHash, f.TempName)
+	if err != nil {
+		return false, fmt.Errorf("removing file record of apply %d: %w", f.Run, err)
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+// markWritten marks the open record of file in run id that announced
+// afterHash through tempName written, the file's writing items applied, and
+// the bundles of the project's items that stored a value applied with their
+// store path. It reports whether there was such an open record.
+func markWritten(ctx context.Context, tx pgx.Tx, id apply.ID, file, afterHash, tempName string) (bool, error) {
+	tag, err := tx.Exec(ctx, `
+		UPDATE apply_file SET written = true, prev_after_hash = NULL
+		WHERE apply_id = $1 AND file_path = $2 AND NOT written AND after_hash = $3 AND temp_name = $4`,
+		id, file, afterHash, tempName)
 	if err != nil {
 		return false, fmt.Errorf("marking file of apply %d written: %w", id, err)
 	}
@@ -226,7 +280,8 @@ func markWritten(ctx context.Context, tx pgx.Tx, id apply.ID, file, cond string,
 		)
 		UPDATE bundle b SET applied_at = coalesce(b.applied_at, now()), store_path = d.store_path
 		FROM done d
-		WHERE b.id = d.bundle_id AND d.action IN ('replace', 'remove-file') AND d.store_path <> ''`,
+		WHERE b.id = d.bundle_id AND d.action IN ('replace', 'remove-file') AND d.store_path <> ''
+			AND b.project_id = (SELECT project_id FROM apply_run WHERE id = $1)`,
 		id, file); err != nil {
 		return false, fmt.Errorf("marking items of apply %d applied: %w", id, err)
 	}
@@ -274,10 +329,20 @@ func (s *Store) WrittenFiles(ctx context.Context, projectID project.ID) (map[str
 func (s *Store) SaveCheck(ctx context.Context, jobID int64, workerID string, id apply.ID, blockers []apply.Blocker,
 	dirty, irreversible []string, items []apply.Item,
 ) error {
+	type location struct {
+		finding             finding.ID
+		startLine, startCol int
+	}
+	seen := make(map[location]bool, len(items))
 	for _, it := range items {
 		if it.Status != apply.StatusPlanned && it.Status != apply.StatusSkipped {
 			return fmt.Errorf("saving check of apply %d: item status %q is neither planned nor skipped", id, it.Status)
 		}
+		l := location{it.FindingID, it.StartLine, it.StartCol}
+		if seen[l] {
+			return fmt.Errorf("saving check of apply %d: two items of finding %d at %d:%d", id, it.FindingID, it.StartLine, it.StartCol)
+		}
+		seen[l] = true
 	}
 	state := apply.StateReady
 	if len(blockers) > 0 {
@@ -303,7 +368,7 @@ func (s *Store) SaveCheck(ctx context.Context, jobID int64, workerID string, id 
 		if _, err := tx.Exec(ctx, "DELETE FROM apply_item WHERE apply_id = $1", id); err != nil {
 			return fmt.Errorf("clearing items of apply %d: %w", id, err)
 		}
-		return upsertItems(ctx, tx, id, items, "", nil)
+		return upsertItems(ctx, tx, id, items, "", replaceByCheck, false)
 	})
 }
 
@@ -319,9 +384,14 @@ func nonNil(list []string) []string {
 // file from beforeHash to afterHash through the temporary file tempName,
 // and marks items, which must all be in file, writing, in one transaction.
 // beforeHash is empty for a file the run creates; afterHash and tempName are
-// empty for a removal. Announcing the same file again replaces the record.
-// An item that is already applied or failed keeps its row. It returns
-// ErrNotFound when the run is not running.
+// empty for a removal. Announcing the same file again replaces the record;
+// when the run had already written a change of the file, the record keeps
+// that change's hash, and ResolveFile goes back to it if the new change does
+// not happen. An item an earlier attempt of the run was interrupted on is
+// reopened. It returns ErrItemSettled, writing nothing, when an item is
+// already applied or failed for another reason, since the file must not
+// change unless every item it is changed for is writing; and ErrNotFound
+// when the run is not running.
 func (s *Store) BeginFile(ctx context.Context, id apply.ID, file, beforeHash, afterHash, tempName string, items []apply.Item) (err error) {
 	for _, it := range items {
 		if it.File != file {
@@ -347,11 +417,12 @@ func (s *Store) BeginFile(ctx context.Context, id apply.ID, file, beforeHash, af
 		VALUES ($1, $2, $3, $4, $5)
 		ON CONFLICT (apply_id, file_path) DO UPDATE SET
 			before_hash = excluded.before_hash, after_hash = excluded.after_hash, temp_name = excluded.temp_name,
-			written = false`,
+			written = false,
+			prev_after_hash = CASE WHEN apply_file.written THEN apply_file.after_hash ELSE apply_file.prev_after_hash END`,
 		id, file, beforeHash, afterHash, tempName); err != nil {
 		return fmt.Errorf("announcing file of apply %d: %w", id, err)
 	}
-	if err := upsertItems(ctx, tx, id, items, apply.StatusWriting, []string{"planned", "skipped", "writing"}); err != nil {
+	if err := upsertItems(ctx, tx, id, items, apply.StatusWriting, replaceByBegin, true); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -360,30 +431,37 @@ func (s *Store) BeginFile(ctx context.Context, id apply.ID, file, beforeHash, af
 	return nil
 }
 
-// EndFile records, after the change, that run id changed file as announced:
-// the record is written, the file's writing items applied, and their
-// bundles applied with their store path, in one transaction. Calling it for
-// a record already written does nothing. It returns ErrNotFound when the
-// run announced no change of file.
-func (s *Store) EndFile(ctx context.Context, id apply.ID, file string) (err error) {
+// EndFile records, after the change, that run id changed file as announced
+// with afterHash through tempName, the values given to BeginFile: the
+// record is written, the file's writing items applied, and their bundles
+// applied with their store path, in one transaction. Calling it again for
+// the same announcement does nothing. It returns ErrSuperseded, changing
+// nothing, when the file's record now holds another announcement, and
+// ErrNotFound when the run announced no change of file.
+func (s *Store) EndFile(ctx context.Context, id apply.ID, file, afterHash, tempName string) (err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
 	}
 	defer rollback(ctx, tx, &err)
 
-	marked, err := markWritten(ctx, tx, id, file, "")
+	marked, err := markWritten(ctx, tx, id, file, afterHash, tempName)
 	if err != nil {
 		return err
 	}
 	if !marked {
-		var exists bool
-		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM apply_file WHERE apply_id = $1 AND file_path = $2)", id, file).
-			Scan(&exists); err != nil {
+		var same bool
+		err := tx.QueryRow(ctx, `
+			SELECT written AND after_hash = $3 AND temp_name = $4 FROM apply_file WHERE apply_id = $1 AND file_path = $2`,
+			id, file, afterHash, tempName).Scan(&same)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("confirming file of apply %d: %w", id, ErrNotFound)
+		}
+		if err != nil {
 			return fmt.Errorf("reading file record of apply %d: %w", id, err)
 		}
-		if !exists {
-			return fmt.Errorf("confirming file of apply %d: %w", id, ErrNotFound)
+		if !same {
+			return fmt.Errorf("confirming file of apply %d: %w", id, ErrSuperseded)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -455,7 +533,7 @@ func finishRun(ctx context.Context, tx pgx.Tx, id apply.ID, from []string, state
 // when the run is not running.
 func (s *Store) FinishApply(ctx context.Context, jobID int64, workerID string, id apply.ID, items []apply.Item) error {
 	return s.closeApplyJob(ctx, jobID, workerID, int64(id), job.KindApply, "done", func(tx pgx.Tx) error {
-		if err := upsertItems(ctx, tx, id, items, "", []string{"planned", "skipped"}); err != nil {
+		if err := upsertItems(ctx, tx, id, items, "", replaceByFinish, false); err != nil {
 			return err
 		}
 		return finishRun(ctx, tx, id, []string{"running"}, apply.StateSucceeded, "", nil)
@@ -464,12 +542,15 @@ func (s *Store) FinishApply(ctx context.Context, jobID int64, workerID string, i
 
 // FailApply closes the job the worker holds for run id as failed, in one
 // transaction, and the run with it: a checking run's apply-check job, or a
-// queued or running run's apply job. The run keeps reason, which must be a
-// fixed code and never text from an error, and blockers. Its items and file
-// records stay as they are. It returns job.ErrLeaseLost, changing nothing,
+// queued or running run's apply job. The run keeps reason, which must be
+// one of the fixed failure reasons (knownFailureReason), and blockers. Its
+// items and file records stay as they are. It returns job.ErrLeaseLost, changing nothing,
 // when the worker does not hold the job, and ErrNotFound when the run is in
 // no state a job works on.
 func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id apply.ID, reason string, blockers []apply.Blocker) error {
+	if !knownFailureReason(reason) {
+		return fmt.Errorf("failing apply %d: the reason is not one of the fixed failure reasons", id)
+	}
 	var state apply.State
 	err := s.pool.QueryRow(ctx, "SELECT state FROM apply_run WHERE id = $1", id).Scan(&state)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -495,4 +576,21 @@ func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id 
 	return s.closeApplyJob(ctx, jobID, workerID, int64(id), kind, "failed", func(tx pgx.Tx) error {
 		return finishRun(ctx, tx, id, from, apply.StateFailed, reason, blockers)
 	})
+}
+
+// knownFailureReason reports whether reason is one of the fixed reasons a
+// check or an apply fails with, the only ones FailApply stores.
+func knownFailureReason(reason string) bool {
+	switch reason {
+	case "the work tree has uncommitted changes",
+		"the project folder is not a git work tree",
+		"the repository configuration is not safe to read",
+		"the existing manifest could not be read",
+		"the verdicts changed after the check",
+		"the secret store could not be reached; see the worker log",
+		"apply took longer than the time limit",
+		"apply could not finish; see the worker log":
+		return true
+	}
+	return false
 }

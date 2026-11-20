@@ -63,14 +63,18 @@ CREATE TABLE apply_item (
 -- One file an apply changes, written down before the change. before_hash is
 -- empty for a file the apply creates (the manifest), and after_hash is empty
 -- for a removal. temp_name is the temporary file the change goes through,
--- relative to the project folder, empty for a removal.
+-- relative to the project folder, empty for a removal. prev_after_hash is
+-- set while a change the run already wrote is announced again: it holds the
+-- hash that change left, which the record goes back to if the new change
+-- did not happen.
 CREATE TABLE apply_file (
-    apply_id    bigint NOT NULL REFERENCES apply_run (id),
-    file_path   text NOT NULL,
-    before_hash text NOT NULL CHECK (before_hash ~ '^([0-9a-f]{64})?$'),
-    after_hash  text NOT NULL CHECK (after_hash ~ '^([0-9a-f]{64})?$'),
-    temp_name   text NOT NULL DEFAULT '',
-    written     boolean NOT NULL DEFAULT false,
+    apply_id        bigint NOT NULL REFERENCES apply_run (id),
+    file_path       text NOT NULL,
+    before_hash     text NOT NULL CHECK (before_hash ~ '^([0-9a-f]{64})?$'),
+    after_hash      text NOT NULL CHECK (after_hash ~ '^([0-9a-f]{64})?$'),
+    temp_name       text NOT NULL DEFAULT '',
+    written         boolean NOT NULL DEFAULT false,
+    prev_after_hash text CHECK (prev_after_hash ~ '^([0-9a-f]{64})?$'),
     PRIMARY KEY (apply_id, file_path)
 );
 CREATE INDEX apply_file_open ON apply_file (apply_id) WHERE NOT written;

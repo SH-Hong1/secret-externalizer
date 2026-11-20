@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -359,6 +360,20 @@ func TestMigration0007(t *testing.T) {
 	}
 	if _, err := s.ClaimJob(ctx, "worker-a", time.Minute); !errors.Is(err, job.ErrNoJob) {
 		t.Errorf("ClaimJob() of the leased and done jobs error = %v, want ErrNoJob", err)
+	}
+
+	applyID := newApplyRun(t, s, "apply", "running", job.KindApply)
+	if err := s.InsertApplyRecords(ctx, applyID, "conf/db.properties"); err != nil {
+		t.Fatalf("InsertApplyRecords(%d) error = %v", applyID, err)
+	}
+	for _, c := range []struct {
+		hash string
+		ok   bool
+	}{{strings.Repeat("d", 64), true}, {"", true}, {"not-a-hash", false}} {
+		err := s.SetPrevAfterHash(ctx, applyID, "conf/db.properties", c.hash)
+		if (err == nil) != c.ok {
+			t.Errorf("SetPrevAfterHash(%q) error = %v, want accepted %t", c.hash, err, c.ok)
+		}
 	}
 }
 
