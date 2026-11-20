@@ -112,8 +112,10 @@ services:
     image: openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
     entrypoint: ["/bin/sh", "/make-secrets.sh"]
     environment:
-      # The user the worker runs as, which must own the worker's secret-id.
+      # The user and group the worker runs as; the user must own the
+      # worker's secret-id. The script refuses root and non-numbers.
       SE_UID: ${SE_UID:-65532}
+      SE_GID: ${SE_GID:-65532}
     volumes:
       - ./deploy/openbao/make-secrets.sh:/make-secrets.sh:ro
       - openbao-secrets:/secrets
@@ -254,9 +256,11 @@ services:
       # UTF-8 copies of a scan's EUC-KR files, removed when the scan ends.
       SCAN_TEMP_DIR: /tmp/scan
     volumes:
-      # The same host folder twice. Scans and the scanners use only the
-      # read-only mount; only an apply the user confirmed changes files,
-      # through the read-write mount.
+      # The same host folder twice. Scans give the scanners only paths
+      # under the read-only mount; only an apply the user confirmed changes
+      # files, through the read-write mount. The scanners run in this
+      # container as the same user, so one that misbehaves can still open
+      # /workspace-rw by its absolute path; see decision 0032.
       - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace:ro
       - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace-rw
       # Only the worker's own directory of the openbao-secrets volume, so the

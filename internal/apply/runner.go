@@ -55,8 +55,10 @@ type Vault interface {
 
 // The defaults of Options.
 const (
-	// DefaultMaxStoredBytes is the largest value an apply stores, 512 KiB.
-	DefaultMaxStoredBytes = 512 << 10
+	// DefaultMaxStoredBytes is the largest value an apply stores, 16 MiB.
+	// Its base64 form, about 21.4 MiB, goes alone in one fingerprint request
+	// and in one write, under the 32 MiB that OpenBao accepts in a request.
+	DefaultMaxStoredBytes = 16 << 20
 	// DefaultCheckLimit is how long one check may take.
 	DefaultCheckLimit = 10 * time.Minute
 	// DefaultApplyLimit is how long one apply may take.

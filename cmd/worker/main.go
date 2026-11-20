@@ -67,8 +67,9 @@ type workerDeps struct {
 // scannerPath is the PATH the scanners run with.
 const scannerPath = "/usr/local/bin:/usr/bin:/bin"
 
-// newDeps returns the OpenBao client, as fingerprinter, originals store and
-// vault, and the three scanners that cfg describes. The client does not contact OpenBao until it is first used.
+// newDeps returns the OpenBao client, as the fingerprinter, the originals
+// store and the vault, and the three scanners that cfg describes. The
+// client does not contact OpenBao until it is first used.
 func newDeps(cfg config) (workerDeps, error) {
 	client, err := bao.New(cfg.baoAddr, cfg.baoCreds, &http.Client{Timeout: 10 * time.Second})
 	if err != nil {

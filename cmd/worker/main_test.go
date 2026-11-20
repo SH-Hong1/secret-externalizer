@@ -470,6 +470,16 @@ func TestRun_HandlesApplyJobs(t *testing.T) {
 			}()
 
 			logs.wait(ctx, t, done, "scan finished", 1)
+			scanned, err := store.Scan(ctx, scanID)
+			if err != nil {
+				t.Fatalf("Scan(%d) error = %v", scanID, err)
+			}
+			// Only the apply root is a work tree, so a scan of it would
+			// have read a commit hash.
+			if scanned.Status != scan.StatusSucceeded || scanned.CommitHash != "" {
+				t.Errorf("Scan(%d) = status %q, commit hash %q; want succeeded with no commit hash, read from WORKSPACE_ROOT",
+					scanID, scanned.Status, scanned.CommitHash)
+			}
 			page, err := store.Entries(ctx, projectID, scanID, triage.Filter{Status: triage.StatusAll, Page: 1})
 			if err != nil || len(page.Entries) != 1 || page.Entries[0].Bundle == 0 {
 				t.Fatalf("Entries(%d, %d) = %+v, %v; want one bundle", projectID, scanID, page.Entries, err)

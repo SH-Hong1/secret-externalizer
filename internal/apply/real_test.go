@@ -42,7 +42,7 @@ import (
 const realRootToken = "dev-only-openbao-test-root-token" //nolint:gosec // G101: the fake root token of a local dev server
 
 // realWorkerPolicy is the worker policy that deploy/openbao/config.hcl
-// creates; internal/bao checks that its own copy matches that file.
+// creates. TestRealWorkerPolicyMatchesConfig keeps the two the same.
 const realWorkerPolicy = `
 path "transit/hmac/fingerprint" {
   capabilities = ["update"]
@@ -64,6 +64,10 @@ const (
 	realMainValue = "dev-only-fake-real-main-password"
 	falsePositive = "dev-only-fake-partner-password"
 	realWorker    = "worker-real"
+	// realRole names the policy and AppRole this test writes on the shared
+	// openbao-test server. It differs from the "worker" that the tests of
+	// internal/bao write, since go test runs the two packages at once.
+	realRole = "worker-apply-test"
 )
 
 // realStore returns a migrated Store on a schema of its own, created for
@@ -124,6 +128,62 @@ func realStore(t *testing.T) (store *db.Store, admin *pgxpool.Pool, schema strin
 	return store, admin, schema
 }
 
+// TestRealWorkerPolicyMatchesConfig checks that realWorkerPolicy is the
+// worker policy deploy/openbao/config.hcl creates, so the integration test
+// runs with the permissions the real worker has.
+func TestRealWorkerPolicyMatchesConfig(t *testing.T) {
+	const path = "../../deploy/openbao/config.hcl"
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	got, ok := configPolicy(string(raw), "worker")
+	if !ok {
+		t.Fatalf("%s holds no request \"worker-policy\" with a policy heredoc", path)
+	}
+	if diff := cmp.Diff(strings.TrimLeft(realWorkerPolicy, "\n"), got); diff != "" {
+		t.Errorf("worker policy in %s mismatch (-test constant +config):\n%s", path, diff)
+	}
+}
+
+// configPolicy returns the text of the indented heredoc in the request
+// "<name>-policy" of config, with the common indentation removed as HCL
+// does for <<-. It repeats the helper of the same name in the tests of
+// internal/bao, which live in package bao_test and cannot be imported.
+func configPolicy(config, name string) (string, bool) {
+	_, after, ok := strings.Cut(config, `request "`+name+`-policy" {`)
+	if !ok {
+		return "", false
+	}
+	_, after, ok = strings.Cut(after, "policy = <<-EOT\n")
+	if !ok {
+		return "", false
+	}
+	var lines []string
+	for line := range strings.Lines(after) {
+		if strings.TrimSpace(line) != "EOT" {
+			lines = append(lines, line)
+			continue
+		}
+		indent := -1
+		for _, l := range lines {
+			n := len(l) - len(strings.TrimLeft(l, " "))
+			if strings.TrimSpace(l) != "" && (indent < 0 || n < indent) {
+				indent = n
+			}
+		}
+		if indent < 0 {
+			return "", false
+		}
+		var b strings.Builder
+		for _, l := range lines {
+			b.WriteString(l[min(indent, len(l)-len(strings.TrimLeft(l, " "))):])
+		}
+		return b.String(), true
+	}
+	return "", false
+}
+
 // realVault prepares the openbao-test dev server the way
 // deploy/openbao/config.hcl prepares the real one and returns a client with
 // the worker role and a client with the root token. It skips the test when
@@ -172,16 +232,16 @@ func realVault(t *testing.T) (worker *bao.Client, root *api.Client) {
 	}{
 		{"transit/keys/fingerprint", map[string]any{"type": "aes256-gcm96"}},
 		{"secret/config", map[string]any{"max_versions": 100}},
-		{"sys/policies/acl/worker", map[string]any{"policy": realWorkerPolicy}},
-		{"auth/approle/role/worker", map[string]any{"token_policies": []string{"worker"}, "token_ttl": "1h", "token_max_ttl": "1h"}},
-		{"auth/approle/role/worker/role-id", map[string]any{"role_id": "se-worker"}},
+		{"sys/policies/acl/" + realRole, map[string]any{"policy": realWorkerPolicy}},
+		{"auth/approle/role/" + realRole, map[string]any{"token_policies": []string{realRole}, "token_ttl": "1h", "token_max_ttl": "1h"}},
+		{"auth/approle/role/" + realRole + "/role-id", map[string]any{"role_id": "se-" + realRole}},
 	}
 	for _, w := range writes {
 		if _, err := root.Logical().WriteWithContext(ctx, w.path, w.data); err != nil {
 			t.Fatalf("writing %s: %v", w.path, err)
 		}
 	}
-	secret, err := root.Logical().WriteWithContext(ctx, "auth/approle/role/worker/secret-id", nil)
+	secret, err := root.Logical().WriteWithContext(ctx, "auth/approle/role/"+realRole+"/secret-id", nil)
 	if err != nil {
 		t.Fatalf("creating a secret-id: %v", err)
 	}
@@ -189,11 +249,49 @@ func realVault(t *testing.T) (worker *bao.Client, root *api.Client) {
 	if !ok {
 		t.Fatalf("creating a secret-id: the response holds no secret_id")
 	}
-	worker, err = bao.New(addr, bao.Credentials{RoleID: "se-worker", SecretID: bao.SecretID(secretID)}, &http.Client{Timeout: 10 * time.Second})
+	worker, err = bao.New(addr, bao.Credentials{RoleID: "se-" + realRole, SecretID: bao.SecretID(secretID)}, &http.Client{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("bao.New(%q) error = %v", addr, err)
 	}
 	return worker, root
+}
+
+// TestIntegration_LargestStoredValue checks that a value of
+// apply.DefaultMaxStoredBytes is fingerprinted alone and stored and read
+// back whole by the worker role on the openbao-test server.
+func TestIntegration_LargestStoredValue(t *testing.T) {
+	vault, root := realVault(t)
+	ctx := t.Context()
+	value := bytes.Repeat([]byte("dev-only-fake-large-value."), apply.DefaultMaxStoredBytes/26+1)[:apply.DefaultMaxStoredBytes]
+	fps, err := vault.Fingerprints(ctx, [][]byte{value})
+	if err != nil || len(fps) != 1 {
+		t.Fatalf("Fingerprints(one value of %d bytes) = %d fingerprints, %v; want one", len(value), len(fps), err)
+	}
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		t.Fatalf("rand.Read() error = %v", err)
+	}
+	projectID := int64(binary.BigEndian.Uint64(b[:])>>34) + 1
+	const key = "ext.large.value"
+	t.Cleanup(func() {
+		p := "secret/metadata/projects/" + strconv.FormatInt(projectID, 10) + "/" + key
+		if _, err := root.Logical().DeleteWithContext(context.WithoutCancel(ctx), p); err != nil {
+			t.Errorf("deleting %s: %v", p, err)
+		}
+	})
+	v := bao.StoredValue{Value: value, Fingerprint: fps[0], Kind: string(finding.KindKeyFile), File: true}
+	version, err := vault.PutStored(ctx, projectID, key, v, 0)
+	if err != nil || version != 1 {
+		t.Fatalf("PutStored(%d bytes) = version %d, %v; want version 1", len(value), version, err)
+	}
+	got, err := vault.ReadStored(ctx, projectID, key)
+	if err != nil {
+		t.Fatalf("ReadStored() error = %v", err)
+	}
+	if !bytes.Equal(got.Value.Reveal(), value) || got.Version != 1 || !got.File {
+		t.Errorf("ReadStored() = %d bytes, version %d, file %v; want the %d bytes stored as version 1 of a file",
+			len(got.Value.Reveal()), got.Version, got.File, len(value))
+	}
 }
 
 // wholeFile returns the location a scan gives the key file named file.
@@ -430,6 +528,11 @@ func testApplyLegacyShop(t *testing.T, consent bool) {
 		}
 	}
 
+	pending := "secret/data/pending/" + strconv.FormatInt(int64(projectID), 10) + "/" + fpFalse
+	if secret, err := root.Logical().ReadWithContext(ctx, pending); err != nil || secret == nil || secret.Data["data"] == nil {
+		t.Fatalf("reading %s before the apply = %v, %v; want the false positive's original parked", pending, secret != nil, err)
+	}
+
 	if err := store.ConfirmApply(ctx, id, checked.PlanDigest, consent, actor); err != nil {
 		t.Fatalf("ConfirmApply(%d) error = %v", id, err)
 	}
@@ -497,6 +600,13 @@ func testApplyLegacyShop(t *testing.T, consent bool) {
 	if f.exists(pemFile) {
 		t.Errorf("%s exists after the apply, want it removed", pemFile)
 	}
+	status := worktreetest.Git(t, f.repo, "status", "--porcelain", "--untracked-files=all", "--ignored")
+	if strings.Contains(status, ".se-apply-") {
+		t.Errorf("git status after the apply lists a temporary file:\n%s", status)
+	}
+	if !strings.Contains(status, untrackLog) {
+		t.Errorf("git status after the apply = %q, want it to list the ignored %s, so ignored files are listed", status, untrackLog)
+	}
 
 	// OpenBao: the stored bytes are the values, and nothing else is kept.
 	stored := map[string]struct {
@@ -529,7 +639,6 @@ func testApplyLegacyShop(t *testing.T, consent bool) {
 	if diff := cmp.Diff([]string{"ext.db.local.password", "ext.db.main.password", "ext.ssh.partner.block", "ext.ssh.partner.key"}, keys); diff != "" {
 		t.Errorf("stored values of the project (-want +got):\n%s", diff)
 	}
-	pending := "secret/data/pending/" + strconv.FormatInt(int64(projectID), 10) + "/" + fpFalse
 	if secret, err := root.Logical().ReadWithContext(ctx, pending); err != nil || (secret != nil && secret.Data["data"] != nil) {
 		t.Errorf("reading %s = %v, %v; want the false positive's original gone", pending, secret != nil, err)
 	}

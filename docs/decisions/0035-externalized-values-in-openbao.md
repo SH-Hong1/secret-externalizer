@@ -17,7 +17,7 @@
 6. **KV v2 마운트 `secret`은 경로마다 100개 버전을 남긴다.** 기본값은 10개라서 11번째 쓰기가 첫 버전을 지운다. 그 첫 버전이 값의 유일한 사본일 수 있으므로 `config.hcl`의 self-init이 마운트 직후 `secret/config`에 `max_versions = 100`을 쓴다(`kv-max-versions` 요청). worker는 버전을 지울 수 없으므로, 한 경로에 100번 넘게 다른 값을 쓰지 않는 한 이전 값이 남는다. 테스트는 같은 설정을 테스트 서버에 쓰고, `TestKVConfigMatchesConfig`가 `config.hcl`의 요청을 확인한다.
 7. **worker 정책은 `secret/data/projects/*`에 `create`, `update`, `read`만 가진다**(검토 항목 27). 지우기(`delete`), `secret/metadata/projects/*`, `secret/destroy/projects/*`는 없다. 그래서 worker는 이전 버전을 지울 수 없다. web 정책은 그대로(`read`)다. 테스트의 `workerPolicy`, `webPolicy` 상수가 `config.hcl`의 정책과 같은 글인지 `TestPolicyMatchesConfig`가 확인하므로, 통합 테스트가 확인하는 권한이 실제 서버의 권한이다.
 8. **지문 요청은 값 500개 또는 값의 바이트 합 8MiB(`maxBatchBytes`)에서 나눈다.** 8MiB보다 큰 값 하나는 혼자 한 요청이다.
-9. **값 하나의 최대 크기 `apply.DefaultMaxStoredBytes`는 512KiB(524,288바이트)로 둔다.** 이보다 큰 값은 저장하지 않고 건너뛴다(적용 쪽 Task가 사유를 정한다).
+9. **값 하나의 최대 크기 `apply.DefaultMaxStoredBytes`는 16MiB(16,777,216바이트)로 둔다.** 이보다 큰 값은 저장하지 않고 `too-large`로 건너뛴다. 16MiB 값의 base64는 약 21.4MiB라 지문 요청 하나와 쓰기 요청 하나가 모두 OpenBao의 요청 한도 32MiB 안에 여유 있게 든다. 실제 서비스(pebbledb)는 항목 크기에 따로 한도가 없고 요청 크기 한도만 있음을 확인했다(아래).
 10. **보내는 base64 문자열과 클라이언트 라이브러리의 버퍼는 0으로 지울 수 없다.** Go 문자열과 공식 클라이언트가 만드는 요청 본문, 응답을 읽은 버퍼는 이 패키지가 손댈 수 없다. `PutPending`과 같은 한계이고, 값은 worker 프로세스의 메모리에만 있다.
 
 ## 확인한 사실
@@ -43,15 +43,16 @@
 - worker는 소스에서 그 값을 이미 읽으므로 `read`를 더해도 worker가 볼 수 있는 값은 늘지 않는다. 지우기와 메타데이터 권한이 없으면 worker가 잘못 동작해도 이전 버전은 남는다(100개 한도 안에서).
 - 400을 모두 충돌로 보면, 다시 써도 성공할 수 없는 거절을 받은 실행기가 "다시 읽고 다시 쓴다"를 되풀이하거나 실패 사유를 잘못 적는다. 다시 읽어 버전을 보면 두 경우를 가를 수 있고, worker는 `read` 권한이 있다.
 - 지문 요청의 한도: 요청 본문은 값의 약 4/3(base64)에 항목마다 몇십 바이트가 붙는다. 8MiB 묶음은 본문 약 11MiB로 32MiB 한도의 3분의 1이다. 스캔이 읽는 파일은 20MiB 이하(`scan.DefaultMaxFileBytes`)이고 그런 값 하나는 혼자 보내도 본문 약 26.7MiB라 한도 안이다. 묶음을 더 크게 해도 요청 수가 크게 줄지 않고, 서버와 worker가 한 번에 들고 있는 메모리만 커진다.
-- 저장 크기의 한도: 실제 `openbao` 서비스는 pebbledb 저장소를 쓰고, 그 한 항목의 최대 크기는 `-dev` 메모리 서버에서 잴 수 없다(메모리 서버는 23MiB 값도 받았다). raft 저장소의 기본 항목 한도는 1MiB이다. 같은 한도가 있다고 보고, 값의 base64(4/3), JSON 필드, KV v2 버전 래퍼, 배리어 암호화가 더해져도 1MiB 안에 드는 512KiB(저장 항목 약 700KiB)로 둔다. 비밀번호와 토큰은 이보다 훨씬 작고, 키 파일과 키 저장소도 보통 수 KiB다. 실제 서비스에서 더 큰 값이 저장되는 것을 확인하면 올린다.
+- 저장 크기의 한도: 처음에는 pebbledb에도 raft처럼 항목 한도(1MiB)가 있다고 보고 512KiB로 두었다. 실제 서비스에서 잰 결과(아래) 항목 한도는 없고 요청 본문의 한도 32MiB만 있었으므로, base64가 그 안에 여유 있게 드는 16MiB로 올렸다. 스캔이 읽는 파일은 20MiB 이하라 그보다 큰 키 파일은 어차피 항목이 되지 않고, 16MiB와 20MiB 사이의 키 파일은 `too-large`로 소스에 남는다.
 
-## 확인하지 못한 것
+## 실제 서비스에서 확인한 것
 
-다음은 compose의 실제 `openbao` 서비스가 필요해 이 Task에서 확인하지 못했다. 계획 5 Task 15의 실제 확인에서 확인한다.
+2026-11-20에 compose의 실제 `openbao` 서비스(OpenBao 2.7.2, pebbledb, colima)에서 worker AppRole로 확인했다.
 
-- `config.hcl`을 고친 뒤 빈 볼륨에서 self-init이 끝나는지, 그리고 `secret/config`의 `max_versions`가 100인지.
-- 실제 서비스에서 worker 역할의 `secret/data/projects/*` 삭제와 `secret/metadata/projects/*` 접근이 403인지.
-- pebbledb가 받는 값 하나의 최대 크기. 512KiB, 1MiB, 4MiB, 20MiB 값을 worker 역할로 써 보고, 실패하면 그 상태 코드와 오류 문구를 적는다. 512KiB가 실패하면 `DefaultMaxStoredBytes`를 낮춘다.
+- 고친 `config.hcl`로 빈 볼륨에서 self-init이 끝났다.
+- 한 경로에 11번 쓴 뒤에도 버전 1을 읽을 수 있었다(`max_versions = 100`이 적용되었다).
+- worker 역할로 `secret/data/projects/*`의 삭제, destroy, `secret/metadata/projects/*` 읽기, `secret/config` 읽기는 모두 403이었다.
+- base64로 0.5, 0.7, 1, 2, 4, 16, 24, 30MiB인 값을 저장할 수 있었고, 16MiB 값은 읽어 보니 바이트가 같았다. 40MiB는 413이었다. 그래서 항목 크기의 한도(약 1MiB)는 없고, 한도는 요청 크기 32MiB다.
 
 ## 검토한 다른 방법
 

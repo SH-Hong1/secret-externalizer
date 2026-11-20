@@ -27,7 +27,7 @@ worker는 등록한 프로젝트 폴더를 읽어 스캔한다. 프로젝트는 
 | `/workspace` (`WORKSPACE_ROOT`) | 읽기 전용 | 스캔과 스캐너(betterleaks, opengrep) |
 | `/workspace-rw` (`APPLY_WORKSPACE_ROOT`) | 읽기-쓰기 | 사용자가 확인한 적용과 그 점검 |
 
-스캔과 스캐너는 읽기 전용 마운트만 쓰고, 사용자가 확인한 적용만 읽기-쓰기 마운트로 파일을 바꾼다. 외부에서 받은 스캐너 실행 파일이 쓸 수 있는 작업 공간 위에서 돌지 않게 하려는 것이다(`docs/decisions/0032-apply-order-and-resuming.md`).
+스캔은 스캐너에 읽기 전용 마운트의 경로만 넘기고, 사용자가 확인한 적용만 읽기-쓰기 마운트로 파일을 바꾼다. 두 마운트가 막는 것은 스캔과 스캐너가 넘겨받은 경로로 쓰는 일이다. 스캐너(betterleaks, opengrep)는 같은 컨테이너에서 같은 사용자로 돌므로, 잘못 만들어졌거나 바뀐 스캐너는 `/workspace-rw`를 절대 경로로 열어 쓸 수 있다. 이를 줄이는 것은 `deploy/worker/scanners.lock`의 체크섬으로 고정한 스캐너 판본과, 스캔 한 번이 작업 공간에 아무것도 쓰지 않는다는 확인이다. 스캔을 다른 컨테이너나 사용자로 나누는 일은 남은 일이다(`docs/decisions/0032-apply-order-and-resuming.md`, `docs/next-steps.md`).
 
 ```sh
 export SE_WORKSPACE=$HOME/work     # 프로젝트 폴더들이 들어 있는 폴더
@@ -37,8 +37,8 @@ docker compose up --build -d
 - `SE_WORKSPACE`가 없으면 compose가 안내 문구와 함께 멈춘다. worker를 띄우지 않는 명령(`ps`, `down`)에도 compose 파일을 읽을 때 같은 오류가 나므로 셸에 계속 설정해 둔다.
 - macOS에서는 Docker가 공유하는 경로(보통 홈 폴더 아래)여야 한다. `/tmp` 같은 경로는 컨테이너에서 빈 폴더로 보인다.
 - 프로젝트를 등록할 때의 경로는 `SE_WORKSPACE` 기준의 상대 경로다. 예를 들어 `$HOME/work/shop`을 스캔하려면 `shop`으로 등록한다.
-- worker는 `SE_UID`와 `SE_GID`로 정한 사용자로 실행된다. 기본값은 둘 다 65532다. Linux 호스트의 Docker(네이티브)에서는 bind mount가 호스트 소유권을 그대로 유지하므로, 스캔할 파일과 폴더를 그 사용자가 읽을 수 있어야 하고, 적용하려면 쓸 수 있어야 한다. 작업 공간의 주인으로 실행하려면 `SE_UID=$(id -u) SE_GID=$(id -g) docker compose up -d`처럼 띄운다. worker가 적용으로 쓴 파일의 소유자는 worker의 사용자다. 읽을 수 없는 파일과 폴더(예: `0700` 폴더, `0600` 개인키나 `.env`)는 스캔에서 오류 없이 건너뛰고 건너뛴 수를 센다. macOS의 colima나 Docker Desktop에서는 소유권이 바뀌어 보이므로 이 문제가 생기지 않는다.
-- `openbao-secrets`는 뜰 때마다 worker의 secret-id(`worker/secret-id`)와 그 폴더의 소유자를 `SE_UID`로 맞춘다(web의 것은 65532 그대로). `SE_UID`를 바꾸면 `docker compose up -d`가 `openbao-secrets`를 다시 실행해 이미 있는 볼륨의 소유자도 바꾼다. `SE_UID`는 숫자여야 한다.
+- worker는 `SE_UID`와 `SE_GID`로 정한 사용자로 실행된다. 기본값은 둘 다 65532다. 둘 다 숫자여야 하고, root(0)로는 실행하지 않는다(`openbao-secrets`가 거부해 worker가 뜨지 않는다). Linux 호스트의 Docker(네이티브)에서는 bind mount가 호스트 소유권을 그대로 유지하므로, 스캔할 파일과 폴더를 그 사용자가 읽을 수 있어야 하고, 적용하려면 쓸 수 있어야 한다. 작업 공간의 주인으로 실행하려면 `SE_UID=$(id -u) SE_GID=$(id -g) docker compose up -d`처럼 띄운다. worker가 적용으로 쓴 파일의 소유자는 worker의 사용자다. 읽을 수 없는 파일과 폴더(예: `0700` 폴더, `0600` 개인키나 `.env`)는 스캔에서 오류 없이 건너뛰고 건너뛴 수를 센다. macOS의 colima나 Docker Desktop에서는 소유권이 바뀌어 보이므로 이 문제가 생기지 않는다.
+- `openbao-secrets`는 뜰 때마다 worker의 secret-id(`worker/secret-id`)와 그 폴더의 소유자를 `SE_UID`로 맞춘다(web의 것은 65532 그대로). `SE_UID`를 바꾸면 `docker compose up -d`가 `openbao-secrets`를 다시 실행해 이미 있는 볼륨의 소유자도 바꾼다.
 - worker는 큐에 쌓인 스캔을 하나씩 실행한다. 파일마다 UTF-8이나 EUC-KR 텍스트로 읽고, betterleaks, opengrep, 키 파일 탐지기를 돌려 찾은 값을 항목으로 저장한다. postgres에는 값의 지문, 가린 미리보기, 위치, 가린 주변 줄만 남고, 비밀 값의 원본은 OpenBao에 보관한다. 고객정보는 원본을 보관하지 않고 주변 줄도 남기지 않는다. 실패하면 화면에는 정해진 사유만 보이고 자세한 오류는 `docker compose logs worker`에 남는다.
 - 스캔 하나는 30분을 넘기면 `scan took longer than the time limit`으로 실패한다. 20MiB가 넘는 파일, 바이너리 파일, UTF-8도 EUC-KR도 아닌 파일은 텍스트로 스캔하지 않고 건너뛴 수에 센다. 경로가 UTF-8이 아니거나 제어 문자가 든 파일도 건너뛴 수에 센다. 키 저장소(`.jks`, `.p12` 등)는 바이너리라도 키 파일 항목이 된다.
 - 스캔이 성공하면 worker 로그(`docker compose logs worker`)에 `scan finished` 기록이 하나 남는다. 스캔 ID(`scan_id`), 스캔이 목록에 넣은 일반 파일 수(`files`, 텍스트로 읽지 못하거나 경로를 저장할 수 없어 건너뛴 파일도 센다), 건너뛴 수(`skipped`), 버린 건수(`dropped`), 항목 수(`findings`), 텍스트로 읽지 못해 건너뛴 파일에 스캐너가 낸 결과 수(`results_in_skipped_files`), 도구별로 파일을 일부만 분석했다고 알린 오류 수(`scanner_errors`, opengrep의 파일별 10초 시간 초과나 부분 파싱 등)가 들어 있다. 건너뛴 파일이 있으면 `scan skipped files` 기록에 처음 50개의 상대 경로(`paths`)와 전체 수(`total`)가 남는다. 경로의 제어 문자와 깨진 UTF-8은 `U+FFFD`로 바뀐다. 읽지 못한 폴더는 수만 `skipped`에 들어가고 경로는 남지 않는다. 건너뛴 파일의 이름(경로순 처음 200개, UTF-8이 아니거나 제어 문자가 든 경로는 빼고 수에만 센다)과 도구별 스캐너 오류 수는 데이터베이스에도 저장되어 스캔 화면의 "검사하지 못한 것"에 보인다.
@@ -106,7 +106,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
   ```
 
 - 봉인 해제 키가 데이터와 같은 Docker 볼륨 영역에 있으므로, 이 구성은 개발자 PC 한 대에서만 쓴다.
-- 적용은 외부화한 값을 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 쓴다. 이미 값이 있으면 저장된 바이트를 다시 읽어 지문을 비교하고, 다를 때만 check-and-set으로 새 버전을 쓴다. 이전 값은 이전 버전에 남는다. worker 정책은 이 경로를 쓰고 읽을 수만 있고 지우거나 메타데이터를 볼 수 없다. KV v2 마운트는 경로마다 버전을 100개 남긴다(`docs/decisions/0035-externalized-values-in-openbao.md`).
+- 적용은 외부화한 값을 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 쓴다. 이미 값이 있으면 저장된 바이트를 다시 읽어 지문을 비교하고, 다를 때만 check-and-set으로 새 버전을 쓴다. 이전 값은 이전 버전에 남는다. worker 정책은 이 경로를 쓰고 읽을 수만 있고 지우거나 메타데이터를 볼 수 없다. KV v2 마운트는 경로마다 버전을 100개 남긴다. 값 하나는 16MiB까지 저장하고, 그보다 큰 값(큰 키 파일)은 `too-large`로 건너뛰어 소스에 남는다. OpenBao는 요청 하나를 32MiB까지 받는다(`docs/decisions/0035-externalized-values-in-openbao.md`).
 
 ### 정책을 바꾼 뒤(계획 5)
 

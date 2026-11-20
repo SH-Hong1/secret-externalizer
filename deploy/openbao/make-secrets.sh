@@ -13,9 +13,11 @@
 # mount only their own directory, so neither sees the unseal key or the other
 # role's secret-id.
 #
-# SE_UID is the uid the worker runs as, 65532 when unset. The owner of the
-# worker's directory and secret-id is set to it on every run, so a volume
-# made for another uid follows a changed SE_UID.
+# SE_UID and SE_GID are the uid and gid the worker runs as, 65532 when unset.
+# Both must be numbers other than 0. The owner of the worker's directory and
+# secret-id is set to SE_UID on every run, so a volume made for another uid
+# follows a changed SE_UID. Their group stays OpenBao's (1000), which reads
+# them; SE_GID is only checked.
 set -eu
 umask 077
 
@@ -23,13 +25,24 @@ openbao_uid=100
 openbao_gid=1000
 web_uid=65532
 worker_uid=${SE_UID:-65532}
+worker_gid=${SE_GID:-65532}
 
-case $worker_uid in
-'' | *[!0-9]*)
-	echo "SE_UID must be a number, not '$worker_uid'" >&2
-	exit 1
-	;;
-esac
+# check_id NAME VALUE: fails unless VALUE is a number other than 0. The
+# worker never runs as root.
+check_id() {
+	case $2 in
+	'' | *[!0-9]*)
+		echo "$1 must be a number, not '$2'" >&2
+		exit 1
+		;;
+	esac
+	if [ "$2" -eq 0 ]; then
+		echo "$1 must not be 0: the worker does not run as root" >&2
+		exit 1
+	fi
+}
+check_id SE_UID "$worker_uid"
+check_id SE_GID "$worker_gid"
 
 # make_file DIR NAME OWNER MODE: runs the generator in the remaining arguments
 # into DIR/NAME unless it exists. The file is written under a temporary name
