@@ -81,12 +81,14 @@
 - `textfile.Decode`(디스크의 바이트를 `File`로), `File.CharOffset`(글자로 센 줄과 열을 텍스트의 바이트 위치로), `File.DiskOffset`(텍스트의 위치를 디스크 바이트의 위치로. EUC-KR은 파일의 처음부터 글자 단위로 따라간다), `textfile.ErrRawMismatch`. `Read`는 `Decode`를 쓴다(동작은 같다).
 - `internal/manifest`: 프로젝트 폴더의 `secrets-manifest.yml`을 YAML 라이브러리 없이 읽고(`Parse`), 합치고(`Merge`), 쓴다(`Encode`). 항목은 placeholder 이름, 분류, 동작(`externalized`, `file-removed`), 저장 위치, 쓴 파일과 줄이고 값은 담지 않는다. 쓰는 모양 하나만 읽으며, 주석, 모르는 키, 다른 `version`, 앵커, 흐름 표기, 탭, 같은 이름 두 번, UTF-8이 아닌 바이트, 1MiB를 넘는 입력은 줄 번호만 적은 `ErrUnsupported`로 거부한다. 파일 이름은 필요하면 큰따옴표와 YAML 이스케이프(`\uXXXX`, `\UXXXXXXXX`)로 써서 키나 항목을 끼워 넣지 못하게 하고, CRLF 파일은 CRLF로 다시 쓴다. `Encode`는 읽기가 거부할 것(빈 이름, 저장 위치, 파일, UTF-8이 아닌 문자열, 모르는 동작과 분류, 고객정보, 범위 밖의 줄 번호, 같은 이름 두 번, 1MiB를 넘는 결과)을 쓰지 않고 값 없는 오류(`ErrInvalid`)로 거부한다. 합치기는 새 이름을 이름순 자리에 넣고 있는 이름의 위치를 합치며, 여러 번 해도 결과가 같다.
 - 결정 기록 0034 (manifest 형식)
-- `bao.Client.PutStored`, `ReadStored`, `bao.StorePath`: 외부화한 값을 OpenBao KV v2의 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 check-and-set으로 쓰고(`value`는 base64, `encoding`, `format`(`text`/`file`), `fingerprint`, `kind`), 저장된 바이트와 버전을 읽는다. 버전이 맞지 않으면 `ErrVersionConflict`, 한 번도 쓰지 않은 경로는 `ErrNotStored`, 마지막 버전이 지워진 경로는 `Deleted`와 그 버전을 돌려준다. 형식이 틀린 키(`ext.` 뒤 2~5마디, 소문자로 시작하는 소문자와 숫자, 104바이트 이하), 양수가 아닌 프로젝트 ID, 형식이 틀린 지문은 OpenBao를 부르지 않고 거부한다. 값을 담는 `StoredValue`는 fmt, slog, JSON에 가린 형태로만 나온다.
+- `bao.Client.PutStored`, `ReadStored`, `bao.StorePath`: 외부화한 값을 OpenBao KV v2의 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 check-and-set으로 쓰고(`value`는 base64, `encoding`, `format`(`text`/`file`), `fingerprint`, `kind`), 저장된 바이트와 버전을 읽는다. 쓰기가 400으로 거절되면 경로를 다시 읽어 버전이 `cas`와 다를 때만 `ErrVersionConflict`를, 아니면 일반 오류를 돌려준다. 한 번도 쓰지 않은 경로는 `ErrNotStored`, 마지막 버전이 지워진 경로는 `Deleted`와 그 버전을 돌려주고, `encoding`이 `base64`가 아니거나 `format`을 모르는 기록은 거부하며, `format`이 `file`이면 `File`이 참이다. 고객정보 종류와 모르는 종류는 쓰지 않는다. 형식이 틀린 키(`ext.` 뒤 2~5마디, 소문자로 시작하는 소문자와 숫자, 104바이트 이하), 양수가 아닌 프로젝트 ID, 형식이 틀린 지문은 OpenBao를 부르지 않고 거부한다. 값을 담는 `StoredValue`는 fmt, slog, JSON에 가린 형태로만 나온다.
 - 결정 기록 0035 (OpenBao의 외부화 값)
+- `bao.ErrForbidden`: 다시 로그인한 뒤에도 OpenBao가 403으로 거절한 요청의 오류가 이것과 맞는다.
+- `finding.Kind.CustomerData`: 고객정보 종류(`phone`, `rrn`, `email`, `card`, `address`)인지 알려 준다.
 
 ### 변경
 
-- OpenBao worker 정책이 `secret/data/projects/*`를 읽을 수 있다(`create`, `update`, `read`). 지우기와 메타데이터 권한은 없다. 기존 볼륨에는 반영되지 않으므로 `openbao-data`, `openbao-secrets`를 지우고 다시 띄워야 하며, 적용을 한 번이라도 한 환경에서는 볼륨을 지우면 값이 사라진다(`docs/local-run.md`).
+- OpenBao worker 정책이 `secret/data/projects/*`를 읽을 수 있다(`create`, `update`, `read`). 지우기와 메타데이터 권한은 없다. KV v2 마운트 `secret`은 경로마다 버전을 10개가 아니라 100개 남긴다(self-init의 `secret/config`). 기존 볼륨에는 반영되지 않으므로 `openbao-data`, `openbao-secrets`를 지우고 다시 띄워야 하며, 적용을 한 번이라도 한 환경에서는 볼륨을 지우면 값이 사라진다(`docs/local-run.md`).
 - 지문 요청을 값 500개뿐 아니라 값의 바이트 합 8MiB에서도 나눈다. 그보다 큰 값 하나는 혼자 한 요청이다.
 - web은 `DATABASE_URL`을 필수로 읽고 기동할 때 마이그레이션을 실행한다.
 - 스캔이 커밋 해시를 읽을 때 `worktree.CommitHash`를 쓴다. 저장소 설정의 fsmonitor, hook, pager, 전송 명령을 실행하지 않고, git 폴더나 공용 git 폴더가 작업 공간 밖이면 커밋 해시를 남기지 않는다. git 호출의 제한 시간은 10초에서 60초가 되었다.

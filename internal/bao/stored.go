@@ -12,6 +12,8 @@ import (
 	"strings"
 
 	"github.com/openbao/openbao/api/v2"
+
+	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 )
 
 var (
@@ -37,10 +39,12 @@ const (
 
 // Stored is what a project path holds. Value is nil and Deleted is true
 // when the latest version was deleted; Version is then still the latest.
+// File is true when the value was stored as the bytes of a whole file.
 type Stored struct {
 	Value   Value
 	Version int
 	Deleted bool
+	File    bool
 }
 
 // StoredValue is a value to keep for a placeholder. File is true for the
@@ -90,31 +94,34 @@ func StorePath(projectID int64, key string) string {
 }
 
 // ReadStored returns the value and version at the path, or ErrNotStored.
+// A record that this package did not write (no base64 encoding, or a format
+// other than text and file) is an error.
 func (c *Client) ReadStored(ctx context.Context, projectID int64, key string) (Stored, error) {
 	const op = "reading a stored value"
 	if err := checkStoredKey(projectID, key); err != nil {
 		return Stored{}, fmt.Errorf("%s: %w", op, err)
 	}
-	// The official client answers a 404 that carries no data with a nil
-	// secret and no error, and one that carries the metadata of a deleted or
-	// destroyed latest version with that metadata and a null data field.
-	secret, err := c.do(ctx, op, func() (*api.Secret, error) {
-		return c.api.Logical().ReadWithContext(ctx, StorePath(projectID, key))
-	})
+	secret, version, err := c.readLatest(ctx, op, projectID, key)
 	if err != nil {
 		return Stored{}, err
 	}
-	if secret == nil || len(secret.Data) == 0 {
+	if version == 0 {
 		return Stored{}, fmt.Errorf("%s: %w", op, ErrNotStored)
-	}
-	metadata, _ := secret.Data["metadata"].(map[string]any) // a missing metadata field fails the version check below
-	version, ok := positiveInt(metadata["version"])
-	if !ok {
-		return Stored{}, fmt.Errorf("%s: response holds no version", op)
 	}
 	data, _ := secret.Data["data"].(map[string]any) // a missing or null data field means the latest version was deleted
 	if data == nil {
 		return Stored{Version: version, Deleted: true}, nil
+	}
+	if enc, _ := data["encoding"].(string); enc != "base64" { // a missing encoding is refused like any other
+		return Stored{}, fmt.Errorf("%s: the stored record is not base64 encoded", op)
+	}
+	var file bool
+	switch f, _ := data["format"].(string); f { // a missing format is refused like any other
+	case "text":
+	case "file":
+		file = true
+	default:
+		return Stored{}, fmt.Errorf("%s: the stored record has no known format", op)
 	}
 	encoded, ok := data["value"].(string)
 	if !ok {
@@ -126,12 +133,45 @@ func (c *Client) ReadStored(ctx context.Context, projectID int64, key string) (S
 		// the same.
 		return Stored{}, fmt.Errorf("%s: the stored value is not base64", op)
 	}
-	return Stored{Value: Value(raw), Version: version}, nil
+	return Stored{Value: Value(raw), Version: version, File: file}, nil
+}
+
+// readLatest reads the latest version of the path and returns the answer
+// and its version, or a version of 0 when the path has never held one. The
+// answer of a deleted or destroyed latest version has a null data field.
+func (c *Client) readLatest(ctx context.Context, op string, projectID int64, key string) (*api.Secret, int, error) {
+	// The official client answers a 404 that carries no data with a nil
+	// secret and no error, and one that carries the metadata of a deleted or
+	// destroyed latest version with that metadata and a null data field.
+	secret, err := c.do(ctx, op, func() (*api.Secret, error) {
+		return c.api.Logical().ReadWithContext(ctx, StorePath(projectID, key))
+	})
+	if err != nil {
+		return nil, 0, err
+	}
+	if secret == nil || len(secret.Data) == 0 {
+		return nil, 0, nil
+	}
+	metadata, _ := secret.Data["metadata"].(map[string]any) // a missing metadata field fails the version check below
+	version, ok := positiveInt(metadata["version"])
+	if !ok {
+		return nil, 0, fmt.Errorf("%s: response holds no version", op)
+	}
+	return secret, version, nil
 }
 
 // PutStored writes v as a new version when the path is at version cas (0:
-// the path has never held one) and returns the new version, or
-// ErrVersionConflict.
+// the path has never held one) and returns the new version.
+//
+// It returns an error matching ErrVersionConflict when the write was
+// refused and the path is now at a version other than cas. A conflict never
+// means that v was stored: the caller reads the path again, compares the
+// stored bytes, and writes again with the version it read, a bounded number
+// of times. Any other refusal, including a refused write while the path is
+// still at cas, is a plain error and writing again will not help.
+//
+// v.Kind must be a secret kind that package finding defines; customer data
+// is never written.
 func (c *Client) PutStored(ctx context.Context, projectID int64, key string, v StoredValue, cas int) (int, error) {
 	const op = "storing a value"
 	if err := checkStoredKey(projectID, key); err != nil {
@@ -139,6 +179,9 @@ func (c *Client) PutStored(ctx context.Context, projectID int64, key string, v S
 	}
 	if !isFingerprint(v.Fingerprint) {
 		return 0, fmt.Errorf("%s: the fingerprint is not 64 lower-case hex digits", op)
+	}
+	if kind, err := finding.ParseKind(v.Kind); err != nil || kind.CustomerData() {
+		return 0, fmt.Errorf("%s: the kind is not a kind of secret", op)
 	}
 	if cas < 0 {
 		return 0, fmt.Errorf("%s: check-and-set version %d is negative", op, cas)
@@ -153,14 +196,14 @@ func (c *Client) PutStored(ctx context.Context, projectID int64, key string, v S
 			"kind":        v.Kind,
 		},
 	}
-	// KV v2 answers 400 when the path is not at version cas. That answer is
-	// turned into ErrVersionConflict here, inside fn, because do keeps only
-	// the status of an error.
-	conflict := false
+	// KV v2 answers 400 when the path is not at version cas, and also for
+	// other refusals. The 400 is noted here, inside fn, because do keeps
+	// only the status of an error; the path is then read to tell them apart.
+	refused := false
 	secret, err := c.do(ctx, op, func() (*api.Secret, error) {
 		secret, err := c.api.Logical().WriteWithContext(ctx, StorePath(projectID, key), body)
 		if statusOf(err) == http.StatusBadRequest {
-			conflict = true
+			refused = true
 			return nil, nil
 		}
 		return secret, err
@@ -168,8 +211,15 @@ func (c *Client) PutStored(ctx context.Context, projectID int64, key string, v S
 	if err != nil {
 		return 0, err
 	}
-	if conflict {
-		return 0, fmt.Errorf("%s: %w", op, ErrVersionConflict)
+	if refused {
+		_, version, err := c.readLatest(ctx, "reading the path after status 400", projectID, key)
+		if err != nil {
+			return 0, fmt.Errorf("%s: %w", op, err)
+		}
+		if version != cas {
+			return 0, fmt.Errorf("%s: %w", op, ErrVersionConflict)
+		}
+		return 0, fmt.Errorf("%s: openbao answered status 400 while the path is at the expected version", op)
 	}
 	if secret == nil {
 		return 0, fmt.Errorf("%s: empty response", op)

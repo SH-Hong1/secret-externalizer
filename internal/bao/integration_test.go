@@ -40,6 +40,10 @@ path "secret/metadata/pending/*" {
 }
 `
 
+// kvMaxVersions is the number of versions per path that
+// deploy/openbao/config.hcl sets on the KV v2 mount "secret".
+const kvMaxVersions = 100
+
 // webPolicy is the web policy that deploy/openbao/config.hcl creates.
 const webPolicy = `
 path "secret/data/pending/*" {
@@ -90,6 +94,9 @@ func setUpTestBao(t *testing.T, addr string) bao.Credentials {
 	}
 	if _, err := root.Logical().WriteWithContext(ctx, "transit/keys/fingerprint", map[string]any{"type": "aes256-gcm96"}); err != nil {
 		t.Fatalf("writing transit/keys/fingerprint: %v", err)
+	}
+	if _, err := root.Logical().WriteWithContext(ctx, "secret/config", map[string]any{"max_versions": kvMaxVersions}); err != nil {
+		t.Fatalf("writing secret/config: %v", err)
 	}
 	return setUpRole(t, root, "worker", workerPolicy)
 }
@@ -236,8 +243,8 @@ func TestIntegration_WebReadsPending(t *testing.T) {
 	if _, err := web.ReadPending(ctx, projectID, fps[1]); !errors.Is(err, bao.ErrNoOriginal) {
 		t.Errorf("ReadPending(%d, %q) of a value never stored error = %v, want ErrNoOriginal", projectID, fps[1], err)
 	}
-	if err := web.PutPending(ctx, projectID, fps[1], value); err == nil || !strings.Contains(err.Error(), "403") {
-		t.Errorf("PutPending() as web error = %v, want status 403", err)
+	if err := web.PutPending(ctx, projectID, fps[1], value); !errors.Is(err, bao.ErrForbidden) {
+		t.Errorf("PutPending() as web error = %v, want ErrForbidden", err)
 	}
 }
 
@@ -325,6 +332,24 @@ func TestPolicyMatchesConfig(t *testing.T) {
 	}
 }
 
+// TestKVConfigMatchesConfig checks that deploy/openbao/config.hcl sets the
+// version limit of the KV v2 mount that the integration tests set.
+func TestKVConfigMatchesConfig(t *testing.T) {
+	const path = "../../deploy/openbao/config.hcl"
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("reading %s: %v", path, err)
+	}
+	_, after, ok := strings.Cut(string(raw), `request "kv-max-versions" {`)
+	block, _, _ := strings.Cut(after, "\n  }\n")
+	want := []string{`operation = "update"`, `path      = "secret/config"`, fmt.Sprintf("max_versions = %d", kvMaxVersions)}
+	for _, w := range want {
+		if !ok || !strings.Contains(block, w) {
+			t.Errorf("request kv-max-versions in %s does not hold %q", path, w)
+		}
+	}
+}
+
 // configPolicy returns the text of the indented heredoc in the request
 // "<name>-policy" of config, with the common indentation removed, as HCL
 // does for <<-.
@@ -346,6 +371,9 @@ func configPolicy(config, name string) (string, error) {
 				if strings.TrimSpace(l) != "" && (indent < 0 || n < indent) {
 					indent = n
 				}
+			}
+			if indent < 0 {
+				return "", errors.New("empty heredoc")
 			}
 			var b strings.Builder
 			for _, l := range lines {
@@ -567,10 +595,42 @@ func TestIntegration_WebCannotWriteProjects(t *testing.T) {
 	web := newIntegrationClient(t, addr, webCreds, projectID, key)
 	v := storedFixture(t, worker, []byte("dev-only-fake-web-write"))
 
-	if version, err := web.PutStored(ctx, projectID, key, v, 0); err == nil || !strings.Contains(err.Error(), "403") {
-		t.Errorf("PutStored() as web = %d, %v; want status 403", version, err)
+	if version, err := web.PutStored(ctx, projectID, key, v, 0); !errors.Is(err, bao.ErrForbidden) {
+		t.Errorf("PutStored() as web = %d, %v; want ErrForbidden", version, err)
 	}
 	if _, err := web.ReadStored(ctx, projectID, key); !errors.Is(err, bao.ErrNotStored) {
 		t.Errorf("ReadStored() as web after the refused write error = %v, want ErrNotStored", err)
+	}
+}
+
+// TestIntegration_KeepsEarlierVersions checks that the version limit set on
+// the mount keeps the first version of a path after more writes than the
+// KV v2 default of 10 would keep.
+func TestIntegration_KeepsEarlierVersions(t *testing.T) {
+	addr := testBaoAddr(t)
+	creds := setUpTestBao(t, addr)
+	ctx := t.Context()
+	projectID := randomProjectID(t)
+	const key = "ext.db.rotated.password"
+	c := newIntegrationClient(t, addr, creds, projectID, key)
+	first := storedFixture(t, c, []byte("dev-only-fake-version-1"))
+	later := storedFixture(t, c, []byte("dev-only-fake-version-later"))
+
+	for cas := range 11 {
+		v := later
+		if cas == 0 {
+			v = first
+		}
+		if version, err := c.PutStored(ctx, projectID, key, v, cas); err != nil || version != cas+1 {
+			t.Fatalf("PutStored(cas %d) = %d, %v; want version %d", cas, version, err, cas+1)
+		}
+	}
+	old, err := rootClient(t, addr).Logical().ReadWithDataWithContext(ctx, bao.StorePath(projectID, key), map[string][]string{"version": {"1"}})
+	if err != nil || old == nil {
+		t.Fatalf("reading version 1 after 11 writes with the root token = %v, %v; want the first value", old, err)
+	}
+	data, _ := old.Data["data"].(map[string]any) // a missing data field fails the comparison below
+	if want := base64.StdEncoding.EncodeToString(first.Value); data["value"] != want {
+		t.Errorf("version 1 after 11 writes holds another value or none, want the first value")
 	}
 }

@@ -95,11 +95,11 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
   ```
 
 - 봉인 해제 키가 데이터와 같은 Docker 볼륨 영역에 있으므로, 이 구성은 개발자 PC 한 대에서만 쓴다.
-- 적용은 외부화한 값을 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 쓴다. 이미 값이 있으면 저장된 바이트를 다시 읽어 지문을 비교하고, 다를 때만 check-and-set으로 새 버전을 쓴다. 이전 값은 이전 버전에 남는다. worker 정책은 이 경로를 쓰고 읽을 수만 있고 지우거나 메타데이터를 볼 수 없다(`docs/decisions/0035-externalized-values-in-openbao.md`).
+- 적용은 외부화한 값을 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 쓴다. 이미 값이 있으면 저장된 바이트를 다시 읽어 지문을 비교하고, 다를 때만 check-and-set으로 새 버전을 쓴다. 이전 값은 이전 버전에 남는다. worker 정책은 이 경로를 쓰고 읽을 수만 있고 지우거나 메타데이터를 볼 수 없다. KV v2 마운트는 경로마다 버전을 100개 남긴다(`docs/decisions/0035-externalized-values-in-openbao.md`).
 
 ### 정책을 바꾼 뒤(계획 5)
 
-worker 정책에 `secret/data/projects/*`의 `read`가 더해졌다. 계획 5 이전에 만든 볼륨에는 이전 정책이 들어 있으므로, `openbao-data`, `openbao-secrets`를 지우고 다시 띄운 뒤(`docker compose down -v`, 또는 위의 세 명령 뒤에 `docker compose up -d --force-recreate web worker`) 프로젝트를 다시 스캔한다. secret-id가 새로 만들어지므로 web과 worker도 다시 시작해야 한다.
+worker 정책에 `secret/data/projects/*`의 `read`가 더해졌고, KV v2 마운트가 경로마다 버전을 100개 남기도록 self-init이 `secret/config`를 쓴다. 계획 5 이전에 만든 볼륨에는 이전 정책과 기본값(10개)이 들어 있으므로, `openbao-data`, `openbao-secrets`를 지우고 다시 띄운 뒤(`docker compose down -v`, 또는 위의 세 명령 뒤에 `docker compose up -d --force-recreate web worker`) 프로젝트를 다시 스캔한다. secret-id가 새로 만들어지므로 web과 worker도 다시 시작해야 한다.
 
 > **경고:** `down -v`로 볼륨을 지우는 것은 **적용을 한 번도 하지 않은 환경에서만** 안전하다. 적용을 한 번이라도 한 환경에서는 `openbao-data` 볼륨에, git이 추적하지 않는 파일(키 파일, 무시된 설정 파일)에서 빼낸 값의 유일한 사본이 있을 수 있다. 그 파일은 적용이 지웠거나 자리표시자로 바꾸었으므로, 볼륨을 지우면 값이 영영 사라진다. 그런 환경에서 정책을 바꾸는 방법은 아직 없다(`docs/next-steps.md`).
 

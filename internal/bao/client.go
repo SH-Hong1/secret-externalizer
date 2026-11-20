@@ -75,6 +75,10 @@ var ErrNoOriginal = errors.New("no pending original")
 // OpenBao answered and refused or failed the request.
 var ErrUnreachable = errors.New("openbao could not be reached")
 
+// ErrForbidden means OpenBao refused a request with status 403 after the
+// client logged in again: the role's policy does not allow it.
+var ErrForbidden = errors.New("openbao refused the request")
+
 // Value holds an original read from OpenBao. fmt, slog and encoding/json
 // print a redacted form. Only Reveal gives the bytes. fmt cannot call the
 // methods of a value in an unexported struct field, so a Value is never kept
@@ -108,8 +112,9 @@ type Credentials struct {
 }
 
 // Client fingerprints values, stores, lists, and deletes pending original
-// values, and stores and reads externalized values. It logs in with its AppRole on first use and again when OpenBao
-// refuses its token. It is safe for concurrent use.
+// values, and stores and reads externalized values. It logs in with its
+// AppRole on first use and again when OpenBao refuses its token. It is safe
+// for concurrent use.
 type Client struct {
 	api  *api.Client
 	auth *approle.AppRoleAuth
@@ -424,7 +429,11 @@ func describe(ctx context.Context, err error) error {
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return ctxErr
 	}
-	if code := statusOf(err); code != 0 {
+	code := statusOf(err)
+	if code == http.StatusForbidden {
+		return fmt.Errorf("%w: openbao answered status %d", ErrForbidden, code)
+	}
+	if code != 0 {
 		return fmt.Errorf("openbao answered status %d", code)
 	}
 	var netErr net.Error

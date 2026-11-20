@@ -294,8 +294,8 @@ func TestClient_ReLoginOn403(t *testing.T) {
 			writeJSON(t, w, http.StatusForbidden, map[string]any{"errors": []string{"permission denied"}})
 		})
 		_, err := c.Fingerprints(t.Context(), [][]byte{[]byte(testValue)})
-		if err == nil || !strings.Contains(err.Error(), "403") {
-			t.Errorf("Fingerprints() with every request refused error = %v, want one naming status 403", err)
+		if !errors.Is(err, bao.ErrForbidden) || !strings.Contains(err.Error(), "403") {
+			t.Errorf("Fingerprints() with every request refused error = %v, want ErrForbidden naming status 403", err)
 		}
 		if n := f.loginCount(); n != 2 {
 			t.Errorf("Fingerprints() with every request refused logged in %d times, want 2", n)
