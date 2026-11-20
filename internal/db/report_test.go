@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -422,6 +423,60 @@ func TestReport_ItemOfMissingBundle(t *testing.T) {
 	}
 	if len(d.Changes) == 1 && (d.Changes[0].Item.Name == "" || d.Changes[0].Item.StorePath == "") {
 		t.Errorf("Report(%d).Changes[0] = %+v, want its name and store path", second, d.Changes[0])
+	}
+	var verdict *report.Event
+	for i := range d.Events {
+		if d.Events[i].Action == audit.ActionVerdict {
+			verdict = &d.Events[i]
+		}
+	}
+	if verdict == nil || verdict.Bundles != 1 || verdict.Category != "" || verdict.Kind != "" || verdict.File != "" {
+		t.Errorf("Report(%d).Events = %+v, want the verdict event of the deleted bundle for 1 bundle with no category, kind or file",
+			second, d.Events)
+	}
+}
+
+// TestReport_HoldsNoDerivedValue fills every part of the report from rows
+// that carry a preview, a fingerprint and a context line, and checks that
+// none of the three reaches the report.
+func TestReport_HoldsNoDerivedValue(t *testing.T) {
+	const (
+		preview = "dev-zzpreviewzz****"
+		context = "zzcontextlinezz"
+	)
+	fpSecret := strings.Repeat("ab12", 16)
+	fpPhone := strings.Repeat("cd34", 16)
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	secret := fnd(fpSecret, "conf/a.yml", finding.CategoryStorage, finding.KindPassword, 3)
+	secret.Preview = preview
+	secret.Locations[0].Context, secret.Locations[0].ContextFirstLine = []string{context}, 3
+	phone := fnd(fpPhone, "logs/x.log", finding.CategoryCustomerData, finding.KindPhone, 7)
+	phone.Preview = preview
+	first := saveAt(t, s, pid, minute(0), secret, phone)
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"},
+		bundleOf(t, s, pid, fpSecret, "conf/a.yml"))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictRedact}, bundleOf(t, s, pid, fpPhone, "logs/x.log"))
+	run := runAt(t, s, pid, first, apply.StateSucceeded, minute(10), minute(11))
+	insertItems(t, s, run,
+		itemOf(t, s, pid, secret, "db.main.password", apply.StatusApplied),
+		itemOf(t, s, pid, phone, "", apply.StatusApplied))
+	second := saveAt(t, s, pid, minute(20), secret, phone)
+
+	d := readReport(t, s, second)
+	if len(d.Lines) == 0 || len(d.Changes) == 0 || len(d.Redactions) == 0 || len(d.Events) == 0 {
+		t.Fatalf("Report(%d) = %+v, want every part filled", second, d)
+	}
+	encoded, err := json.Marshal(d)
+	if err != nil {
+		t.Fatalf("json.Marshal(Report(%d)) error = %v", second, err)
+	}
+	for name, text := range map[string]string{"%+v": fmt.Sprintf("%+v", d), "json": string(encoded)} {
+		for _, leak := range []string{"zzpreviewzz", fpSecret, fpPhone, context} {
+			if strings.Contains(text, leak) {
+				t.Errorf("Report(%d) as %s contains %q, want no preview, fingerprint or context line", second, name, leak)
+			}
+		}
 	}
 }
 

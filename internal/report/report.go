@@ -176,8 +176,7 @@ type Report struct {
 // kindRank is the place of a customer-data kind in the order phone, rrn,
 // email, card, address. Kinds it does not name follow, ordered by name.
 func kindRank(k finding.Kind) int {
-	//nolint:exhaustive // the kinds not named share the last rank
-	switch k {
+	switch k { //nolint:exhaustive // the kinds not named share the last rank
 	case finding.KindPhone:
 		return 0
 	case finding.KindRRN:

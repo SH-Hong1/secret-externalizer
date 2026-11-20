@@ -302,13 +302,11 @@ func lineStatus(l report.Line) (label, class string) {
 		return "이후 적용됨", "succeeded"
 	}
 	v := verdictOf(l.Verdict)
-	switch l.Verdict {
+	switch l.Verdict { //nolint:exhaustive // a verdict not named is worded by its own label
 	case triage.VerdictHold:
 		return "보류 · " + reasonLabel(l.Reason), v.Class
 	case triage.VerdictExternalize, triage.VerdictRedact:
 		return v.Label + " 판정 · 적용 전", v.Class
-	case triage.VerdictFalsePositive:
-		return v.Label, v.Class
 	}
 	return v.Label, v.Class
 }
@@ -318,7 +316,7 @@ func newEventRow(e report.Event) eventRow {
 	if row.User == "" {
 		row.User = e.Actor.Subject
 	}
-	switch e.Action {
+	switch e.Action { //nolint:exhaustive // the report holds only verdict, move and apply events
 	case audit.ActionVerdict:
 		v := verdictOf(triage.Verdict(e.Detail[audit.DetailVerdict]))
 		row.ActionLabel, row.ActionClass = "판정 · "+v.Label, v.Class
@@ -339,8 +337,6 @@ func newEventRow(e report.Event) eventRow {
 		if n, err := strconv.ParseInt(e.Detail[audit.DetailApply], 10, 64); err == nil && n > 0 {
 			row.ActionLabel, row.RunHref = "적용 #"+strconv.FormatInt(n, 10), runPath(apply.ID(n))
 		}
-	case audit.ActionReveal:
-		row.ActionLabel, row.ActionClass = "원본 보기", "dark"
 	default:
 		row.ActionLabel, row.ActionClass = string(e.Action), "queued"
 	}
