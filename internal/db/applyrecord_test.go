@@ -1116,8 +1116,16 @@ func TestReappeared(t *testing.T) {
 	if n, err := s.Reappeared(ctx, rescan); err != nil || n != 1 {
 		t.Errorf("Reappeared(%d) = %d, %v, want 1", rescan, n, err)
 	}
+	// The host in a.yml is applied after the confirmation scan; that scan
+	// still counts only what had been applied when it was requested.
+	if err := s.MarkApplied(ctx, bundleOf(t, s, pid, fpB, "conf/a.yml"), "secret/data/projects/1/ext.db.main.host"); err != nil {
+		t.Fatalf("MarkApplied(host) error = %v", err)
+	}
+	if n, err := s.Reappeared(ctx, rescan); err != nil || n != 1 {
+		t.Errorf("Reappeared(%d) after a later apply = %d, %v, want 1", rescan, n, err)
+	}
 
-	clean := save(t, s, pid, password("web/c.jsp"), host("conf/a.yml"))
+	clean := save(t, s, pid, password("web/c.jsp"), host("conf/b.xml"))
 	if n, err := s.Reappeared(ctx, clean); err != nil || n != 0 {
 		t.Errorf("Reappeared(%d) = %d, %v, want 0", clean, n, err)
 	}
@@ -1155,6 +1163,9 @@ func TestAppliedBundles(t *testing.T) {
 		Bundle: pw, Name: "db.main.password", Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "****",
 		StorePath: java.StorePath, Locations: 2, Config: true, CodeChange: true, LastRun: int64(id),
 	}
+	if n, err := s.AppliedCount(ctx, pid); err != nil || n != 1 {
+		t.Errorf("AppliedCount(%d) = %d, %v, want 1", pid, n, err)
+	}
 	if diff := cmp.Diff(want, a); diff != "" {
 		t.Errorf("AppliedBundles(%d)[0] before the confirmation scan (-want +got):\n%s", pid, diff)
 	}
@@ -1164,8 +1175,8 @@ func TestAppliedBundles(t *testing.T) {
 	if err := s.SaveResult(ctx, claimRescan(t, s, rescan).ID, "worker-a", rescan, result(password("conf/b.xml"))); err != nil {
 		t.Fatalf("SaveResult(scan %d) error = %v", rescan, err)
 	}
-	if got, err := s.AppliedBundles(ctx, pid, 1); err != nil || len(got.Entries) != 1 || !got.Entries[0].Reappeared {
-		t.Errorf("AppliedBundles(%d, 1) after the value reappeared = %+v, %v, want it reappeared", pid, got, err)
+	if got, err := s.AppliedBundles(ctx, pid, 1); err != nil || len(got.Entries) != 1 || !got.Entries[0].Reappeared || !got.Entries[0].Checked {
+		t.Errorf("AppliedBundles(%d, 1) after the value reappeared = %+v, %v, want it checked and reappeared", pid, got, err)
 	}
 	page, err := s.Entries(ctx, pid, rescan, triage.Filter{Status: triage.StatusAll, Page: 1})
 	if err != nil {
@@ -1176,8 +1187,8 @@ func TestAppliedBundles(t *testing.T) {
 	}
 
 	clean := save(t, s, pid, host("conf/a.yml"))
-	if got, err := s.AppliedBundles(ctx, pid, 1); err != nil || len(got.Entries) != 1 || got.Entries[0].Reappeared {
-		t.Errorf("AppliedBundles(%d, 1) after scan %d = %+v, %v, want it gone", pid, clean, got, err)
+	if got, err := s.AppliedBundles(ctx, pid, 1); err != nil || len(got.Entries) != 1 || got.Entries[0].Reappeared || !got.Entries[0].Checked {
+		t.Errorf("AppliedBundles(%d, 1) after scan %d = %+v, %v, want it checked and gone", pid, clean, got, err)
 	}
 }
 
@@ -1196,5 +1207,49 @@ func TestEntries_Shell(t *testing.T) {
 	want := map[string]bool{"password bin/run.sh": true, "host bin/run.sh": true, "host conf/a.yml": false}
 	if diff := cmp.Diff(want, shell); diff != "" {
 		t.Errorf("Entries(%d) shell by line (-want +got):\n%s", sid, diff)
+	}
+}
+
+func TestApplyHistory(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, sid, pw, _ := decidedProject(t, s, "shop")
+	applyRunIn(t, s, pid, sid, apply.StateSuperseded) // a replaced check is not listed
+	applyRunIn(t, s, pid, sid, apply.StateFailed)     // a failed check is not listed
+	// The queue gave up on this run after it changed a.yml: its stored
+	// counts were never filled.
+	gaveUp, _ := claimApply(t, s, pid)
+	writeFile(t, s, gaveUp, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+	skipped := replaceItem(t, s, pid, pw, "conf/b.xml")
+	skipped.Status, skipped.Reason = apply.StatusSkipped, apply.ReasonFileChanged
+	if err := s.InsertApplyItem(ctx, gaveUp, skipped); err != nil {
+		t.Fatalf("InsertApplyItem(%d) error = %v", gaveUp, err)
+	}
+	r := readRun(t, s, gaveUp)
+	r.State, r.FailureReason, r.FinishedAt = apply.StateFailed, db.ApplyGaveUpReason, time.Now()
+	r.IrreversibleFiles, r.DirtyFiles = []string{}, []string{}
+	if err := s.SetApplyRun(ctx, r); err != nil {
+		t.Fatalf("SetApplyRun(%d) error = %v", gaveUp, err)
+	}
+	checking := requestCheck(t, s, pid)
+
+	runs, err := s.ApplyHistory(ctx, pid, 10)
+	if err != nil {
+		t.Fatalf("ApplyHistory(%d, 10) error = %v", pid, err)
+	}
+	type line struct {
+		ID                       apply.ID
+		Applied, Skipped, Failed int
+	}
+	var got []line
+	for _, r := range runs {
+		got = append(got, line{r.ID, r.Applied, r.Skipped, r.Failed})
+	}
+	want := []line{{ID: checking}, {ID: gaveUp, Applied: 1, Skipped: 1}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("ApplyHistory(%d, 10) (-want +got):\n%s", pid, diff)
+	}
+	if runs, err := s.ApplyHistory(ctx, pid, 1); err != nil || len(runs) != 1 || runs[0].ID != checking {
+		t.Errorf("ApplyHistory(%d, 1) = %+v, %v, want the check only", pid, runs, err)
 	}
 }

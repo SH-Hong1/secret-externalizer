@@ -426,6 +426,10 @@ func (b *blockingStore) AppliedBundles(ctx context.Context, _ project.ID, _ int)
 	return triage.AppliedPage{}, b.wait(ctx)
 }
 
+func (b *blockingStore) AppliedCount(ctx context.Context, _ project.ID) (int, error) {
+	return 0, b.wait(ctx)
+}
+
 func (b *blockingStore) SameValueBundles(ctx context.Context, _ project.ID, _ scan.ID, _ triage.BundleID) ([]triage.Entry, error) {
 	return nil, b.wait(ctx)
 }
@@ -500,6 +504,12 @@ func (f *fakeTriage) putApplied(id project.ID, applied ...triage.Applied) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.applied[id] = applied
+}
+
+func (f *fakeTriage) AppliedCount(_ context.Context, projectID project.ID) (int, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.applied[projectID]), nil
 }
 
 func (f *fakeTriage) AppliedBundles(_ context.Context, projectID project.ID, page int) (triage.AppliedPage, error) {
@@ -879,7 +889,7 @@ func (b *blockingStore) ApplyRun(ctx context.Context, _ apply.ID) (apply.Run, er
 	return apply.Run{}, b.wait(ctx)
 }
 
-func (b *blockingStore) ApplyRunsByProject(ctx context.Context, _ project.ID) ([]apply.Run, error) {
+func (b *blockingStore) ApplyHistory(ctx context.Context, _ project.ID, _ int) ([]apply.Run, error) {
 	return nil, b.wait(ctx)
 }
 
@@ -1001,17 +1011,32 @@ func (f *fakeApplies) ApplyRun(_ context.Context, id apply.ID) (apply.Run, error
 	return r, nil
 }
 
-func (f *fakeApplies) ApplyRunsByProject(_ context.Context, pid project.ID) ([]apply.Run, error) {
+// ApplyHistory returns the confirmed and active runs of pid, newest first,
+// with their counts taken from their stored items, as the store does.
+func (f *fakeApplies) ApplyHistory(_ context.Context, pid project.ID, limit int) ([]apply.Run, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []apply.Run
 	for _, r := range f.runs {
-		if r.ProjectID == pid {
-			out = append(out, r)
+		if r.ProjectID != pid || r.ConfirmedAt.IsZero() && !r.State.Active() {
+			continue
 		}
+		r.Applied, r.Skipped, r.Failed = 0, 0, 0
+		for _, it := range f.items[r.ID] {
+			switch it.Status {
+			case apply.StatusApplied:
+				r.Applied++
+			case apply.StatusSkipped:
+				r.Skipped++
+			case apply.StatusFailed:
+				r.Failed++
+			case apply.StatusPlanned, apply.StatusWriting:
+			}
+		}
+		out = append(out, r)
 	}
 	slices.SortFunc(out, func(a, b apply.Run) int { return cmp.Compare(b.ID, a.ID) })
-	return out, nil
+	return out[:min(limit, len(out))], nil
 }
 
 func (f *fakeApplies) ApplyItems(_ context.Context, id apply.ID) ([]apply.Item, error) {

@@ -3,6 +3,7 @@ package web_test
 import (
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -192,13 +193,13 @@ func TestApplyPage_States(t *testing.T) {
 		{
 			name:    "apply queued",
 			summary: summary(run(apply.StateQueued)),
-			want:    []string{`href="/applies/5"`, "적용 #5이 적용 대기 중입니다."},
+			want:    []string{`href="/applies/5"`, "적용 #5 실행은 지금 적용 대기 중입니다."},
 			wantNot: []string{checkForm, applyOff, refresh},
 		},
 		{
 			name:    "apply running",
 			summary: summary(run(apply.StateRunning)),
-			want:    []string{`href="/applies/5"`, "적용 #5이 적용 중입니다.", `role="progressbar"`},
+			want:    []string{`href="/applies/5"`, "적용 #5 실행은 지금 적용 중입니다.", `role="progressbar"`},
 			wantNot: []string{checkForm, applyOff},
 		},
 		{
@@ -851,6 +852,7 @@ func TestApplyRunPage(t *testing.T) {
 		run        apply.Run
 		items      []apply.Item
 		scan       *scan.Scan
+		later      *scan.Scan
 		reappeared int
 		want       []string
 		wantNot    []string
@@ -862,7 +864,7 @@ func TestApplyRunPage(t *testing.T) {
 				`<span class="tile-label">적용</span><span class="tile-figure">3</span>`,
 				`<span class="tile-label">건너뜀</span><span class="tile-figure">1</span>`,
 				`<span class="tile-label">실패</span><span class="tile-figure">1</span>`,
-				`<a href="/scans/8">확인 스캔 #8</a>`, "적용한 값이 모두 사라졌습니다",
+				`<a href="/scans/8">확인 스캔 #8</a>`, "외부화한 값이 모두 사라졌습니다",
 				"ext.db.main.password", storePath, "conf/a.yml", "src/main/java/shop/Db.java", ">14<", "코드 수정 필요",
 				"[REDACTED]로 가림", "logs/x.log",
 				"재스캔 필요", "conf/b.xml:9", "비밀 저장소에 저장하지 못함", "conf/c.properties:2",
@@ -877,7 +879,7 @@ func TestApplyRunPage(t *testing.T) {
 				"이미 바꾼 파일 3개는 그대로입니다. <code>git diff</code>로 확인하세요. 다음 점검이 기록을 맞춥니다.",
 				`<a href="/scans/8">확인 스캔 #8</a>`, "확인 스캔이 진행 중입니다",
 			},
-			wantNot: []string{"적용한 값이 모두 사라졌습니다", "스캔을 시작해 주세요"},
+			wantNot: []string{"외부화한 값이 모두 사라졌습니다", "스캔을 시작해 주세요"},
 		},
 		{
 			name: "given up by the queue", run: gaveUp, items: runItems(),
@@ -885,6 +887,32 @@ func TestApplyRunPage(t *testing.T) {
 				"worker가 세 번 멈춰 적용을 포기했습니다", "이미 바꾼 파일 3개는 그대로입니다",
 				"확인 스캔이 요청되지 않았습니다", `<a class="btn btn-primary" href="/projects/1">프로젝트에서 스캔 시작</a>`,
 			},
+		},
+		{
+			name: "given up, then scanned", run: gaveUp, items: runItems(), later: &scan.Scan{
+				ID: 9, ProjectID: 1, Status: scan.StatusQueued, RequestedAt: time.Date(2026, 11, 20, 11, 0, 0, 0, time.UTC),
+			},
+			want:    []string{`<a href="/scans/9">스캔 #9</a>`, "실행 뒤에 요청된 스캔"},
+			wantNot: []string{"확인 스캔이 요청되지 않았습니다", "프로젝트에서 스캔 시작"},
+		},
+		{
+			name: "given up, an older scan only", run: gaveUp, items: runItems(), later: &scan.Scan{
+				ID: 6, ProjectID: 1, Status: scan.StatusSucceeded, RequestedAt: time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC),
+			},
+			want: []string{"확인 스캔이 요청되지 않았습니다"},
+		},
+		{
+			name: "stopped while writing", run: gaveUp,
+			items: append(slices.Clone(notApplied), apply.Item{
+				BundleID: 101, FindingID: 1008, File: "conf/d.properties", StartLine: 5,
+				Action: apply.ActionReplace, Category: finding.CategoryStorage, Kind: finding.KindPassword, Name: "ext.db.main.password",
+				Status: apply.StatusWriting,
+			}),
+			want: []string{
+				"바꾸던 중에 멈춘 파일 1개는 바뀌었을 수도, 그대로일 수도 있습니다", "바꾸던 중에 멈춘 위치 1곳", "conf/d.properties:5",
+				"확인 스캔이 요청되지 않았습니다",
+			},
+			wantNot: []string{"이미 바꾼 파일", "소스는 바뀌지 않았습니다"},
 		},
 		{
 			name: "failed before changing anything", run: gaveUp, items: notApplied,
@@ -897,16 +925,16 @@ func TestApplyRunPage(t *testing.T) {
 		},
 		{
 			name: "values found again", run: succeededWithFailure, items: runItems(), scan: confirmationScan(scan.StatusSucceeded), reappeared: 2,
-			want:    []string{"적용한 묶음의 값이 2개 항목에서 다시 발견되었습니다", `href="/projects/1/triage?status=applied"`},
-			wantNot: []string{"적용한 값이 모두 사라졌습니다"},
+			want:    []string{"외부화한 묶음의 값이 2개 항목에서 다시 발견되었습니다", `href="/projects/1/triage?status=applied"`},
+			wantNot: []string{"외부화한 값이 모두 사라졌습니다"},
 		},
 		{
 			name: "confirmation scan skipped files", run: succeededWithFailure, items: runItems(), scan: partial,
 			want: []string{
-				"이 스캔이 검사한 범위에서는 적용한 값이 다시 발견되지 않았습니다. 건너뛴 파일이나 버린 결과가 있습니다.",
+				"이 스캔이 검사한 범위에서는 외부화한 값이 다시 발견되지 않았습니다. 건너뛴 파일이나 버린 결과가 있습니다.",
 				`href="/scans/8#unchecked"`,
 			},
-			wantNot: []string{"적용한 값이 모두 사라졌습니다"},
+			wantNot: []string{"외부화한 값이 모두 사라졌습니다"},
 		},
 		{
 			name: "confirmation scan failed", run: succeededWithFailure, items: runItems(), scan: confirmationScan(scan.StatusFailed),
@@ -917,6 +945,9 @@ func TestApplyRunPage(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			e := applyEnv(t)
 			e.putRun(tt.run, tt.items, tt.scan, tt.reappeared)
+			if tt.later != nil {
+				e.scans.put(*tt.later)
+			}
 			res := e.getRun(t)
 			wantIn(t, "GET "+runPagePath, res.body, tt.want...)
 			wantNotIn(t, "GET "+runPagePath, res.body, tt.wantNot...)
@@ -975,14 +1006,16 @@ func TestApplyRunPage_Refresh(t *testing.T) {
 
 func TestProjectPage_Apply(t *testing.T) {
 	const scanButton = `<button class="btn btn-secondary btn-lg" type="submit">스캔 시작</button>`
-	done := finishedRun(apply.StateSucceeded, 8)
-	done.Applied, done.Skipped, done.Failed = 3, 1, 1
+	// The stored counts are those of a run the queue gave up; the page
+	// counts the items.
+	done := finishedRun(apply.StateFailed, 0)
+	done.FailureReason = db.ApplyGaveUpReason
 	check := *run(apply.StateReady)
 	check.ID = 6
 
 	t.Run("after an apply", func(t *testing.T) {
 		e := applyEnv(t)
-		e.putRun(done, nil, nil, 0)
+		e.putRun(done, runItems(), nil, 0)
 		e.putRun(check, nil, nil, 0)
 		res := e.do(t, http.MethodGet, "/projects/1", nil, e.user(t))
 		if res.status != http.StatusOK {
@@ -991,7 +1024,7 @@ func TestProjectPage_Apply(t *testing.T) {
 		wantIn(t, "GET /projects/1", res.body,
 			`<a class="btn btn-secondary btn-lg" href="/projects/1/apply">적용</a>`, scanButton,
 			"적용 기록", `<a class="row-link" href="/applies/5">#5</a>`, "2026-11-20 10:05:00 UTC", "Fake User",
-			`<span class="badge badge-succeeded">적용 완료</span>`, "적용 3 · 건너뜀 1 · 실패 1",
+			`<span class="badge badge-failed">적용 실패</span>`, "적용 3 · 건너뜀 1 · 실패 1",
 		)
 		wantNotIn(t, "GET /projects/1", res.body, `href="/applies/6"`, "스캔을 시작할 수 없습니다")
 	})
@@ -1003,7 +1036,7 @@ func TestProjectPage_Apply(t *testing.T) {
 		res := e.do(t, http.MethodGet, "/projects/1", nil, e.user(t))
 		wantIn(t, "GET /projects/1", res.body,
 			`<button class="btn btn-secondary btn-lg" type="button" disabled>스캔 시작</button>`,
-			`<a href="/applies/5">적용 #5</a>이 적용 중이라 스캔을 시작할 수 없습니다`,
+			`<a href="/applies/5">적용 #5</a> 실행 중이라 스캔을 시작할 수 없습니다`,
 			`<span class="badge badge-running">적용 중</span>`, "끝나면 보입니다",
 		)
 		wantNotIn(t, "GET /projects/1", res.body, scanButton)
@@ -1012,7 +1045,7 @@ func TestProjectPage_Apply(t *testing.T) {
 		e := applyEnv(t)
 		e.putRun(*run(apply.StateChecking), nil, nil, 0)
 		res := e.do(t, http.MethodGet, "/projects/1", nil, e.user(t))
-		wantIn(t, "GET /projects/1", res.body, `<a href="/projects/1/apply">조건 점검</a>이 진행 중이라 스캔을 시작할 수 없습니다`)
+		wantIn(t, "GET /projects/1", res.body, `<a href="/projects/1/apply">조건 점검</a> 진행 중이라 스캔을 시작할 수 없습니다`)
 		wantNotIn(t, "GET /projects/1", res.body, scanButton, "적용 기록")
 	})
 }

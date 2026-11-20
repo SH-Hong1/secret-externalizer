@@ -374,19 +374,19 @@ func TestApplyRun(t *testing.T) {
 	}
 
 	requestCheck(t, s, otherPid)
-	runs, err := s.ApplyRunsByProject(ctx, pid)
+	runs, err := s.ApplyHistory(ctx, pid, 10)
 	if err != nil {
-		t.Fatalf("ApplyRunsByProject(%d) error = %v", pid, err)
+		t.Fatalf("ApplyHistory(%d) error = %v", pid, err)
 	}
 	var ids []apply.ID
 	for _, r := range runs {
 		ids = append(ids, r.ID)
 	}
 	if diff := cmp.Diff([]apply.ID{second, first}, ids); diff != "" {
-		t.Errorf("ApplyRunsByProject(%d) IDs mismatch (-want +got):\n%s", pid, diff)
+		t.Errorf("ApplyHistory(%d) IDs mismatch (-want +got):\n%s", pid, diff)
 	}
-	if runs, err := s.ApplyRunsByProject(ctx, newProject(t, s, "bare")); err != nil || len(runs) != 0 {
-		t.Errorf("ApplyRunsByProject(project without runs) = %v, %v, want none", runs, err)
+	if runs, err := s.ApplyHistory(ctx, newProject(t, s, "bare"), 10); err != nil || len(runs) != 0 {
+		t.Errorf("ApplyHistory(project without runs) = %v, %v, want none", runs, err)
 	}
 }
 

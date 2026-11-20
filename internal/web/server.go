@@ -73,7 +73,7 @@ type ScanStore interface {
 // CustomerGroup returns the customer data a key names, with no bundles when
 // it names nothing. SameValueBundles returns the other bundles of a bundle's
 // value that the scan found. AppliedBundles returns one page of the
-// project's applied bundles, newest first. Decide and MoveFinding record a user's choice;
+// project's applied bundles, newest first, and AppliedCount their number. Decide and MoveFinding record a user's choice;
 // Decide fails with an error matching triage.ErrNotAllowed or db.ErrDuplicate
 // when it stores nothing because of the decision, MoveFinding with one
 // matching triage.ErrNotAllowed when the finding may not move there, and both
@@ -86,6 +86,7 @@ type TriageStore interface {
 	CustomerGroup(ctx context.Context, projectID project.ID, scanID scan.ID, key triage.GroupKey) (triage.Group, error)
 	SameValueBundles(ctx context.Context, projectID project.ID, scanID scan.ID, id triage.BundleID) ([]triage.Entry, error)
 	AppliedBundles(ctx context.Context, projectID project.ID, page int) (triage.AppliedPage, error)
+	AppliedCount(ctx context.Context, projectID project.ID) (int, error)
 	Decide(ctx context.Context, projectID project.ID, ids []triage.BundleID, d triage.Decision, by audit.Actor) error
 	MoveFinding(ctx context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (triage.BundleID, error)
 }
@@ -122,15 +123,17 @@ type Originals interface {
 // scan is unknown. ConfirmApply queues the apply of a ready run; it fails
 // with an error matching db.ErrScanActive when a scan of the project is
 // active, db.ErrPlanChanged when the plan is not the one the check showed,
-// and db.ErrNotFound when the run is unknown or not ready. ApplyRun,
-// ApplyRunsByProject and ApplyItems read runs and their outcomes, and
-// Reappeared counts the findings of applied bundles a scan found again.
+// and db.ErrNotFound when the run is unknown or not ready. ApplyRun and
+// ApplyItems read a run and its outcomes; ApplyHistory returns at most limit
+// runs of a project, newest first: those a user confirmed and the active
+// one, with their counts taken from their items. Reappeared counts the
+// findings of applied bundles a scan found again.
 type ApplyStore interface {
 	ApplySummary(ctx context.Context, projectID project.ID) (apply.Summary, error)
 	RequestApplyCheck(ctx context.Context, projectID project.ID, by audit.Actor) (apply.ID, error)
 	ConfirmApply(ctx context.Context, id apply.ID, digest string, allowIrreversible bool, by audit.Actor) error
 	ApplyRun(ctx context.Context, id apply.ID) (apply.Run, error)
-	ApplyRunsByProject(ctx context.Context, projectID project.ID) ([]apply.Run, error)
+	ApplyHistory(ctx context.Context, projectID project.ID, limit int) ([]apply.Run, error)
 	ApplyItems(ctx context.Context, id apply.ID) ([]apply.Item, error)
 	Reappeared(ctx context.Context, id scan.ID) (int, error)
 }

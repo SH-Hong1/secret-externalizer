@@ -245,9 +245,10 @@ const AppliedPageSize = 50
 // Config tell whether the name went into a ShellFile and into any other
 // file. CodeChange reports that a changed place is in a file whose code has
 // to read the value from the secret store. LastRun is the ID of the newest
-// apply run that changed a place of the bundle. Reappeared reports that the
-// project's latest succeeded scan, requested after that run started, still
-// finds the bundle's value.
+// apply run that changed a place of the bundle. Checked reports that the
+// project's latest succeeded scan was requested after that run started, and
+// Reappeared that this scan still finds the bundle's value. A bundle not
+// checked yet is neither found again nor known to be gone.
 type Applied struct {
 	Bundle     BundleID
 	Name       Name
@@ -261,6 +262,7 @@ type Applied struct {
 	Config     bool
 	CodeChange bool
 	LastRun    int64
+	Checked    bool
 	Reappeared bool
 }
 

@@ -202,7 +202,8 @@ func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, sca
 			}
 			tiles = newVerdictTiles(p.ID, page.Counts)
 		}
-		runs, err := applies.ApplyRunsByProject(r.Context(), p.ID)
+		// One more than the rows, since the active check is listed but not shown.
+		runs, err := applies.ApplyHistory(r.Context(), p.ID, maxApplyRows+1)
 		if err != nil {
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("listing apply runs: %w", err))
 			return

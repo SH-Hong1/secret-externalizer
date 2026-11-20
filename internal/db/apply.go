@@ -404,12 +404,26 @@ func (s *Store) ApplyRun(ctx context.Context, id apply.ID) (apply.Run, error) {
 	return r, nil
 }
 
-// ApplyRunsByProject returns the apply runs of the project, newest first.
-func (s *Store) ApplyRunsByProject(ctx context.Context, projectID project.ID) ([]apply.Run, error) {
-	rows, err := s.pool.Query(ctx,
-		"SELECT "+applyRunColumns+" FROM apply_run WHERE project_id = $1 ORDER BY id DESC", projectID)
+// ApplyHistory returns at most limit runs of the project, newest first:
+// those a user confirmed, and the check or apply that is active. Checks
+// that ended unconfirmed are left out. Applied, Skipped and Failed are
+// counted from the runs' items, which a run the queue gave up holds
+// although its stored counts were never filled.
+func (s *Store) ApplyHistory(ctx context.Context, projectID project.ID, limit int) ([]apply.Run, error) {
+	rows, err := s.pool.Query(ctx, `
+		SELECT r.id, r.project_id, r.scan_id, r.state, r.plan_digest, r.requested_by, r.requester_name,
+			r.requested_at, r.checked_at, r.confirmed_at, r.started_at, r.finished_at, r.allow_irreversible,
+			r.irreversible_files, r.blockers, r.dirty_files, r.dirty_count, r.failure_reason,
+			c.applied, c.skipped, c.failed, r.rescan_id
+		FROM apply_run r, LATERAL (
+			SELECT count(*) FILTER (WHERE status = 'applied')::int AS applied,
+				count(*) FILTER (WHERE status = 'skipped')::int AS skipped,
+				count(*) FILTER (WHERE status = 'failed')::int AS failed
+			FROM apply_item WHERE apply_id = r.id) c
+		WHERE r.project_id = $1 AND (r.confirmed_at IS NOT NULL OR r.state IN ('checking', 'queued', 'running'))
+		ORDER BY r.id DESC LIMIT $2`, projectID, limit)
 	if err != nil {
-		return nil, fmt.Errorf("listing apply runs of project %d: %w", projectID, err)
+		return nil, fmt.Errorf("listing the apply history of project %d: %w", projectID, err)
 	}
 	defer rows.Close()
 	var out []apply.Run
@@ -421,7 +435,7 @@ func (s *Store) ApplyRunsByProject(ctx context.Context, projectID project.ID) ([
 		out = append(out, r)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing apply runs of project %d: %w", projectID, err)
+		return nil, fmt.Errorf("listing the apply history of project %d: %w", projectID, err)
 	}
 	return out, nil
 }

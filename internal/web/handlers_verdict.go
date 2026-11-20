@@ -30,12 +30,14 @@ const (
 	msgMoveNotAllowed = "이 묶음으로 옮길 수 없습니다."
 	msgApplyActive    = "적용 중에는 판정을 바꿀 수 없습니다. 점검이나 적용이 끝난 뒤 다시 해 주세요."
 	msgAppliedFixed   = "적용한 묶음은 판정과 이름을 바꿀 수 없습니다. 소스에 이 이름의 placeholder가 들어가 있습니다. 메모만 고칠 수 있습니다."
-	msgAppliedMove    = "적용한 위치의 항목이나 적용한 묶음의 마지막 항목은 옮길 수 없습니다. 그 위치에는 이 묶음의 placeholder가 들어가 있습니다. 마지막 스캔이 다시 찾은 다른 위치의 항목만 옮길 수 있습니다."
+	msgAppliedMove    = "이 항목은 그 묶음으로 옮길 수 없습니다. 적용한 위치의 항목과 적용한 묶음의 마지막 항목은 옮길 수 없고, 옮겨 갈 묶음은 같은 값이며 그 판정이 이 항목을 받아들여야 합니다."
 )
 
 // refusal is how the triage screen answers a refused verdict or move: the
 // status, the message, the message that replaces it when the selected
-// bundle is applied, and a page that tells more.
+// bundle is applied, and a page that tells more. A move can be refused for
+// the finding's side or the target's, and the store does not say which, so
+// the message for a move out of an applied bundle names both.
 type refusal struct {
 	status  int
 	msg     string

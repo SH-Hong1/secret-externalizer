@@ -499,12 +499,17 @@ func TestTriage_AppliedTab(t *testing.T) {
 		triage.Applied{
 			Bundle: passwordBundle, Name: "db.main.password", Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "Sh0p****",
 			StorePath: "secret/data/projects/1/db.main.password", AppliedAt: time.Date(2026, 11, 20, 10, 7, 0, 0, time.UTC),
-			Locations: 3, Config: true, Shell: true, CodeChange: true, LastRun: 5, Reappeared: true,
+			Locations: 3, Config: true, Shell: true, CodeChange: true, LastRun: 5, Checked: true, Reappeared: true,
 		},
 		triage.Applied{
 			Bundle: 140, Name: "partner.api.token", Category: finding.CategoryPartnerSession, Kind: finding.KindToken, Preview: "eyJh****",
 			StorePath: "secret/data/projects/1/partner.api.token", AppliedAt: time.Date(2026, 11, 19, 10, 7, 0, 0, time.UTC),
-			Locations: 1, Config: true, LastRun: 4,
+			Locations: 1, Config: true, LastRun: 4, Checked: true,
+		},
+		triage.Applied{
+			Bundle: 141, Name: "mail.smtp.password", Category: finding.CategoryOther, Kind: finding.KindPassword, Preview: "mai1****",
+			StorePath: "secret/data/projects/1/mail.smtp.password", AppliedAt: time.Date(2026, 11, 19, 9, 7, 0, 0, time.UTC),
+			Locations: 1, Config: true, LastRun: 6,
 		},
 	)
 	res := e.getTriage(t, url.Values{"status": {"applied"}}, nil)
@@ -512,21 +517,26 @@ func TestTriage_AppliedTab(t *testing.T) {
 		t.Fatalf("GET triage?status=applied status = %d, want 200; body:\n%s", res.status, res.body)
 	}
 	wantIn(t, "applied tab", res.body,
-		`aria-current="true">적용됨 2</a>`,
+		`aria-current="true">적용됨 3</a>`,
 		"<th>이름</th>", "<th>분류</th>", "<th>미리보기</th>", "<th>저장 경로</th>", "<th>적용 시각</th>", "<th class=\"num\">위치</th>", "<th>마지막 실행</th>", "<th>마지막 스캔</th>",
 		"ext.db.main.password", "EXT_DB_MAIN_PASSWORD", "ext.partner.api.token", "저장소 접속 정보 · 비밀번호", "Sh0p****",
 		"secret/data/projects/1/db.main.password", "2026-11-20 10:07:00 UTC", ">3곳<", "코드 수정 필요",
 		`<a href="/applies/5">#5</a>`, `<a href="/applies/4">#4</a>`,
 		`<a class="badge badge-hold" href="/projects/1/triage?sel=b101&amp;status=all">다시 발견</a>`,
-		"1 / 1쪽 · 2줄",
+		"1 / 1쪽 · 3줄",
 	)
-	if n := strings.Count(res.body, "다시 발견</a>"); n != 1 {
-		t.Errorf("applied tab marks %d bundles found again, want 1", n)
+	for _, tt := range []struct {
+		mark string
+		n    int
+	}{{"다시 발견</a>", 1}, {`<span class="muted">없음</span>`, 1}, {`<span class="muted">확인 전</span>`, 1}} {
+		if got := strings.Count(res.body, tt.mark); got != tt.n {
+			t.Errorf("applied tab has %q %d times, want %d", tt.mark, got, tt.n)
+		}
 	}
 	wantNotIn(t, "applied tab", res.body, `class="verdict-form"`, "원본 보기", `name="verdict"`, `id="detail"`, "EXT_PARTNER_API_TOKEN")
 
 	res = e.getTriage(t, nil, nil)
-	wantIn(t, "undecided tab", res.body, `href="/projects/1/triage?status=applied">적용됨 2</a>`)
+	wantIn(t, "undecided tab", res.body, `href="/projects/1/triage?status=applied">적용됨 3</a>`)
 
 	empty := triageEnv(t)
 	res = empty.getTriage(t, url.Values{"status": {"applied"}}, nil)

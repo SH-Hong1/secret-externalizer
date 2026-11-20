@@ -505,7 +505,7 @@ func TestScanCreate_WhileApplying(t *testing.T) {
 }
 
 func TestScanPage_Confirmation(t *testing.T) {
-	const unchecked = "이 스캔이 검사한 범위에서는 적용한 값이 다시 발견되지 않았습니다. 건너뛴 파일이나 버린 결과가 있습니다."
+	const unchecked = "이 스캔이 검사한 범위에서는 외부화한 값이 다시 발견되지 않았습니다. 건너뛴 파일이나 버린 결과가 있습니다."
 	for _, tt := range []struct {
 		name       string
 		scan       scan.Scan
@@ -515,18 +515,18 @@ func TestScanPage_Confirmation(t *testing.T) {
 	}{
 		{
 			name: "values found again", scan: scan.Scan{Status: scan.StatusSucceeded}, reappeared: 3,
-			want:    []string{"적용한 묶음의 값이 3개 항목에서 다시 발견되었습니다", `href="/projects/1/triage?status=applied"`},
-			wantNot: []string{"적용한 값이 모두 사라졌습니다", unchecked},
+			want:    []string{"외부화한 묶음의 값이 3개 항목에서 다시 발견되었습니다", `href="/projects/1/triage?status=applied"`},
+			wantNot: []string{"외부화한 값이 모두 사라졌습니다", unchecked},
 		},
 		{
 			name: "all gone", scan: scan.Scan{Status: scan.StatusSucceeded},
-			want:    []string{"적용한 값이 모두 사라졌습니다"},
+			want:    []string{"외부화한 값이 모두 사라졌습니다"},
 			wantNot: []string{unchecked, "다시 발견되었습니다"},
 		},
 		{
 			name: "skipped files", scan: scan.Scan{Status: scan.StatusSucceeded, Skipped: 1},
 			want:    []string{unchecked, `href="/scans/8#unchecked"`, `id="unchecked"`},
-			wantNot: []string{"적용한 값이 모두 사라졌습니다"},
+			wantNot: []string{"외부화한 값이 모두 사라졌습니다"},
 		},
 		{
 			name: "dropped results", scan: scan.Scan{Status: scan.StatusSucceeded, Dropped: 2},
@@ -539,7 +539,7 @@ func TestScanPage_Confirmation(t *testing.T) {
 		{
 			name: "running", scan: scan.Scan{Status: scan.StatusRunning},
 			want:    []string{"확인 스캔이 진행 중입니다"},
-			wantNot: []string{"적용한 값이 모두 사라졌습니다"},
+			wantNot: []string{"외부화한 값이 모두 사라졌습니다"},
 		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {

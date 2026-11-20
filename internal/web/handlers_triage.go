@@ -207,13 +207,13 @@ func fillTriagePage(ctx context.Context, logger *slog.Logger, store TriageStore,
 		}
 	}
 
-	applied, err := store.AppliedBundles(ctx, pid, 1)
+	applied, err := store.AppliedCount(ctx, pid)
 	if err != nil {
 		return http.StatusInternalServerError, fmt.Errorf("counting applied bundles: %w", err)
 	}
 	data.ApplyHref = applyPath(pid)
 	setScanHead(data, sc, page.Counts)
-	data.Statuses = newStatusChips(pid, q, page.Counts, applied.Total)
+	data.Statuses = newStatusChips(pid, q, page.Counts, applied)
 	data.Rows = newListRows(pid, q, page.Entries, q.Sel)
 	data.ShowState = q.Status == triage.StatusAll
 	data.Page, data.Pages, data.Entries = page.Page, page.Pages, page.Total

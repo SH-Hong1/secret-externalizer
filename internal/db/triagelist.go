@@ -320,6 +320,16 @@ func (s *Store) SameValueBundles(ctx context.Context, projectID project.ID, scan
 	return out, nil
 }
 
+// AppliedCount returns the number of the project's applied bundles.
+func (s *Store) AppliedCount(ctx context.Context, projectID project.ID) (int, error) {
+	var n int
+	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM bundle WHERE project_id = $1 AND applied_at IS NOT NULL",
+		projectID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("counting applied bundles of project %d: %w", projectID, err)
+	}
+	return n, nil
+}
+
 // AppliedBundles returns one page of the project's applied bundles, newest
 // apply first, triage.AppliedPageSize to a page. A page past the last gives
 // the last and a page before the first the first. A place counts as changed
@@ -341,6 +351,7 @@ func (s *Store) AppliedBundles(ctx context.Context, projectID project.ID, page i
 			SELECT b.id, b.name, coalesce(f.category, ''), coalesce(f.kind, ''), coalesce(f.preview, ''),
 				b.store_path, b.applied_at, coalesce(i.locations, 0), coalesce(i.shell, false), coalesce(i.config, false),
 				coalesce(i.code_change, false), coalesce(i.last_run, 0),
+				EXISTS (SELECT 1 FROM latest WHERE latest.requested_at > coalesce(i.last_start, b.applied_at)),
 				EXISTS (SELECT 1 FROM latest
 					JOIN location l ON l.scan_id = latest.id
 					JOIN finding m ON m.id = l.finding_id
@@ -371,7 +382,7 @@ func (s *Store) AppliedBundles(ctx context.Context, projectID project.ID, page i
 				name *string
 			)
 			err := row.Scan(&a.Bundle, &name, &a.Category, &a.Kind, &a.Preview, &a.StorePath, &a.AppliedAt, &a.Locations,
-				&a.Shell, &a.Config, &a.CodeChange, &a.LastRun, &a.Reappeared)
+				&a.Shell, &a.Config, &a.CodeChange, &a.LastRun, &a.Checked, &a.Reappeared)
 			if name != nil {
 				a.Name = triage.Name(*name)
 			}

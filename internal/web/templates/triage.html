@@ -36,7 +36,7 @@
 {{end}}{{end}}</main>{{end}}
 
 {{define "applied"}}<section class="applied" aria-label="적용한 묶음">
-{{if .Rows}}<p class="text-2">값을 비밀 저장소에 저장하고 소스에 placeholder 이름을 넣은 묶음입니다. 판정과 이름은 바꿀 수 없습니다. 적용한 시각이 최근인 것부터 보입니다.</p>
+{{if .Rows}}<p class="text-2">값을 비밀 저장소에 저장하고 소스에 placeholder 이름을 넣은 묶음입니다. 판정과 이름은 바꿀 수 없습니다. 적용한 시각이 최근인 것부터 보입니다. "마지막 스캔"의 "확인 전"은 그 적용 뒤에 성공한 스캔이 아직 없다는 뜻입니다.</p>
 <div class="table-wrap">
 <table class="table min-w-[1040px]">
 <thead><tr><th>이름</th><th>분류</th><th>미리보기</th><th>저장 경로</th><th>적용 시각</th><th class="num">위치</th><th>마지막 실행</th><th>마지막 스캔</th></tr></thead>
@@ -49,7 +49,7 @@
 <td class="mono">{{.AppliedAt}}</td>
 <td class="num">{{.Locations}}곳</td>
 <td>{{if .RunHref}}<a href="{{.RunHref}}">{{.Run}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
-<td>{{if .Reappeared}}<a class="badge badge-hold" href="{{.BundleHref}}">다시 발견</a>{{else}}<span class="muted">없음</span>{{end}}</td>
+<td>{{if .Reappeared}}<a class="badge badge-hold" href="{{.BundleHref}}">다시 발견</a>{{else if .Checked}}<span class="muted">없음</span>{{else}}<span class="muted">확인 전</span>{{end}}</td>
 </tr>
 {{end}}</tbody>
 </table>

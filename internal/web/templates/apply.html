@@ -61,7 +61,7 @@
 </div>
 {{else if eq .View "applying"}}<div class="card card-pad flex flex-col gap-2.5">
 {{if eq .Run.State "running"}}<div class="progress" role="progressbar" aria-label="적용 중"></div>
-{{end}}<p class="text-2">적용 #{{.Run.ID}}이 {{.RunState.Label}}입니다. 진행과 결과는 결과 화면에서 볼 수 있습니다.</p>
+{{end}}<p class="text-2">적용 #{{.Run.ID}} 실행은 지금 {{.RunState.Label}}입니다. 진행과 결과는 결과 화면에서 볼 수 있습니다.</p>
 <div><a class="btn btn-secondary" href="{{.RunHref}}">적용 #{{.Run.ID}} 결과 보기</a></div>
 </div>
 {{else if eq .View "blocked"}}<section class="flex flex-col gap-2.5">

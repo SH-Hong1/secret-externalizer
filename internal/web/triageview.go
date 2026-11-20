@@ -124,8 +124,9 @@ type appliedTable struct {
 }
 
 // appliedRow is one applied bundle: the forms its name took in the source,
-// what it is, where its value went, and whether the latest scan found the
-// value again, with the link to the bundle on the triage screen then.
+// what it is, where its value went, whether a scan has looked since the
+// apply (Checked) and found the value again, with the link to the bundle on
+// the triage screen then.
 type appliedRow struct {
 	Names      []string
 	What       string
@@ -136,6 +137,7 @@ type appliedRow struct {
 	CodeChange bool
 	RunHref    string
 	Run        string
+	Checked    bool
 	Reappeared bool
 	BundleHref string
 }
@@ -200,7 +202,7 @@ func newAppliedTable(id project.ID, p triage.AppliedPage) *appliedTable {
 			Preview:   a.Preview,
 			StorePath: a.StorePath,
 			AppliedAt: formatTime(a.AppliedAt),
-			Locations: a.Locations, CodeChange: a.CodeChange, Reappeared: a.Reappeared,
+			Locations: a.Locations, CodeChange: a.CodeChange, Checked: a.Checked, Reappeared: a.Reappeared,
 		}
 		if a.Name != "" {
 			if a.Config || !a.Shell {
@@ -398,7 +400,7 @@ func newEmptyState(id project.ID, q triageQuery, scanID scan.ID, counts map[tria
 	if q.Status == triage.StatusUndecided && q.Category == "" {
 		return &emptyState{
 			Title: "미판정 항목이 없습니다",
-			Text: "스캔 #" + strconv.FormatInt(int64(scanID), 10) + "가 찾은 " + strconv.Itoa(total) + "개를 모두 판정했습니다. " +
+			Text: "스캔 #" + strconv.FormatInt(int64(scanID), 10) + "에서 찾은 " + strconv.Itoa(total) + "개를 모두 판정했습니다. " +
 				"외부화 " + strconv.Itoa(counts[triage.VerdictExternalize]) +
 				", 삭제·마스킹 " + strconv.Itoa(counts[triage.VerdictRedact]) +
 				", 오탐 " + strconv.Itoa(counts[triage.VerdictFalsePositive]) +

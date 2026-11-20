@@ -11,7 +11,7 @@
 {{if and .Succeeded .Triage}}<span class="grow"></span>
 <a class="btn btn-primary btn-lg" href="{{.Triage}}">판정하기 · 미판정 {{.Undecided}}</a>
 {{end}}</div>
-{{with .Confirmation}}<p class="lede"><a href="{{.RunHref}}">적용 #{{.RunID}}</a>의 확인 스캔입니다. 적용한 값이 소스에서 사라졌는지 확인합니다.</p>
+{{with .Confirmation}}<p class="lede"><a href="{{.RunHref}}">적용 #{{.RunID}}</a>의 확인 스캔입니다. 외부화한 값이 소스에서 사라졌는지 확인합니다.</p>
 {{end}}</div>
 {{with .Confirmation}}{{template "confirmation" .}}{{end}}{{if .Scan.Status.Active}}<div class="card card-pad flex flex-col gap-2.5">
 {{if eq .Scan.Status "running"}}<div class="progress" role="progressbar" aria-label="스캔 진행 중"></div>

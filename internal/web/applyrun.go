@@ -23,8 +23,11 @@ const statusApplied = "applied"
 // applyRunPage is what the page of one apply run shows. Active is set while
 // the run is queued or running, and the page then refreshes itself.
 // Counts are taken from the items, so a run the queue gave up shows what it
-// recorded. Changed counts the files an item of the run changed or was
-// changing; NeedScan tells that such a run has no confirmation scan.
+// recorded. Changed counts the files an item of the run changed, and
+// Unsure the other files it was changing when it stopped, which may or may
+// not have changed. NeedScan tells that a failed run that touched files has
+// no confirmation scan and no scan was requested after it; LaterScan is the
+// newest scan requested after such a run.
 // Untouched are the places a finished run never reached, and CodeChanges
 // counts the changed places whose code has to read the value elsewhere.
 type applyRunPage struct {
@@ -45,6 +48,8 @@ type applyRunPage struct {
 	Skipped      int
 	Failed       int
 	Changed      int
+	Unsure       int
+	LaterScan    scan.ID
 	CodeChanges  int
 	NeedScan     bool
 	Bundles      []runBundle
@@ -168,9 +173,35 @@ func handleApplyRun(logger *slog.Logger, rd *renderer, projects ProjectStore, sc
 			}
 			page.Rescan = c
 		}
-		page.NeedScan = run.State == apply.StateFailed && page.Changed > 0 && run.RescanID == 0
+		if run.State == apply.StateFailed && page.Changed+page.Unsure > 0 && run.RescanID == 0 {
+			later, err := scanAfter(r, scans, p.ID, run)
+			if err != nil {
+				rd.fail(w, r, logger, http.StatusInternalServerError, err)
+				return
+			}
+			page.LaterScan, page.NeedScan = later, later == 0
+		}
 		rd.page(w, r, logger, http.StatusOK, "apply_run.html", page)
 	})
+}
+
+// scanAfter returns the newest scan of project pid requested after run
+// ended, or zero when there is none.
+func scanAfter(r *http.Request, scans ScanStore, pid project.ID, run apply.Run) (scan.ID, error) {
+	list, err := scans.ScansByProject(r.Context(), pid)
+	if err != nil {
+		return 0, fmt.Errorf("listing scans after the apply: %w", err)
+	}
+	end := run.FinishedAt
+	if end.IsZero() {
+		end = run.StartedAt
+	}
+	for _, sc := range list {
+		if sc.RequestedAt.After(end) {
+			return sc.ID, nil
+		}
+	}
+	return 0, nil
 }
 
 // readConfirmation reads scan id, which confirms run, and what it found
@@ -254,7 +285,7 @@ func newApplyRunPage(p project.Project, run apply.Run) applyRunPage {
 // items: the applied places by bundle, the skipped and failed ones by
 // reason, the ones left writing, and the ones never reached.
 func (p *applyRunPage) setOutcomes(items []apply.Item) {
-	changed := map[string]bool{}
+	changed, unsure := map[string]bool{}, map[string]bool{}
 	bundles := map[triage.BundleID]*runBundle{}
 	var order []triage.BundleID
 	skips := map[apply.Reason]*skipGroup{}
@@ -299,13 +330,18 @@ func (p *applyRunPage) setOutcomes(items []apply.Item) {
 			p.Failed++
 			group(failures, &failOrder, it)
 		case apply.StatusWriting:
-			changed[it.File] = true
+			unsure[it.File] = true
 			p.Writing = append(p.Writing, lineOf(it))
 		case apply.StatusPlanned:
 			p.Untouched = append(p.Untouched, lineOf(it))
 		}
 	}
 	p.Changed = len(changed)
+	for f := range unsure {
+		if !changed[f] {
+			p.Unsure++
+		}
+	}
 	for _, id := range order {
 		p.Bundles = append(p.Bundles, *bundles[id])
 	}
@@ -340,7 +376,8 @@ type applyRow struct {
 }
 
 // activeApply is the check or apply that keeps a project from being
-// scanned: what it is, and the page that follows it.
+// scanned: what it is, the page that follows it, and where it is, in words
+// that need no particle after the run number.
 type activeApply struct {
 	Label string
 	Href  string
@@ -356,9 +393,13 @@ func newApplyRows(runs []apply.Run) ([]applyRow, *activeApply) {
 	)
 	for _, r := range runs {
 		if r.State.Active() && active == nil {
-			active = &activeApply{Label: "적용 #" + strconv.FormatInt(int64(r.ID), 10), Href: runPath(r.ID), State: applyStateOf(r.State).Label}
-			if r.State == apply.StateChecking {
+			active = &activeApply{Label: "적용 #" + strconv.FormatInt(int64(r.ID), 10), Href: runPath(r.ID), State: "실행 중"}
+			switch r.State {
+			case apply.StateChecking:
 				active.Label, active.Href, active.State = "조건 점검", applyPath(r.ProjectID), "진행 중"
+			case apply.StateQueued:
+				active.State = "대기 중"
+			case apply.StateRunning, apply.StateReady, apply.StateBlocked, apply.StateSucceeded, apply.StateFailed, apply.StateSuperseded:
 			}
 		}
 		if r.ConfirmedAt.IsZero() || len(rows) == maxApplyRows {

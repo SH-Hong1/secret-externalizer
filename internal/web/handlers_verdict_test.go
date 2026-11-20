@@ -652,8 +652,8 @@ func TestVerdict_AppliedBundleRefused(t *testing.T) {
 		if res.status != http.StatusBadRequest {
 			t.Fatalf("POST move out of an applied bundle status = %d, want 400", res.status)
 		}
-		wantIn(t, "refused move detail", section(res.body, "section", "detail"), "적용한 위치의 항목이나 적용한 묶음의 마지막 항목은 옮길 수 없습니다")
-		wantNotIn(t, "refused move detail", section(res.body, "section", "detail"), "이 묶음으로 옮길 수 없습니다")
+		wantIn(t, "refused move detail", section(res.body, "section", "detail"),
+			"적용한 위치의 항목과 적용한 묶음의 마지막 항목은 옮길 수 없고, 옮겨 갈 묶음은 같은 값이며 그 판정이 이 항목을 받아들여야 합니다")
 	})
 }
 
