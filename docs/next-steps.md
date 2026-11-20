@@ -61,7 +61,7 @@
 - [ ] OpenBao에 저장되는 외부화 값은 소스에 적힌 글자 그대로다. XML의 `&amp;`, properties와 Java의 `\` 이스케이프, YAML의 따옴표 안 이스케이프를 풀지 않는다. 값을 쓰는 쪽(배포 스크립트, 설정 주입)이 파일 종류를 보고 풀어야 한다. 풀어 저장할지 정한다(`docs/decisions/0035-externalized-values-in-openbao.md`).
 - [ ] git은 `objects/info/alternates`가 작업 공간 밖을 가리켜도 그 객체를 읽는다. 읽기만 하고 도구가 받는 것은 경로와 표시뿐이지만, git 폴더가 작업 공간 안에 있어야 한다는 규칙의 예외다(`docs/decisions/0033-git-work-tree-inspection.md`).
 - [ ] macOS의 git은 파일 이름을 NFC로 보고하므로 디스크에 NFD로 저장된 이름이 다른 바이트로 돌아올 수 있다. 결과는 "커밋되지 않은 변경"이나 "추적되지 않음" 쪽으로 기울고, Linux의 worker에는 해당하지 않는다(`docs/decisions/0033-git-work-tree-inspection.md`).
-- [ ] `apply_run.project_id`에는 걸린 상태(`checking`, `queued`, `running`)의 부분 유일 인덱스 말고 인덱스가 없다. "프로젝트의 마지막 실행"을 읽는 쿼리가 실행이 쌓이면 느려지므로 새 마이그레이션으로 인덱스를 더한다.
+- [x] `apply_run.project_id`에는 걸린 상태(`checking`, `queued`, `running`)의 부분 유일 인덱스 말고 인덱스가 없다. "프로젝트의 마지막 실행"을 읽는 쿼리가 실행이 쌓이면 느려지므로 새 마이그레이션으로 인덱스를 더한다. 2026-11-20에 계획 6 Task 2에서 마이그레이션 `0008`로 `apply_run (project_id, id DESC)`와 `audit_event (project_id, id DESC)` 인덱스를 더했다.
 - [ ] git이 추적하지 않고 사람이 손으로 만든 `secrets-manifest.yml`은 적용이 다시 쓴다(항목은 남고 모양은 쓰는 모양으로 바뀐다). git에 사본이 없으므로 원래 모양으로 되돌릴 수 없다(`docs/decisions/0034-manifest-format.md`).
 - [ ] 죽은 뒤 다음 맞추기 전에 사람이 파일을 고치면, 그 파일의 항목은 `interrupted`로 닫히는데 디스크에는 placeholder가 남는다. 그 파일을 커밋하기 전까지 다음 적용은 "커밋되지 않은 변경"으로 막힌다(`docs/decisions/0032-apply-order-and-resuming.md`).
 - [ ] 임시 파일을 지우지 못한 뒤 manifest가 하드 링크된 상태로 남으면, 이후의 manifest 쓰기가 모두 `ErrHardLinked`로 실패한다. 사람이 링크를 풀어야 한다(`docs/decisions/0037-file-rewrite-on-os-root.md`).

@@ -327,8 +327,8 @@
   - `Redactions`: 위의 삭제·마스킹 항목을 (종류, 파일, `tracked`)로 묶은 것이다.
   - `Events`: 그 프로젝트의 `audit_event` 가운데 `action`이 `verdict`, `move`, `apply`인 것을 (`at`, `actor_subject`, `actor_name`, `action`, `detail`)로 묶어 새것부터 `report.MaxRows`줄, `EventTotal`은 묶은 줄의 전체 수다. `Bundles`는 묶인 기록 수이고, `Category`, `Kind`, `File`은 가장 작은 `bundle_id`의 묶음이 지금 가진 첫 항목의 것이다(없으면 빈 값). `move`는 `detail`의 `to`가 달라 묶이지 않는다.
 
-- [ ] **Step 1:** "구현 전에 확인할 사실"의 Task 2 항목 둘을 테스트 데이터베이스에서 확인한다. `now()`가 같지 않게 나오면 판정 이력을 묶는 열을 다시 정하고 계획을 고친다.
-- [ ] **Step 2: 실패하는 테스트를 쓴다.** `TEST_DATABASE_URL`이 없으면 건너뛴다. 지금의 `db` 테스트 도우미(`export_test.go`)로 프로젝트, 스캔, 항목, 판정, 적용 기록을 넣는다.
+- [x] **Step 1:** "구현 전에 확인할 사실"의 Task 2 항목 둘을 테스트 데이터베이스에서 확인한다. `now()`가 같지 않게 나오면 판정 이력을 묶는 열을 다시 정하고 계획을 고친다.
+- [x] **Step 2: 실패하는 테스트를 쓴다.** `TEST_DATABASE_URL`이 없으면 건너뛴다. 지금의 `db` 테스트 도우미(`export_test.go`)로 프로젝트, 스캔, 항목, 판정, 적용 기록을 넣는다.
   - `TestReport_NotFound`: 없는 ID는 `ErrNotFound`.
   - `TestReport_NotSucceeded`: 대기, 실행 중, 실패한 스캔은 `Project`, `Scan`, `Latest`만 채우고 `Lines`가 없다.
   - `TestReport_Totals`: 스캔 1(묶음 6개: 외부화 판정 2, 삭제·마스킹 판정 1, 오탐 1, 보류 1, 미판정 1) → 적용(외부화 2개 묶음의 위치 3곳, 삭제 1곳이 `applied`, 1곳은 `skipped`) → 스캔 2(오탐, 보류, 미판정 묶음만 찾음). 스캔 2의 `Totals`는 `Found{3,3}`, `Externalized{2,3}`, `Redacted{1,1}`, `FalsePositive{1,1}`, `Hold{1,1}`, `Undecided{1,1}`, `Pending{0,0}`이고 `Previous`는 스캔 1, `PreviousTotals`는 `Found{6,…}`, `Externalized{0,0}`, `Pending{3,…}`다. 스캔 1의 `Totals`는 `Externalized{0,0}`이고 그 외부화 묶음의 줄은 `Applied`가 `after`다.
@@ -339,10 +339,10 @@
   - `TestReport_Events`: 묶음 37개를 한 번의 `Decide`로 판정하면 줄 하나(`Bundles` 37, `Detail`의 판정)다. `reveal` 기록은 없다. 새것부터다. 묶인 줄이 `MaxRows`보다 많으면 `Events`는 `MaxRows`개이고 `EventTotal`은 전체다(기록을 직접 넣어 만든다).
   - `TestReport_OtherProject`: 다른 프로젝트의 묶음, 적용 항목, 기록이 하나도 섞이지 않는다.
   - `TestReport_FrontendAndShell`: `.jsp` 구성원이 있는 비밀 값 묶음은 `Frontend`, 구성원이 모두 `.sh`면 `Shell`이다. `.jsp`의 고객정보 줄은 `Frontend`가 false다.
-- [ ] **Step 3:** `TEST_DATABASE_URL=… go test ./internal/db/ -run TestReport` 가 실패하는 것을 본다.
-- [ ] **Step 4:** 마이그레이션 `0008`과 `internal/db/report.go`를 쓴다. `s.readOnly` 하나 안에서 읽는다. SQL은 이 파일에만 둔다.
-- [ ] **Step 5:** `make test-integration`(Step 3의 환경 변수와 함께)과 `make check`가 통과한다.
-- [ ] **Step 6:** `CHANGELOG.md`에 인덱스 줄을 더하고 `docs/next-steps.md`의 `apply_run.project_id` 인덱스 항목을 체크한 뒤 커밋한다(`feat(db): read the data of a scan report`).
+- [x] **Step 3:** `TEST_DATABASE_URL=… go test ./internal/db/ -run TestReport` 가 실패하는 것을 본다.
+- [x] **Step 4:** 마이그레이션 `0008`과 `internal/db/report.go`를 쓴다. `s.readOnly` 하나 안에서 읽는다. SQL은 이 파일에만 둔다.
+- [x] **Step 5:** `make test-integration`(Step 3의 환경 변수와 함께)과 `make check`가 통과한다.
+- [x] **Step 6:** `CHANGELOG.md`에 인덱스 줄을 더하고 `docs/next-steps.md`의 `apply_run.project_id` 인덱스 항목을 체크한 뒤 커밋한다(`feat(db): read the data of a scan report`).
 
 ### Task 3: 리포트 화면
 
