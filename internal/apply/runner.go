@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io/fs"
 	"log/slog"
+	"path/filepath"
 	"slices"
 	"time"
 
@@ -70,6 +71,7 @@ const (
 	FailureSecretStore   = "the secret store could not be reached; see the worker log"
 	FailureTimeLimit     = "apply took longer than the time limit"
 	FailureOther         = "apply could not finish; see the worker log"
+	FailureManifestWrite = "the manifest could not be written; see the worker log"
 )
 
 // Options are the settings of a Runner.
@@ -103,6 +105,9 @@ var (
 	// errTimeLimit is the cause of the context of a run that ran out of
 	// time.
 	errTimeLimit = errors.New("the time limit of the run has passed")
+	// errManifestWrite marks a failure to write the manifest or to record
+	// that it was written.
+	errManifestWrite = errors.New("writing the manifest")
 )
 
 // Runner carries out the checks and applies of claimed jobs. It keeps no
@@ -200,6 +205,8 @@ func failureFor(err error) string {
 		return FailurePlanChanged
 	case errors.Is(err, errSecretStore):
 		return FailureSecretStore
+	case errors.Is(err, errManifestWrite):
+		return FailureManifestWrite
 	}
 	return FailureOther
 }
@@ -235,11 +242,18 @@ type target struct {
 	// file's buffers or another value, so zeroing it changes nothing else.
 	// It is nil until read.
 	value value
-	// reason is why the target is skipped, empty while it is planned.
+	// reason is why the target is skipped or failed, empty while it is
+	// planned or once it is applied.
 	reason Reason
+	// status is set once an apply has applied the target or failed at it;
+	// it is empty while the target is planned or skipped for reason.
+	status Status
 }
 
-// sourceFile is a file the plan changes, as the run read it.
+// sourceFile is a file the plan changes, as the run read it. It is only ever
+// used through a pointer, which is the form whose String, Format and
+// LogValue hide the file's bytes; the type is unexported so that no other
+// package can copy it.
 type sourceFile struct {
 	rel     string
 	raw     value         // the bytes on disk, nil until read
@@ -288,7 +302,9 @@ func (f *sourceFile) decode() (textfile.File, error) {
 
 // prepared is a run after the steps a check and an apply share: the
 // records reconciled with the disk, the plan, the conditions, and each
-// target's value read again and checked. close zeroes every value.
+// target's value read again and checked. close zeroes every value. Like
+// sourceFile, it is only ever used through a pointer, the form that hides
+// what it holds when printed.
 type prepared struct {
 	in   Input
 	plan Plan
@@ -357,7 +373,10 @@ func (p *prepared) items() []Item {
 	for _, f := range p.files {
 		for _, t := range f.targets {
 			it := t.Item
-			if t.reason != "" {
+			switch {
+			case t.status != "":
+				it.Status, it.Reason = t.status, t.reason
+			case t.reason != "":
 				it.Status, it.Reason = StatusSkipped, t.reason
 			}
 			out = append(out, it)
@@ -506,9 +525,15 @@ func (r *Runner) reconcile(ctx context.Context, j job.Job, projectID project.ID,
 // removeTemp removes the temporary file f names, if any, before its record
 // is closed: once closed, no record names the file and the tool would never
 // remove it. A link, a folder or anything else that is not a regular file
-// at that name is not the tool's and is left in place.
+// at that name is not the tool's and is left in place, and so is a file
+// outside the folder of the record's file, where the tool never makes one.
 func (r *Runner) removeTemp(ctx context.Context, j job.Job, dir *rewrite.Dir, f OpenFile) error {
 	if f.TempName == "" {
+		return nil
+	}
+	if filepath.Dir(filepath.FromSlash(f.TempName)) != filepath.Dir(filepath.FromSlash(f.File)) {
+		r.logger.WarnContext(ctx, "apply temporary file left in place", "apply_id", j.ApplyID, "job_id", j.ID,
+			"error", "the recorded temporary file is not beside the file it was for")
 		return nil
 	}
 	err := dir.RemoveTemp(f.TempName)

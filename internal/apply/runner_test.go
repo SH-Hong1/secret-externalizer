@@ -94,6 +94,12 @@ type fixture struct {
 	values    []string
 	nextID    int64
 	gitBinary string
+
+	// run is the run an apply works on, testRun when zero; allow and
+	// irreversible are the run's consent to redact untracked files.
+	run          apply.ID
+	allow        bool
+	irreversible []string
 }
 
 // newShop copies the example project into a new workspace with the files
@@ -292,10 +298,11 @@ func (f *fixture) secret(name, val string, files ...string) []string {
 	return f.add(b)
 }
 
-// privateKey adds a private key externalized as name at the first val in
-// file.
-func (f *fixture) privateKey(name, val, file string) string {
+// privateKey adds a private key externalized as name at the first line of
+// the PEM block in file.
+func (f *fixture) privateKey(name, file string) string {
 	f.t.Helper()
+	val := pemLine
 	f.values = append(f.values, val)
 	return f.add(triage.Bundle{
 		Fingerprint: sha([]byte(val)), Category: finding.CategorySSH, Kind: finding.KindPrivateKey,
@@ -345,7 +352,10 @@ func (f *fixture) input() apply.Input {
 	customer := slices.Clone(f.customer)
 	slices.Sort(customer)
 	in := apply.Input{
-		Run:               apply.Run{ID: testRun, ProjectID: testProject, ScanID: testScan, State: apply.StateChecking},
+		Run: apply.Run{
+			ID: cmpOr(f.run, testRun), ProjectID: testProject, ScanID: testScan, State: apply.StateChecking,
+			AllowIrreversible: f.allow, IrreversibleFiles: slices.Clone(f.irreversible),
+		},
 		Project:           project.Project{ID: testProject, Name: "shop", Path: f.path},
 		Scan:              scan.Scan{ID: testScan, ProjectID: testProject, Status: scan.StatusSucceeded},
 		NewestScan:        cmpOr(f.newest, testScan),
@@ -371,7 +381,8 @@ func (f *fixture) check(ctx context.Context) error {
 	f.t.Helper()
 	f.store.in = f.input()
 	r := apply.NewRunner(slog.New(slog.NewJSONHandler(&f.logs, nil)), f.store, f.vault, f.opts)
-	return r.Check(ctx, job.Job{ID: testJob, Kind: job.KindApplyCheck, ApplyID: int64(testRun), Attempts: 1})
+	run := cmpOr(f.run, testRun)
+	return r.Check(ctx, job.Job{ID: testJob + int64(run), Kind: job.KindApplyCheck, ApplyID: int64(run), Attempts: 1})
 }
 
 // mustCheck runs Check and fails the test unless the check was saved.
@@ -392,10 +403,19 @@ func (f *fixture) mustCheck() *savedCheck {
 }
 
 // assertNoValue fails the test if a value of the example appears in the
-// log, in an argument the store received, or in err.
+// log, in an argument the store received, in an item it keeps, in what the
+// vault's calls print, in the manifest, or in err.
 func (f *fixture) assertNoValue(err error) {
 	f.t.Helper()
-	places := map[string]string{"log": f.logs.String(), "store arguments": strings.Join(f.store.args, "\n")}
+	places := map[string]string{
+		"log":             f.logs.String(),
+		"store arguments": strings.Join(f.store.args, "\n"),
+		"stored items":    fmt.Sprintf("%+v", f.store.items),
+		"vault arguments": strings.Join(f.vault.calls, "\n"),
+	}
+	if b, readErr := os.ReadFile(filepath.Join(f.dir, "secrets-manifest.yml")); readErr == nil {
+		places["manifest"] = string(b)
+	}
 	if err != nil {
 		places["error"] = err.Error()
 	}
@@ -660,7 +680,7 @@ func TestCheck_KeyFileSkipTakesFile(t *testing.T) {
 			f := newShop(t, inRepository)
 			tt.setup(f)
 			whole := f.keyFile("ssh.partner.key", tt.file)
-			block := f.privateKey("ssh.partner.block", pemLine, tt.file)
+			block := f.privateKey("ssh.partner.block", tt.file)
 
 			saved := f.mustCheck()
 
@@ -843,7 +863,7 @@ func TestCheck_NoValueOutside(t *testing.T) {
 			f.phoneNumber(untrackLog)
 			f.phoneNumber(trackedLog)
 			f.keyFile("ssh.partner.key", pemFile)
-			f.privateKey("ssh.partner.block", pemLine, pemFile)
+			f.privateKey("ssh.partner.block", pemFile)
 			f.keyFile("ssh.notes.key", notesFile)
 		}},
 		{"fingerprints differ", func(f *fixture) {
@@ -1032,4 +1052,49 @@ func TestCheck_SpanPastEnd(t *testing.T) {
 	if got := outcomes(saved.Items)[k]; got != skippedFor(apply.ReasonValueMismatch) {
 		t.Errorf("SaveCheck outcome of %s = %q, want %q", k, got, skippedFor(apply.ReasonValueMismatch))
 	}
+}
+
+func TestCheck_ReconcileTempElsewhere(t *testing.T) {
+	f := newShop(t, inRepository)
+	f.secret("deploy.ssh.password", shValue, shFile)
+	elsewhere := "pom.xml.se-apply-0123456789abcdef.tmp"
+	write(t, f.dir, elsewhere, "not beside the recorded file\n")
+	record := apply.OpenFile{Run: 9, File: jdbcFile, AfterHash: strings.Repeat("a", 64), TempName: elsewhere}
+	f.store.open = []apply.OpenFile{record}
+
+	f.mustCheck()
+
+	if _, err := os.Lstat(filepath.Join(f.dir, elsewhere)); err != nil {
+		t.Errorf("Lstat(%s) error = %v, want a temporary file outside the record's folder left in place", elsewhere, err)
+	}
+	if diff := cmp.Diff([]resolvedFile{{record, false}}, f.store.resolved); diff != "" {
+		t.Errorf("ResolveFile calls (-want +got):\n%s", diff)
+	}
+}
+
+func TestCheck_ReconcileBadTempName(t *testing.T) {
+	f := newShop(t, inRepository)
+	f.secret("db.jdbc.password", jdbcValue, jdbcFile)
+	bad := jdbcFile + ".bak"
+	write(t, f.dir, bad, "kept\n")
+	record := apply.OpenFile{Run: 9, File: jdbcFile, AfterHash: strings.Repeat("a", 64), TempName: bad}
+	f.store.open = []apply.OpenFile{record}
+
+	err := f.check(t.Context())
+	if err != nil {
+		t.Fatalf("Check() error = %v, want nil", err)
+	}
+	if f.store.failed == nil || f.store.failed.Reason != apply.FailureOther {
+		t.Errorf("FailApply = %+v, want reason %q", f.store.failed, apply.FailureOther)
+	}
+	if f.store.saved != nil || len(f.store.resolved) != 0 {
+		t.Errorf("Check() saved %+v and resolved %+v, want nothing planned or settled", f.store.saved, f.store.resolved)
+	}
+	if diff := cmp.Diff([]apply.OpenFile{record}, f.store.open); diff != "" {
+		t.Errorf("open records (-want +got):\n%s", diff)
+	}
+	if _, err := os.Lstat(filepath.Join(f.dir, bad)); err != nil {
+		t.Errorf("Lstat(%s) error = %v, want it left in place", bad, err)
+	}
+	f.assertNoValue(err)
 }

@@ -46,11 +46,14 @@ func scanItem(row pgx.Row) (apply.Item, error) {
 // a check, which starts from an empty list; replaceByBegin for BeginFile,
 // which may also reopen an item an earlier attempt of the run was
 // interrupted on before its file changed; replaceByFinish for FinishApply,
-// which never replaces an item that is writing, applied or failed.
+// which never replaces an item that is writing or applied, or failed for a
+// reason other than an interruption: an interrupted item's file did not
+// change, so the outcome the attempt that finishes the run found for it
+// stands.
 const (
 	replaceByCheck  = "false"
 	replaceByBegin  = "apply_item.status IN ('planned', 'skipped', 'writing') OR (apply_item.status = 'failed' AND apply_item.reason = 'interrupted')"
-	replaceByFinish = "apply_item.status IN ('planned', 'skipped')"
+	replaceByFinish = "apply_item.status IN ('planned', 'skipped') OR (apply_item.status = 'failed' AND apply_item.reason = 'interrupted')"
 )
 
 // upsertItems stores items as rows of the run. An item whose location the
@@ -530,7 +533,8 @@ func finishRun(ctx context.Context, tx pgx.Tx, id apply.ID, from []string, state
 
 // FinishApply closes the apply job the worker holds for run id, in one
 // transaction: items are merged into the run's items, never replacing one
-// that is writing, applied or failed; the run becomes succeeded with its
+// that is writing or applied, or failed for a reason other than an
+// interruption; the run becomes succeeded with its
 // finish time and counts; the job is done. It returns job.ErrLeaseLost,
 // saving nothing, when the worker does not hold the job, and ErrNotFound
 // when the run is not running.
@@ -592,7 +596,8 @@ func knownFailureReason(reason string) bool {
 		apply.FailurePlanChanged,
 		apply.FailureSecretStore,
 		apply.FailureTimeLimit,
-		apply.FailureOther:
+		apply.FailureOther,
+		apply.FailureManifestWrite:
 		return true
 	}
 	return false

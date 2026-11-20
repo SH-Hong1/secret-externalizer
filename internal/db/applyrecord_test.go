@@ -691,6 +691,16 @@ func TestFailApply(t *testing.T) {
 			t.Errorf("ApplyRun(%d) after a refused failure = %+v, want unchanged", id, r)
 		}
 	})
+	t.Run("manifest", func(t *testing.T) {
+		pid, _, _, _ := decidedProject(t, s, "manifest")
+		id, j := claimApply(t, s, pid)
+		if err := s.FailApply(ctx, j.ID, "worker-a", id, apply.FailureManifestWrite, nil); err != nil {
+			t.Fatalf("FailApply(%d, manifest) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateFailed || r.FailureReason != apply.FailureManifestWrite {
+			t.Errorf("ApplyRun(%d) after failing = %+v, want failed with the manifest reason", id, r)
+		}
+	})
 	t.Run("check", func(t *testing.T) {
 		pid, _, _, _ := decidedProject(t, s, "check")
 		id := requestCheck(t, s, pid)
@@ -708,6 +718,43 @@ func TestFailApply(t *testing.T) {
 			t.Errorf("ApplyJob(%d, apply-check) = %+v, %v, want failed", id, jr, err)
 		}
 	})
+}
+
+// TestFinishApply_ReplacesInterrupted finishes a run whose last attempt
+// found an item interrupted by an earlier attempt and then failed or skipped
+// it: the stored item takes the last attempt's outcome. An item failed for
+// another reason keeps its own.
+func TestFinishApply_ReplacesInterrupted(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, _, pw, _ := decidedProject(t, s, "shop")
+	id, j := claimApply(t, s, pid)
+	written := replaceItem(t, s, pid, pw, "conf/a.yml")
+	beginFile(t, s, id, "conf/a.yml", hashOf("1"), written)
+	skipped := replaceItem(t, s, pid, pw, "conf/b.xml")
+	beginFile(t, s, id, "conf/b.xml", hashOf("2"), skipped)
+	for _, f := range openFiles(t, s, pid) {
+		if err := s.ResolveFile(ctx, f, false); err != nil {
+			t.Fatalf("ResolveFile(%q, not done) error = %v", f.File, err)
+		}
+	}
+	settled := replaceItem(t, s, pid, pw, "web/c.jsp")
+	settled.Status, settled.Reason = apply.StatusFailed, apply.ReasonStoreFailed
+	if err := s.InsertApplyItem(ctx, id, settled); err != nil {
+		t.Fatalf("InsertApplyItem(%d) error = %v", id, err)
+	}
+
+	written.Status, written.Reason = apply.StatusFailed, apply.ReasonWriteFailed
+	skipped.Status, skipped.Reason = apply.StatusSkipped, apply.ReasonFileChanged
+	later := settled
+	later.Status, later.Reason = apply.StatusSkipped, apply.ReasonFileChanged
+	if err := s.FinishApply(ctx, j.ID, "worker-a", id, []apply.Item{written, skipped, later}); err != nil {
+		t.Fatalf("FinishApply(%d) error = %v", id, err)
+	}
+
+	if diff := cmp.Diff([]apply.Item{written, skipped, settled}, applyItems(t, s, id)); diff != "" {
+		t.Errorf("ApplyItems(%d) after finishing (-want +got):\n%s", id, diff)
+	}
 }
 
 // TestBeginFile_ReopensInterrupted follows a retry of a run that stopped
