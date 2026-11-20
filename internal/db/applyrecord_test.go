@@ -15,6 +15,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
@@ -676,6 +677,12 @@ func TestFailApply(t *testing.T) {
 	if diff := cmp.Diff(map[string][]apply.Written{"conf/a.yml": {{AfterHash: hashOf("1")}}}, writtenFiles(t, s, pid)); diff != "" {
 		t.Errorf("WrittenFiles(%d) after failing (-want +got):\n%s", pid, diff)
 	}
+	// The run changed a.yml, so it requested a confirmation scan; it is
+	// finished here so that the subtests claim their own jobs.
+	rescan := assertRescan(t, s, pid, id)
+	if err := s.FailScan(ctx, claimRescan(t, s, rescan).ID, "worker-a", rescan, "fake reason"); err != nil {
+		t.Fatalf("FailScan(%d) error = %v", rescan, err)
+	}
 
 	t.Run("unknown reason", func(t *testing.T) {
 		pid, _, _, _ := decidedProject(t, s, "reason")
@@ -907,5 +914,169 @@ func TestBeginFile_RewriteWritten(t *testing.T) {
 				t.Errorf("WrittenFiles(%d) after a second rewrite did not happen (-want +got):\n%s", pid, diff)
 			}
 		})
+	}
+}
+
+// claimRescan claims the job of the confirmation scan id and starts it.
+func claimRescan(t *testing.T, s *db.Store, id scan.ID) job.Job {
+	t.Helper()
+	j, err := s.ClaimJob(t.Context(), "worker-a", time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimJob() error = %v", err)
+	}
+	if j.Kind != job.KindScan || j.ScanID != int64(id) {
+		t.Fatalf("ClaimJob() = %+v, want the job of scan %d", j, id)
+	}
+	if err := s.StartScan(t.Context(), id); err != nil {
+		t.Fatalf("StartScan(%d) error = %v", id, err)
+	}
+	return j
+}
+
+// assertRescan fails the test unless run id points at a queued scan of the
+// project requested by tester for the run, with one queued scan job.
+func assertRescan(t *testing.T, s *db.Store, pid project.ID, id apply.ID) scan.ID {
+	t.Helper()
+	r := readRun(t, s, id)
+	if r.RescanID == 0 {
+		t.Fatalf("ApplyRun(%d).RescanID = 0, want a confirmation scan", id)
+	}
+	sc, err := s.Scan(t.Context(), r.RescanID)
+	if err != nil {
+		t.Fatalf("Scan(%d) error = %v", r.RescanID, err)
+	}
+	if sc.ProjectID != pid || sc.Status != scan.StatusQueued || sc.ApplyID != int64(id) ||
+		sc.RequestedBy != tester.Subject || sc.RequesterName != tester.Name {
+		t.Errorf("Scan(%d) = %+v, want queued for project %d and run %d, requested by %+v", r.RescanID, sc, pid, id, tester)
+	}
+	if jr, err := s.Job(t.Context(), int64(r.RescanID)); err != nil || jr.State != "queued" {
+		t.Errorf("Job(scan %d) = %+v, %v, want queued", r.RescanID, jr, err)
+	}
+	return r.RescanID
+}
+
+func TestFinishApply_RequestsRescan(t *testing.T) {
+	t.Run("applied", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, pw, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
+		id, j := claimApply(t, s, pid)
+		writeFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+		if err := s.FinishApply(t.Context(), j.ID, "worker-a", id, nil); err != nil {
+			t.Fatalf("FinishApply(%d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateSucceeded || r.Applied != 1 {
+			t.Errorf("ApplyRun(%d) = %+v, want succeeded with 1 applied", id, r)
+		}
+		assertRescan(t, s, pid, id)
+		if n := jobsOfKind(t, s, "scan"); n != scans+1 {
+			t.Errorf("scan jobs after finishing = %d, want %d", n, scans+1)
+		}
+	})
+	t.Run("all skipped", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, pw, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
+		id, j := claimApply(t, s, pid)
+		skipped := replaceItem(t, s, pid, pw, "conf/a.yml")
+		skipped.Status, skipped.Reason = apply.StatusSkipped, apply.ReasonFileChanged
+		if err := s.FinishApply(t.Context(), j.ID, "worker-a", id, []apply.Item{skipped}); err != nil {
+			t.Fatalf("FinishApply(%d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateSucceeded || r.RescanID != 0 {
+			t.Errorf("ApplyRun(%d) = %+v, want succeeded with no confirmation scan", id, r)
+		}
+		if n := jobsOfKind(t, s, "scan"); n != scans {
+			t.Errorf("scan jobs after finishing = %d, want %d", n, scans)
+		}
+	})
+	t.Run("scan cannot be added", func(t *testing.T) {
+		s := newMigratedStore(t)
+		ctx := t.Context()
+		pid, _, pw, _ := decidedProject(t, s, "shop")
+		id, j := claimApply(t, s, pid)
+		writeFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+		// The exclusion keeps a scan from being requested while the run is
+		// running; a scan put in directly makes the confirmation scan fail
+		// the one-active-scan index.
+		blocking, err := s.InsertRawScanJob(ctx, pid, "queued", "queued")
+		if err != nil {
+			t.Fatalf("InsertRawScanJob(%d) error = %v", pid, err)
+		}
+		if err := s.FinishApply(ctx, j.ID, "worker-a", id, nil); err == nil {
+			t.Fatalf("FinishApply(%d) with a scan in the way error = nil, want an error", id)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateRunning || r.RescanID != 0 || !r.FinishedAt.IsZero() {
+			t.Errorf("ApplyRun(%d) after a failed finish = %+v, want running, no confirmation scan", id, r)
+		}
+		if jr, err := s.ApplyJob(ctx, int64(id), "apply"); err != nil || jr.State != "running" {
+			t.Errorf("ApplyJob(%d, apply) = %+v, %v, want running", id, jr, err)
+		}
+		if n, err := s.Count(ctx, "scan"); err != nil || n != 2 {
+			t.Errorf("rows in scan = %d, %v, want 2 (the decided scan and scan %d)", n, err, blocking)
+		}
+	})
+}
+
+func TestFailApply_RequestsRescan(t *testing.T) {
+	t.Run("files changed", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, pw, _ := decidedProject(t, s, "shop")
+		id, j := claimApply(t, s, pid)
+		writeFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+		if err := s.FailApply(t.Context(), j.ID, "worker-a", id, apply.FailureManifestWrite, nil, nil); err != nil {
+			t.Fatalf("FailApply(%d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateFailed || r.Applied != 1 {
+			t.Errorf("ApplyRun(%d) = %+v, want failed with 1 applied", id, r)
+		}
+		assertRescan(t, s, pid, id)
+	})
+	t.Run("nothing changed", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, _, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
+		id, j := claimApply(t, s, pid)
+		if err := s.FailApply(t.Context(), j.ID, "worker-a", id, apply.FailureDirty, []apply.Blocker{apply.BlockerDirty}, nil); err != nil {
+			t.Fatalf("FailApply(%d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateFailed || r.RescanID != 0 {
+			t.Errorf("ApplyRun(%d) = %+v, want failed with no confirmation scan", id, r)
+		}
+		if n := jobsOfKind(t, s, "scan"); n != scans {
+			t.Errorf("scan jobs after failing = %d, want %d", n, scans)
+		}
+	})
+}
+
+func TestReappeared(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, _, pw, _ := decidedProject(t, s, "shop")
+	id, j := claimApply(t, s, pid)
+	writeFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+	writeFile(t, s, id, "conf/b.xml", hashOf("2"), replaceItem(t, s, pid, pw, "conf/b.xml"))
+	if err := s.FinishApply(ctx, j.ID, "worker-a", id, nil); err != nil {
+		t.Fatalf("FinishApply(%d) error = %v", id, err)
+	}
+	rescan := assertRescan(t, s, pid, id)
+
+	// The confirmation scan finds the password again in b.xml, and the host
+	// and phone numbers no apply touched.
+	rj := claimRescan(t, s, rescan)
+	again := []finding.Finding{
+		password("conf/b.xml"), password("web/c.jsp"),
+		host("conf/a.yml"), host("conf/b.xml"), phone("logs/x.log"), phone("logs/y.log"),
+	}
+	if err := s.SaveResult(ctx, rj.ID, "worker-a", rescan, result(again...)); err != nil {
+		t.Fatalf("SaveResult(scan %d) error = %v", rescan, err)
+	}
+	if n, err := s.Reappeared(ctx, rescan); err != nil || n != 1 {
+		t.Errorf("Reappeared(%d) = %d, %v, want 1", rescan, n, err)
+	}
+
+	clean := save(t, s, pid, password("web/c.jsp"), host("conf/a.yml"))
+	if n, err := s.Reappeared(ctx, clean); err != nil || n != 0 {
+		t.Errorf("Reappeared(%d) = %d, %v, want 0", clean, n, err)
 	}
 }

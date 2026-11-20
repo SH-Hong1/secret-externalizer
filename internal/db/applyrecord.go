@@ -6,11 +6,13 @@ import (
 	"fmt"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 )
 
 // The records an apply keeps about its files follow one rule: before a file
@@ -531,19 +533,74 @@ func finishRun(ctx context.Context, tx pgx.Tx, id apply.ID, from []string, state
 	return nil
 }
 
+// requestRescan adds, in tx, the scan that confirms the changes of run id
+// and its job, when the run has an applied item, and records the scan as
+// the run's rescan. The scan is requested by whoever requested the run. It
+// runs after the run is closed, so the exclusion of scans and applies does
+// not refuse it. It returns ErrScanActive when the project already has a
+// queued or running scan, which the exclusion keeps from happening.
+func requestRescan(ctx context.Context, tx pgx.Tx, id apply.ID) error {
+	var scanID scan.ID
+	err := tx.QueryRow(ctx, `
+		INSERT INTO scan (project_id, requested_by, requester_name, apply_id)
+		SELECT project_id, requested_by, requester_name, id FROM apply_run r
+		WHERE id = $1 AND EXISTS (SELECT 1 FROM apply_item WHERE apply_id = r.id AND status = 'applied')
+		RETURNING id`, id).Scan(&scanID)
+	var pgErr *pgconn.PgError
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil
+	case errors.As(err, &pgErr) && pgErr.Code == uniqueViolation:
+		return fmt.Errorf("requesting the confirmation scan of apply %d: %w", id, ErrScanActive)
+	case err != nil:
+		return fmt.Errorf("requesting the confirmation scan of apply %d: %w", id, err)
+	}
+	if _, err := tx.Exec(ctx, "INSERT INTO job (scan_id) VALUES ($1)", scanID); err != nil {
+		return fmt.Errorf("creating job of scan %d: %w", scanID, err)
+	}
+	if _, err := tx.Exec(ctx, "UPDATE apply_run SET rescan_id = $2 WHERE id = $1", id, scanID); err != nil {
+		return fmt.Errorf("recording the confirmation scan of apply %d: %w", id, err)
+	}
+	return nil
+}
+
+// lockRunProject locks, in tx, the row of the project of run id FOR SHARE.
+// Closing a run takes it before the run's row, in the order RequestApplyCheck
+// and ConfirmApply take the two, so the scan a close adds cannot wait on a
+// transaction that waits on the close.
+func lockRunProject(ctx context.Context, tx pgx.Tx, id apply.ID) error {
+	var projectID project.ID
+	err := tx.QueryRow(ctx, "SELECT project_id FROM apply_run WHERE id = $1", id).Scan(&projectID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("closing apply %d: %w", id, ErrNotFound)
+	}
+	if err != nil {
+		return fmt.Errorf("reading apply run %d: %w", id, err)
+	}
+	return lockProject(ctx, tx, projectID, "FOR SHARE")
+}
+
 // FinishApply closes the apply job the worker holds for run id, in one
 // transaction: items are merged into the run's items, never replacing one
 // that is writing or applied, or failed for a reason other than an
 // interruption; the run becomes succeeded with its
-// finish time and counts; the job is done. It returns job.ErrLeaseLost,
-// saving nothing, when the worker does not hold the job, and ErrNotFound
-// when the run is not running.
+// finish time and counts; the job is done. When the run has an applied
+// item, the same transaction then requests the scan that confirms the
+// changes (requestRescan); if that fails, nothing is saved. It returns
+// job.ErrLeaseLost, saving nothing, when the worker does not hold the job,
+// and ErrNotFound when the run is not running.
 func (s *Store) FinishApply(ctx context.Context, jobID int64, workerID string, id apply.ID, items []apply.Item) error {
 	return s.closeApplyJob(ctx, jobID, workerID, int64(id), job.KindApply, "done", func(tx pgx.Tx) error {
+		if err := lockRunProject(ctx, tx, id); err != nil {
+			return err
+		}
 		if err := upsertItems(ctx, tx, id, items, "", replaceByFinish, false); err != nil {
 			return err
 		}
-		return finishRun(ctx, tx, id, []string{"running"}, apply.StateSucceeded, "", nil)
+		if err := finishRun(ctx, tx, id, []string{"running"}, apply.StateSucceeded, "", nil); err != nil {
+			return err
+		}
+		return requestRescan(ctx, tx, id)
 	})
 }
 
@@ -553,7 +610,9 @@ func (s *Store) FinishApply(ctx context.Context, jobID int64, workerID string, i
 // one of the fixed failure reasons (knownFailureReason), and blockers.
 // items, which only an apply may give, are merged into the run's items as
 // FinishApply merges them; the run's other items and its file records stay
-// as they are. It returns job.ErrLeaseLost, changing nothing, when the
+// as they are. A run that changed a file before it failed (it has an
+// applied item) gets its confirmation scan in the same transaction, as in
+// FinishApply. It returns job.ErrLeaseLost, changing nothing, when the
 // worker does not hold the job, and ErrNotFound when the run is in no state
 // a job works on.
 func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id apply.ID, reason string,
@@ -588,10 +647,16 @@ func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id 
 		return fmt.Errorf("failing apply %d: unknown state %q", id, state)
 	}
 	return s.closeApplyJob(ctx, jobID, workerID, int64(id), kind, "failed", func(tx pgx.Tx) error {
+		if err := lockRunProject(ctx, tx, id); err != nil {
+			return err
+		}
 		if err := upsertItems(ctx, tx, id, items, "", replaceByFinish, false); err != nil {
 			return err
 		}
-		return finishRun(ctx, tx, id, from, apply.StateFailed, reason, blockers)
+		if err := finishRun(ctx, tx, id, from, apply.StateFailed, reason, blockers); err != nil {
+			return err
+		}
+		return requestRescan(ctx, tx, id)
 	})
 }
 

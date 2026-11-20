@@ -27,7 +27,7 @@ const requestScanAttempts = 3
 
 const scanColumns = `id, project_id, status, requested_by, requester_name, requested_at, started_at, finished_at,
 	commit_hash, rules_version, tool_versions, failure_reason, files, skipped, skipped_files, scanner_errors,
-	dropped, findings`
+	dropped, findings, coalesce(apply_id, 0)`
 
 // RequestScan records a queued scan of the project, requested by the user
 // by, and the job that runs it, in one transaction, and returns the scan ID. When the project already has
@@ -174,7 +174,7 @@ func scanScan(row pgx.Row) (scan.Scan, error) {
 	)
 	err := row.Scan(&sc.ID, &sc.ProjectID, &sc.Status, &sc.RequestedBy, &sc.RequesterName, &sc.RequestedAt, &started, &finished,
 		&sc.CommitHash, &sc.RulesVersion, &toolVersions, &sc.FailureReason, &sc.Files, &sc.Skipped, &skippedFiles, &scannerErrors,
-		&sc.Dropped, &sc.Findings)
+		&sc.Dropped, &sc.Findings, &sc.ApplyID)
 	if err != nil {
 		return scan.Scan{}, err
 	}

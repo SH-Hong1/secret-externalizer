@@ -71,7 +71,7 @@ func TestHandle_MergesTools(t *testing.T) {
 	if e.orig.puts != 1 || string(e.orig.pending[fingerprintOf(password)]) != password {
 		t.Errorf("Handle() put %d pending values, %v; want the password once", e.orig.puts, e.orig.pending)
 	}
-	if diff := cmp.Diff([]string{"put", "save"}, e.events.all()); diff != "" {
+	if diff := cmp.Diff([]string{"settled", "put", "save"}, e.events.all()); diff != "" {
 		t.Errorf("Handle() calls (-want +got):\n%s", diff)
 	}
 }
@@ -462,10 +462,91 @@ func TestHandle_DeletesStalePending(t *testing.T) {
 			if _, ok := e.orig.pending[fingerprintOf(password)]; !ok {
 				t.Errorf("Handle() removed the pending value of this scan's password")
 			}
-			if diff := cmp.Diff([]string{"put", "save", "delete", "delete"}, e.events.all()); diff != "" {
+			if diff := cmp.Diff([]string{"settled", "put", "save", "delete", "delete"}, e.events.all()); diff != "" {
 				t.Errorf("Handle() calls (-want +got):\n%s", diff)
 			}
 		})
+	}
+}
+
+// accountOG finds account the way opengrep reports values.
+func accountOG() *needleScanner {
+	return &needleScanner{tool: "opengrep", rule: "properties-user", category: finding.CategoryStorage, kind: finding.KindAccount, needle: account}
+}
+
+// hasOriginal returns HasOriginal of each finding of r, by fingerprint.
+func hasOriginal(r scan.Result) map[string]bool {
+	out := map[string]bool{}
+	for _, f := range r.Findings {
+		out[f.Fingerprint] = f.HasOriginal
+	}
+	return out
+}
+
+func TestHandle_DropsOriginalsOfFalsePositives(t *testing.T) {
+	files := map[string]string{propsFile: "jdbc.password=" + password + "\njdbc.user=" + account + "\n"}
+	fpPassword, fpAccount := fingerprintOf(password), fingerprintOf(account)
+
+	t.Run("settled", func(t *testing.T) {
+		e := newEnv(t, files)
+		e.store.settled = []string{fpPassword}
+		// An earlier scan parked the original before the verdict.
+		e.orig.pending[fpPassword] = []byte(password)
+
+		if err := e.handle(t.Context(), passwordOG(), accountOG()); err != nil {
+			t.Fatalf("Handle() error = %v", err)
+		}
+		if diff := cmp.Diff(map[string]bool{fpPassword: false, fpAccount: true}, hasOriginal(e.result(t))); diff != "" {
+			t.Errorf("Handle() HasOriginal by fingerprint (-want +got):\n%s", diff)
+		}
+		if e.orig.puts != 1 {
+			t.Errorf("Handle() put %d values, want 1 (the account)", e.orig.puts)
+		}
+		if diff := cmp.Diff([]string{fpPassword}, e.orig.deleted); diff != "" {
+			t.Errorf("Handle() deleted (-want +got):\n%s", diff)
+		}
+		if _, ok := e.orig.pending[fpAccount]; !ok || len(e.orig.pending) != 1 {
+			t.Errorf("Handle() left %d pending values, want only the account's", len(e.orig.pending))
+		}
+		if diff := cmp.Diff([]string{"settled", "put", "save", "delete"}, e.events.all()); diff != "" {
+			t.Errorf("Handle() calls (-want +got):\n%s", diff)
+		}
+	})
+	t.Run("not read", func(t *testing.T) {
+		e := newEnv(t, files)
+		e.store.settledErr = errors.New("listing settled fingerprints of project 7: connection refused")
+
+		if err := e.handle(t.Context(), passwordOG(), accountOG()); err != nil {
+			t.Fatalf("Handle() error = %v", err)
+		}
+		if diff := cmp.Diff(map[string]bool{fpPassword: true, fpAccount: true}, hasOriginal(e.result(t))); diff != "" {
+			t.Errorf("Handle() HasOriginal by fingerprint (-want +got):\n%s", diff)
+		}
+		if e.orig.puts != 2 || len(e.orig.deleted) != 0 {
+			t.Errorf("Handle() put %d values and deleted %v, want 2 and none", e.orig.puts, e.orig.deleted)
+		}
+		if n := strings.Count(e.logs.String(), "reading settled fingerprints failed"); n != 1 {
+			t.Errorf("Handle() logged the failed read %d times, want once; log:\n%s", n, e.logs)
+		}
+	})
+}
+
+func TestHandle_RemovesOriginalsOfAppliedValues(t *testing.T) {
+	// An apply replaced this value by its placeholder, so the scan no
+	// longer finds it.
+	applied := fingerprintOf("dev-only-fake-applied-value")
+	e := newEnv(t, map[string]string{propsFile: "jdbc.password=" + password + "\njdbc.old=${ext.db.old}\n"})
+	e.orig.pending[applied] = []byte("dev-only-fake-applied-value")
+	e.orig.pending[fingerprintOf(password)] = []byte(password)
+
+	if err := e.handle(t.Context(), passwordOG()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	if diff := cmp.Diff([]string{applied}, e.orig.deleted); diff != "" {
+		t.Errorf("Handle() deleted (-want +got):\n%s", diff)
+	}
+	if _, ok := e.orig.pending[fingerprintOf(password)]; !ok {
+		t.Errorf("Handle() removed the pending value of this scan's password")
 	}
 }
 

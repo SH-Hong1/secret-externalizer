@@ -210,3 +210,18 @@ func (s *Store) CategoryCounts(ctx context.Context, id scan.ID) ([]scan.Category
 	}
 	return out, nil
 }
+
+// Reappeared returns the number of findings the scan found that are in a
+// bundle an apply externalized: values an apply replaced that the scan
+// still finds in the source.
+func (s *Store) Reappeared(ctx context.Context, id scan.ID) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(DISTINCT f.id)
+		FROM location l JOIN finding f ON f.id = l.finding_id JOIN bundle b ON b.id = f.bundle_id
+		WHERE l.scan_id = $1 AND b.applied_at IS NOT NULL`, id).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting reappeared values of scan %d: %w", id, err)
+	}
+	return n, nil
+}

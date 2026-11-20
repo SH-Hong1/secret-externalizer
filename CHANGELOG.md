@@ -101,9 +101,11 @@
 - compose의 worker를 `SE_UID`, `SE_GID`(기본 65532)로 정한 사용자로 실행할 수 있다. `openbao-secrets`는 뜰 때마다 worker의 secret-id와 그 폴더의 소유자를 `SE_UID`로 맞춘다. web의 것은 65532 그대로다. `SE_UID`, `SE_GID`가 숫자가 아니거나 0이면 `openbao-secrets`가 실패한다. worker는 root로 실행하지 않는다.
 - compose의 worker에 `restart: unless-stopped`를 두어, 죽은 worker가 다시 떠서 임대가 끝난 작업을 이어 간다.
 - 실제 postgres, `openbao-test`, git 작업본으로 예제 프로젝트의 점검과 적용을 끝까지 돌리는 통합 테스트 `TestIntegration_ApplyLegacyShop`
+- 확인 재스캔: 파일을 하나라도 바꾼 적용 실행(적용된 항목이 있는 실행)은 실행을 닫는 같은 트랜잭션에서, 실행을 닫은 뒤에 그 프로젝트의 스캔과 작업을 만든다. 스캔의 요청자는 적용을 요청한 사람이고 `scan.apply_id`가 실행을, `apply_run.rescan_id`가 스캔을 가리킨다(`scan.Scan.ApplyID`). 성공한 실행(`FinishApply`)과 파일을 바꾼 뒤 실패한 실행(`FailApply`)이 모두 그렇고, 아무것도 적용하지 못한 실행은 스캔을 만들지 않는다. 스캔을 만들지 못하면 실행도 닫히지 않는다. 확인 스캔이 적용한 묶음의 값을 다시 찾은 항목 수를 세는 `Reappeared`를 더했다. 결정 기록 0040.
 
 ### 변경
 
+- 스캔이 모든 묶음이 오탐으로 판정된 값(`SettledFingerprints`)의 원본을 OpenBao의 임시 보관소에 넣지 않고, 그 항목은 원본이 없는 것으로 저장한다. 앞 스캔이 넣어 둔 그 값의 임시 원본은 스캔이 끝난 뒤 지운다. 그 지문을 읽지 못하면 스캔은 실패하지 않고 지금처럼 모두 보관하며 로그를 한 줄 남긴다.
 - 한 프로젝트의 스캔과 적용이 겹치지 않는다. 점검 중, 대기 중, 실행 중인 적용이 있으면 스캔 요청, 판정, 묶음 옮기기가 `ErrApplyActive`로 거부되고, 스캔이 걸려 있으면 점검 요청과 적용 확인이 `ErrScanActive`로 거부된다. 잠금은 `project` 행으로 한다.
 - 적용한 외부화 묶음은 판정과 이름이 고정된다. 판정 변경, 이름 변경, 판정 취소는 `triage.ErrNotAllowed`이고(메모만 바꾸는 것은 된다), 그 묶음에서는 마지막 성공한 스캔이 찾은 항목만, 묶음의 마지막 항목이 아닐 때 옮길 수 있다(적용한 위치의 항목과 마지막 항목은 옮길 수 없다). 적용한 위치는 다음 스캔 전에도 적용 기록으로 알아본다: 상태가 `applied`나 `writing`인 적용 항목이 있는 항목은 옮길 수 없다. 묶음 조회가 `applied_at`, `store_path`를 함께 돌려준다. 감사 기록 화면은 `apply` 동작을 "적용 요청"으로 보인다.
 - OpenBao worker 정책이 `secret/data/projects/*`를 읽을 수 있다(`create`, `update`, `read`). 지우기와 메타데이터 권한은 없다. KV v2 마운트 `secret`은 경로마다 버전을 10개가 아니라 100개 남긴다(self-init의 `secret/config`). 기존 볼륨에는 반영되지 않으므로 `openbao-data`, `openbao-secrets`를 지우고 다시 띄워야 하며, 적용을 한 번이라도 한 환경에서는 볼륨을 지우면 값이 사라진다(`docs/local-run.md`).

@@ -36,6 +36,7 @@ type Store interface {
 	Project(ctx context.Context, id project.ID) (project.Project, error)
 	FailScan(ctx context.Context, jobID int64, workerID string, id ID, reason string) error
 	SaveResult(ctx context.Context, jobID int64, workerID string, id ID, r Result) error
+	SettledFingerprints(ctx context.Context, id project.ID) ([]string, error)
 }
 
 // Fingerprinter computes the fingerprints of values, in the order of values.
@@ -170,8 +171,8 @@ func (r *Runner) Handle(ctx context.Context, j job.Job) error {
 }
 
 // run carries out the scan, saves its result, and then removes pending
-// originals that the scan no longer found. copies is the folder for the
-// UTF-8 copies of EUC-KR files.
+// originals that the scan no longer found or that it does not keep. copies
+// is the folder for the UTF-8 copies of EUC-KR files.
 func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error {
 	if !filepath.IsAbs(copies) {
 		return fmt.Errorf("the folder for copies %q is not an absolute path", copies)
@@ -221,7 +222,9 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 	if err != nil {
 		return err
 	}
+	settled := r.settled(ctx, id, p.ID)
 	findings, originals := merge(placed, fingerprints, newValueIndex(maskValues(placed, d.raws)))
+	dropSettled(findings, originals, settled)
 	if err := r.park(ctx, int64(p.ID), originals); err != nil {
 		return err
 	}
@@ -333,6 +336,35 @@ func (r *Runner) fingerprint(ctx context.Context, placed []*placedFile) (map[str
 		out[v] = fps[i]
 	}
 	return out, nil
+}
+
+// settled returns the fingerprints of the project whose bundles are all
+// judged false positives, as a set. Their originals are not kept. A failure
+// to read them is logged and gives none, so the scan keeps every original
+// as it would without verdicts.
+func (r *Runner) settled(ctx context.Context, id ID, projectID project.ID) map[string]bool {
+	fps, err := r.store.SettledFingerprints(ctx, projectID)
+	if err != nil {
+		r.logger.WarnContext(ctx, "reading settled fingerprints failed", "scan_id", id, "project_id", projectID, "error", err.Error())
+		return nil
+	}
+	out := make(map[string]bool, len(fps))
+	for _, fp := range fps {
+		out[fp] = true
+	}
+	return out
+}
+
+// dropSettled marks the findings whose fingerprint is in settled as having
+// no original and removes their originals from originals. Without a kept
+// original, removeStalePending deletes the one an earlier scan parked.
+func dropSettled(findings []finding.Finding, originals map[string][]byte, settled map[string]bool) {
+	for i := range findings {
+		if settled[findings[i].Fingerprint] {
+			findings[i].HasOriginal = false
+			delete(originals, findings[i].Fingerprint)
+		}
+	}
 }
 
 // park stores each original once per fingerprint, in fingerprint order.

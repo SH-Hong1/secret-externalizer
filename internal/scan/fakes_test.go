@@ -68,8 +68,11 @@ type fakeStore struct {
 	projectErr error
 	failErr    error
 	saveErr    error
+	settledErr error
 
-	events  *events
+	events *events
+	// settled are the fingerprints SettledFingerprints returns.
+	settled []string
 	project project.Project
 	got     []outcome
 	results []scan.Result
@@ -102,6 +105,14 @@ func (f *fakeStore) SaveResult(_ context.Context, _ int64, _ string, _ scan.ID, 
 	f.got = append(f.got, outcome{status: scan.StatusSucceeded, files: r.Files, skipped: r.Skipped})
 	f.results = append(f.results, r)
 	return nil
+}
+
+func (f *fakeStore) SettledFingerprints(context.Context, project.ID) ([]string, error) {
+	if f.settledErr != nil {
+		return nil, f.settledErr
+	}
+	f.events.add("settled")
+	return slices.Clone(f.settled), nil
 }
 
 // fakeFingerprinter computes an HMAC with fakeKey, or fails with err.
