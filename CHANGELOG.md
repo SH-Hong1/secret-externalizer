@@ -74,10 +74,13 @@
 - 스캔이 건너뛴 파일의 이름과 스캐너 오류 수를 저장하고 스캔 화면에 보인다. `scan.Result`와 `scan.Scan`에 `SkippedFiles`(프로젝트 폴더 기준 상대 경로, 경로순 처음 200개, UTF-8이 아니거나 제어 문자가 든 경로는 빼고 수에만 센다)와 `ScannerErrors`(도구별 오류 수, 오류를 알린 도구만)를 더했다. 마이그레이션 0006이 `scan`에 `skipped_files`, `scanner_errors`, `requester_name` 열을 더한다.
 - 스캔을 요청한 사람의 이름을 저장한다(`requester_name`). 스캔 화면과 프로젝트 화면의 스캔 목록에 subject 대신 이름이 보이고, 이름 없이 저장된 이전 스캔은 subject가 보인다. `RequestScan`이 `audit.Actor`를 받는다.
 - `*db.Store`의 `CategoryCounts`: 스캔 하나가 분류마다 찾은 항목 수와 위치 수.
+- `internal/worktree`: 프로젝트 폴더의 git 작업본을 점검한다. `Inspect`는 폴더 아래 추적되는 파일 가운데 staged, unstaged 변경이 있거나 assume-unchanged, skip-worktree로 표시된 파일(`Dirty`)과 추적 여부(`Tracked`)를 돌려준다. 작업본 루트, git 폴더, 공용 git 폴더 가운데 하나라도 작업 공간 밖이면 `ErrNotRepository`, 커밋이 없으면 `ErrNoCommit`, 저장소 설정에 `filter.*.clean`, `filter.*.process`, `core.worktree`가 있으면 `ErrUnsafeConfig`다. 저장소 설정의 fsmonitor, hook, pager, filter, promisor remote를 실행하지 않고 인덱스를 쓰지 않는다. `Nested`는 파일이 프로젝트 폴더 안의 다른 저장소에 있는지 알려 준다. 테스트용 `worktreetest`가 임시 폴더를 git 저장소로 만든다.
+- 결정 기록 0033 (git 작업본 점검)
 
 ### 변경
 
 - web은 `DATABASE_URL`을 필수로 읽고 기동할 때 마이그레이션을 실행한다.
+- 스캔이 커밋 해시를 읽을 때 `worktree.CommitHash`를 쓴다. 저장소 설정의 fsmonitor, hook, pager, 전송 명령을 실행하지 않고, git 폴더나 공용 git 폴더가 작업 공간 밖이면 커밋 해시를 남기지 않는다. git 호출의 제한 시간은 10초에서 60초가 되었다.
 - `web -h`는 사용법을 표준 출력에 쓰고 종료 코드 0으로 끝난다. 플래그 오류는 한 번만 출력한다.
 - `make lint`, `make fmt`는 `bin/`에 도구가 없으면 먼저 설치한다.
 - 종료 시 검토가 `go.mod` 변경을 확인하고, 결정 기록 없는 의존성 추가를 지적한다.

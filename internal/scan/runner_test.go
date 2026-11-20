@@ -19,6 +19,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
+	"github.com/SH-Hong1/secret-externalizer/internal/worktree/worktreetest"
 )
 
 const (
@@ -603,25 +604,13 @@ func TestHandle_CommitHash(t *testing.T) {
 		t.Errorf("Handle(no repository) commit = %q, want empty", got)
 	}
 
-	for _, args := range [][]string{
-		{"init", "-q"},
-		{"add", "a.txt"},
-		{"-c", "user.name=fake", "-c", "user.email=fake@example.invalid", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "fake"},
-	} {
-		cmd := exec.CommandContext(t.Context(), git, append([]string{"-C", e.dir}, args...)...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			t.Fatalf("git %v error = %v: %s", args, err, out)
-		}
-	}
-	head, err := exec.CommandContext(t.Context(), git, "-C", e.dir, "rev-parse", "HEAD").Output()
-	if err != nil {
-		t.Fatalf("git rev-parse error = %v", err)
-	}
+	worktreetest.Init(t, e.dir)
+	head := worktreetest.Git(t, e.dir, "rev-parse", "HEAD")
 	e.store.results = nil
 	if err := e.handle(t.Context()); err != nil {
 		t.Fatalf("Handle(repository) error = %v", err)
 	}
-	if got, want := e.result(t).CommitHash, strings.TrimSpace(string(head)); got != want {
+	if got, want := e.result(t).CommitHash, strings.TrimSpace(head); got != want {
 		t.Errorf("Handle(repository) commit = %q, want %q", got, want)
 	}
 }
