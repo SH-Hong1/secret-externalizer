@@ -57,6 +57,46 @@ func TestNameForms(t *testing.T) {
 	}
 }
 
+func TestShellFile(t *testing.T) {
+	tests := map[string]bool{
+		"deploy.sh":        true,
+		"bin/DEPLOY.SH":    true,
+		"bin/run.Sh":       true,
+		"deploy":           false,
+		"conf/app.yml":     false,
+		"bin/run.sh.bak":   false,
+		"bin/sh":           false,
+		"bin/run.bash":     false,
+		"src/Shell.java":   false,
+		"scripts.sh/x.yml": false,
+	}
+	for file, want := range tests {
+		t.Run(file, func(t *testing.T) {
+			if got := triage.ShellFile(file); got != want {
+				t.Errorf("ShellFile(%q) = %v, want %v", file, got, want)
+			}
+		})
+	}
+}
+
+func TestNameFor(t *testing.T) {
+	n := triage.Name("db.main.password")
+	tests := map[string]string{
+		"deploy.sh":            "EXT_DB_MAIN_PASSWORD",
+		"DEPLOY.SH":            "EXT_DB_MAIN_PASSWORD",
+		"conf/application.yml": "ext.db.main.password",
+		"src/Main.java":        "ext.db.main.password",
+		"deploy":               "ext.db.main.password",
+	}
+	for file, want := range tests {
+		t.Run(file, func(t *testing.T) {
+			if got := n.For(file); got != want {
+				t.Errorf("Name(%q).For(%q) = %q, want %q", n, file, got, want)
+			}
+		})
+	}
+}
+
 func TestFrontend(t *testing.T) {
 	tests := map[string]bool{
 		"web/index.jsp":         true,

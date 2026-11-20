@@ -120,3 +120,19 @@ func TestParseKind(t *testing.T) {
 		}
 	}
 }
+
+func TestKind_CustomerData(t *testing.T) {
+	customer := map[finding.Kind]bool{
+		finding.KindPhone: true, finding.KindRRN: true, finding.KindEmail: true, finding.KindCard: true, finding.KindAddress: true,
+	}
+	all := []finding.Kind{
+		finding.KindPhone, finding.KindRRN, finding.KindEmail, finding.KindCard, finding.KindAddress,
+		finding.KindPassword, finding.KindToken, finding.KindAccount, finding.KindHost, finding.KindPort,
+		finding.KindURL, finding.KindPrivateKey, finding.KindKeyFile, finding.KindOther,
+	}
+	for _, k := range all {
+		if got := k.CustomerData(); got != customer[k] {
+			t.Errorf("Kind(%q).CustomerData() = %t, want %t", k, got, customer[k])
+		}
+	}
+}

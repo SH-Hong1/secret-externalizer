@@ -73,6 +73,18 @@ func ParseKind(s string) (Kind, error) {
 	return "", fmt.Errorf("kind %q: %w", s, ErrUnknown)
 }
 
+// CustomerData reports whether k is a kind of customer data. Every finding
+// in the customer-data category has one of these kinds, and no secret has.
+func (k Kind) CustomerData() bool {
+	switch k {
+	case KindPhone, KindRRN, KindEmail, KindCard, KindAddress:
+		return true
+	case KindPassword, KindToken, KindAccount, KindHost, KindPort, KindURL, KindPrivateKey, KindKeyFile, KindOther:
+		return false
+	}
+	return false
+}
+
 // Detection names the tool and the rule that reported a location.
 type Detection struct {
 	Tool, Rule string

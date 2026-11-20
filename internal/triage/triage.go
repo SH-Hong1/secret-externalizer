@@ -72,6 +72,9 @@ type Member struct {
 // the decision a user gave it. Category, Kind and Preview are those of the
 // member with the lowest finding ID. DecidedBy is the subject of the user who
 // made the decision; it and DecidedAt are zero when nothing is decided.
+// AppliedAt is when an apply changed the source for the bundle, zero when
+// none has, and StorePath the path in OpenBao its value went to, empty for a
+// bundle whose value was not stored.
 type Bundle struct {
 	ID          BundleID
 	ProjectID   project.ID
@@ -82,6 +85,8 @@ type Bundle struct {
 	Decision    Decision
 	DecidedBy   string
 	DecidedAt   time.Time
+	AppliedAt   time.Time
+	StorePath   string
 	Members     []Member
 }
 
@@ -244,4 +249,10 @@ type Group struct {
 	Bundles []BundleID
 	Count   int
 	Lines   []int
+}
+
+// ShellFile reports whether file is a shell script, whose placeholder takes
+// the shell form. Case is ignored.
+func ShellFile(file string) bool {
+	return strings.EqualFold(path.Ext(file), ".sh")
 }

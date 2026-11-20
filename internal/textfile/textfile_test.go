@@ -4,13 +4,16 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"syscall"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/google/go-cmp/cmp"
+	"golang.org/x/text/encoding/korean"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/textfile"
 )
@@ -316,5 +319,261 @@ func TestRead_BOMFileIsValidated(t *testing.T) {
 				t.Errorf("Read(%q) = %v, %v, want error %v", tt.content, got.Encoding, err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestDecode(t *testing.T) {
+	entries, err := os.ReadDir("testdata")
+	if err != nil {
+		t.Fatalf("ReadDir(testdata) error = %v", err)
+	}
+	for _, e := range entries {
+		path := filepath.Join("testdata", e.Name())
+		t.Run(e.Name(), func(t *testing.T) {
+			raw, err := os.ReadFile(path) //nolint:gosec // G304: the path is a fixture under testdata
+			if err != nil {
+				t.Fatalf("ReadFile(%q) error = %v", path, err)
+			}
+			want, wantErr := textfile.Read(path, 1<<20)
+			got, gotErr := textfile.Decode(raw)
+			if (gotErr == nil) != (wantErr == nil) || (gotErr != nil && !sameSentinel(gotErr, wantErr)) {
+				t.Fatalf("Decode(%s) error = %v, want the error Read gives, %v", e.Name(), gotErr, wantErr)
+			}
+			if diff := cmp.Diff(want.Text, got.Text); diff != "" || got.Encoding != want.Encoding || got.Hash != want.Hash {
+				t.Errorf("Decode(%s) = %v, want %v (text diff %s)", e.Name(), got, want, diff)
+			}
+		})
+	}
+}
+
+// sameSentinel reports whether a and b wrap the same textfile error.
+func sameSentinel(a, b error) bool {
+	for _, s := range []error{textfile.ErrBinary, textfile.ErrUnknownEncoding, textfile.ErrTooLarge} {
+		if errors.Is(a, s) && errors.Is(b, s) {
+			return true
+		}
+	}
+	return false
+}
+
+// charBoundaries returns every offset in text that starts a character, and
+// the end of the text.
+func charBoundaries(text []byte) []int {
+	var out []int
+	for i := range text {
+		if utf8.RuneStart(text[i]) {
+			out = append(out, i)
+		}
+	}
+	return append(out, len(text))
+}
+
+func TestCharOffset(t *testing.T) {
+	for _, name := range []string{"utf8.txt", "euckr-crlf.properties", "cp949-extended.txt"} {
+		t.Run(name, func(t *testing.T) {
+			f, err := textfile.Read(filepath.Join("testdata", name), 1<<20)
+			if err != nil {
+				t.Fatalf("Read(%s) error = %v", name, err)
+			}
+			for _, off := range charBoundaries(f.Text) {
+				line, col := f.Position(off)
+				got, err := f.CharOffset(line, col)
+				if err != nil || got != off {
+					t.Errorf("CharOffset(Position(%d) = %d, %d) = %d, %v, want %d", off, line, col, got, err, off)
+				}
+			}
+		})
+	}
+	f := file("ab\r\n키=값\nlast")
+	tests := []struct {
+		name      string
+		line, col int
+	}{
+		{"line zero", 0, 1},
+		{"column zero", 1, 0},
+		{"missing line", 4, 1},
+		{"column past the line end", 2, 5},
+		{"column past the CR", 1, 5},
+		{"column past the text end", 3, 6},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got, err := f.CharOffset(tt.line, tt.col); !errors.Is(err, textfile.ErrOutOfRange) {
+				t.Errorf("CharOffset(%d, %d) = %d, %v, want ErrOutOfRange", tt.line, tt.col, got, err)
+			}
+		})
+	}
+	for _, tt := range []struct{ line, col, want int }{
+		{2, 3, len("ab\r\n키=")},
+		{2, 4, len("ab\r\n키=값")},
+		{1, 3, 2},
+		{3, 5, len("ab\r\n키=값\nlast")},
+	} {
+		if got, err := f.CharOffset(tt.line, tt.col); err != nil || got != tt.want {
+			t.Errorf("CharOffset(%d, %d) = %d, %v, want %d", tt.line, tt.col, got, err, tt.want)
+		}
+	}
+}
+
+// eucKR encodes s as EUC-KR (CP949).
+func eucKR(t *testing.T, s string) []byte {
+	t.Helper()
+	b, err := korean.EUCKR.NewEncoder().Bytes([]byte(s))
+	if err != nil {
+		t.Fatalf("encoding %q as EUC-KR error = %v", s, err)
+	}
+	return b
+}
+
+// asciiTrailChars returns CP949 characters whose second byte is an ASCII
+// letter: for lead bytes from across the range that allows such a second
+// byte, the first upper-case and the first lower-case letter that decode.
+func asciiTrailChars(t *testing.T) []string {
+	t.Helper()
+	var out []string
+	dec := korean.EUCKR.NewDecoder()
+	for _, lead := range []byte{0x81, 0x8c, 0x9f, 0xa1, 0xb0, 0xc6} {
+		for _, letters := range []string{"ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"} {
+			for i := range len(letters) {
+				r, err := dec.Bytes([]byte{lead, letters[i]})
+				if err == nil && !strings.ContainsRune(string(r), utf8.RuneError) {
+					out = append(out, string(r))
+					break
+				}
+			}
+		}
+	}
+	if len(out) < 6 {
+		t.Fatalf("found %d CP949 characters with a letter as second byte, want at least 6", len(out))
+	}
+	return out
+}
+
+func TestDiskOffset(t *testing.T) {
+	t.Run("utf-8 is the same offset", func(t *testing.T) {
+		raw := []byte("키=값\nx")
+		f, err := textfile.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode error = %v", err)
+		}
+		for _, off := range charBoundaries(f.Text) {
+			if got, err := f.DiskOffset(raw, off); err != nil || got != off {
+				t.Errorf("DiskOffset(%d) = %d, %v, want %d", off, got, err, off)
+			}
+		}
+	})
+	t.Run("utf-8 with BOM adds three", func(t *testing.T) {
+		raw := []byte("\xef\xbb\xbfkey=값\r\n")
+		f, err := textfile.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode error = %v", err)
+		}
+		for _, off := range charBoundaries(f.Text) {
+			if got, err := f.DiskOffset(raw, off); err != nil || got != off+3 {
+				t.Errorf("DiskOffset(%d) = %d, %v, want %d", off, got, err, off+3)
+			}
+		}
+	})
+
+	euckrFiles := map[string][]byte{}
+	for _, name := range []string{"euckr.txt", "euckr-crlf.properties", "cp949-extended.txt"} {
+		raw, err := os.ReadFile(filepath.Join("testdata", name)) //nolint:gosec // G304: the path is a fixture under testdata
+		if err != nil {
+			t.Fatalf("ReadFile(%s) error = %v", name, err)
+		}
+		euckrFiles[name] = raw
+	}
+	for i, c := range asciiTrailChars(t) {
+		euckrFiles[fmt.Sprintf("constructed %d", i)] = eucKR(t, "# 설정\r\n"+c+"pw=dev-only-fake-"+c+"Az\r\n"+c+c+"aZ\n"+c)
+	}
+	for name, raw := range euckrFiles {
+		t.Run("euc-kr "+name, func(t *testing.T) {
+			f, err := textfile.Decode(raw)
+			if err != nil || f.Encoding != textfile.EUCKR {
+				t.Fatalf("Decode(%s) = %v, %v, want EUC-KR", name, f.Encoding, err)
+			}
+			bounds := charBoundaries(f.Text)
+			for ai, a := range bounds {
+				da, err := f.DiskOffset(raw, a)
+				if err != nil {
+					t.Fatalf("DiskOffset(%d) error = %v", a, err)
+				}
+				if want := len(eucKR(t, string(f.Text[:a]))); da != want {
+					t.Errorf("DiskOffset(%d) = %d, want %d", a, da, want)
+				}
+				for _, b := range bounds[ai:] {
+					db, err := f.DiskOffset(raw, b)
+					if err != nil {
+						t.Fatalf("DiskOffset(%d) error = %v", b, err)
+					}
+					got, err := korean.EUCKR.NewDecoder().Bytes(raw[da:db])
+					if err != nil || string(got) != string(f.Text[a:b]) {
+						t.Errorf("decoding raw[DiskOffset(%d):DiskOffset(%d)] = %q, %v, want %q", a, b, got, err, f.Text[a:b])
+					}
+				}
+			}
+		})
+	}
+
+	t.Run("refuses", func(t *testing.T) {
+		raw := eucKR(t, "키=값")
+		f, err := textfile.Decode(raw)
+		if err != nil {
+			t.Fatalf("Decode error = %v", err)
+		}
+		for _, off := range []int{1, 2, -1, len(f.Text) + 1} {
+			if got, err := f.DiskOffset(raw, off); err == nil {
+				t.Errorf("DiskOffset(%d) = %d, nil, want an error", off, got)
+			}
+		}
+		u := []byte("키=값")
+		uf, err := textfile.Decode(u)
+		if err != nil {
+			t.Fatalf("Decode error = %v", err)
+		}
+		for _, off := range []int{1, -1, len(u) + 1} {
+			if got, err := uf.DiskOffset(u, off); err == nil {
+				t.Errorf("DiskOffset(utf-8, %d) = %d, nil, want an error", off, got)
+			}
+		}
+	})
+}
+
+// TestDiskOffset_EUCKRWidths decodes every two-byte combination that starts
+// with a lead byte. Where the result is not the replacement character, the
+// pair is one character at or above U+0080, so walking a file from its start
+// can take a byte below 0x80 at a lead position as one character and any
+// other byte as the first of two. A pair whose second byte is a line feed
+// never decodes, so a line feed is never inside a character.
+func TestDiskOffset_EUCKRWidths(t *testing.T) {
+	dec := korean.EUCKR.NewDecoder()
+	asciiTrail := 0
+	for lead := 0x80; lead <= 0xff; lead++ {
+		for trail := 0; trail <= 0xff; trail++ {
+			pair := []byte{byte(lead), byte(trail)}
+			got, err := dec.Bytes(pair)
+			if err != nil {
+				t.Fatalf("decoding % x error = %v", pair, err)
+			}
+			if strings.ContainsRune(string(got), utf8.RuneError) {
+				continue
+			}
+			if lead == 0x80 || lead == 0xff {
+				t.Errorf("decoding % x = %q, want the replacement character for a byte that cannot lead", pair, got)
+			}
+			if trail == '\n' {
+				t.Errorf("decoding % x = %q, want the replacement character for a line feed", pair, got)
+			}
+			r, size := utf8.DecodeRune(got)
+			if size != len(got) || r < 0x80 {
+				t.Errorf("decoding % x = %q, want one character at or above U+0080", pair, got)
+			}
+			if trail < 0x80 {
+				asciiTrail++
+			}
+		}
+	}
+	if asciiTrail == 0 {
+		t.Errorf("found no CP949 character with an ASCII second byte, want some")
 	}
 }

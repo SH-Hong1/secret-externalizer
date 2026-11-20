@@ -51,6 +51,8 @@ func newAuditRows(events []audit.Event) []auditRow {
 		switch e.Action {
 		case audit.ActionReveal:
 			row.ActionLabel, row.ActionClass = "원본 보기", "dark"
+		case audit.ActionApply:
+			row.ActionLabel, row.ActionClass = "적용 요청", "queued"
 		case audit.ActionMove:
 			row.ActionLabel, row.ActionClass, row.Move = "묶음 옮기기", "queued", true
 			row.Finding = "항목 #" + strconv.FormatInt(int64(e.FindingID), 10)

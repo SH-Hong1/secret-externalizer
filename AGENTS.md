@@ -206,6 +206,14 @@ Sources: Let's Go; Practical Go.
   EUC-KR file, which the scanners cannot read otherwise. It is written under
   the worker's temporary folder for one scan and removed when that scan
   ends.
+- The worker changes a file of a project only while it carries out an apply
+  that a user confirmed, and only at the places of bundles whose verdict is
+  `externalize` or `redact`. A value leaves the source only after the worker
+  has read it back from OpenBao and its fingerprint matched. A whole file is
+  stored and removed only if it cannot hold customer data. The changed file
+  is written through a temporary file in the same folder, which holds no
+  more than the file did, and the tool never runs a git command that
+  changes the repository.
 - Do not commit a real secret as a test fixture. Fixtures use values that are
   obviously fake.
 - Resolve every file path that comes from input, including symbolic links,

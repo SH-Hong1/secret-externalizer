@@ -17,8 +17,11 @@ import (
 // the redacting methods of db.DSN and bao.SecretID, so config redacts itself
 // through String, Format, and LogValue.
 type config struct {
-	dsn       db.DSN
-	root      string
+	dsn  db.DSN
+	root string
+	// applyRoot is the read-write mount of the workspace that applies
+	// change files under, or empty when applies are blocked.
+	applyRoot string
 	poll      time.Duration
 	lease     time.Duration
 	heartbeat time.Duration
@@ -45,9 +48,9 @@ const defaultGitBin = "/usr/bin/git"
 func (c config) String() string {
 	// c.dsn and the secret-id are arguments of their own, so fmt calls their
 	// Format methods.
-	return fmt.Sprintf("{database_url:%v workspace_root:%s poll:%s lease:%s heartbeat:%s bao_addr:%s bao_role_id:%s bao_secret_id:%v"+
+	return fmt.Sprintf("{database_url:%v workspace_root:%s apply_workspace_root:%s poll:%s lease:%s heartbeat:%s bao_addr:%s bao_role_id:%s bao_secret_id:%v"+
 		" betterleaks_bin:%s opengrep_bin:%s rules_dir:%s git_bin:%s scan_temp_dir:%s}",
-		c.dsn, c.root, c.poll, c.lease, c.heartbeat, c.baoAddr, c.baoCreds.RoleID, c.baoCreds.SecretID,
+		c.dsn, c.root, c.applyRoot, c.poll, c.lease, c.heartbeat, c.baoAddr, c.baoCreds.RoleID, c.baoCreds.SecretID,
 		c.betterleaksBin, c.opengrepBin, c.rulesDir, c.gitBin, c.scanTempDir)
 }
 
@@ -63,6 +66,7 @@ func (c config) LogValue() slog.Value {
 	return slog.GroupValue(
 		slog.Any("database_url", c.dsn),
 		slog.String("workspace_root", c.root),
+		slog.String("apply_workspace_root", c.applyRoot),
 		slog.String("poll", c.poll.String()),
 		slog.String("lease", c.lease.String()),
 		slog.String("heartbeat", c.heartbeat.String()),
@@ -101,15 +105,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if len(missing) > 0 {
 		return config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
-	if !filepath.IsAbs(root) {
-		return config{}, fmt.Errorf("checking WORKSPACE_ROOT: %q is not an absolute path", root)
-	}
-	info, err := os.Stat(root)
-	if err != nil {
+	if err := checkDir(root); err != nil {
 		return config{}, fmt.Errorf("checking WORKSPACE_ROOT: %w", err)
-	}
-	if !info.IsDir() {
-		return config{}, fmt.Errorf("checking WORKSPACE_ROOT: %q is not a directory", root)
 	}
 	secretID, err := bao.ReadSecretIDFile(secretIDFile)
 	if err != nil {
@@ -133,12 +130,19 @@ func loadConfig(getenv func(string) string) (config, error) {
 	if err := checkRulesDir(rulesDir); err != nil {
 		return config{}, fmt.Errorf("checking RULES_DIR: %w", err)
 	}
+	applyRoot := getenv("APPLY_WORKSPACE_ROOT")
+	if applyRoot != "" {
+		if err := checkDir(applyRoot); err != nil {
+			return config{}, fmt.Errorf("checking APPLY_WORKSPACE_ROOT: %w", err)
+		}
+	}
 	if !filepath.IsAbs(scanTempDir) {
 		return config{}, fmt.Errorf("checking SCAN_TEMP_DIR: %q is not an absolute path", scanTempDir)
 	}
 	return config{
 		dsn:       dsn,
 		root:      root,
+		applyRoot: applyRoot,
 		poll:      2 * time.Second,
 		lease:     2 * time.Minute,
 		heartbeat: 30 * time.Second,
@@ -151,6 +155,21 @@ func loadConfig(getenv func(string) string) (config, error) {
 		gitBin:         gitBin,
 		scanTempDir:    scanTempDir,
 	}, nil
+}
+
+// checkDir fails unless p is an absolute path to a folder.
+func checkDir(p string) error {
+	if !filepath.IsAbs(p) {
+		return fmt.Errorf("%q is not an absolute path", p)
+	}
+	info, err := os.Stat(p)
+	if err != nil {
+		return fmt.Errorf("checking the folder: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("%q is not a directory", p)
+	}
+	return nil
 }
 
 // checkExecutable fails unless p is an absolute path to a regular file that

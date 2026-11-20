@@ -12,9 +12,27 @@ var (
 	ErrLeaseLost = errors.New("job lease lost")
 )
 
-// Job is a claimed job. ScanID is the ID of the scan the job runs.
+// Kind is what a job does.
+type Kind string
+
+// The kinds of job the worker runs.
+const (
+	// KindScan scans a project.
+	KindScan Kind = "scan"
+	// KindApplyCheck checks whether the verdicts of a project can be
+	// applied, without changing anything.
+	KindApplyCheck Kind = "apply-check"
+	// KindApply applies the verdicts of a project to its source.
+	KindApply Kind = "apply"
+)
+
+// Job is a claimed job. ScanID is the ID of the scan a scan job runs, and 0
+// for the other kinds; ApplyID is the ID of the apply run an apply-check or
+// apply job works on, and 0 for a scan job.
 type Job struct {
 	ID       int64
+	Kind     Kind
 	ScanID   int64
+	ApplyID  int64
 	Attempts int
 }

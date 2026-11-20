@@ -294,8 +294,8 @@ func TestClient_ReLoginOn403(t *testing.T) {
 			writeJSON(t, w, http.StatusForbidden, map[string]any{"errors": []string{"permission denied"}})
 		})
 		_, err := c.Fingerprints(t.Context(), [][]byte{[]byte(testValue)})
-		if err == nil || !strings.Contains(err.Error(), "403") {
-			t.Errorf("Fingerprints() with every request refused error = %v, want one naming status 403", err)
+		if !errors.Is(err, bao.ErrForbidden) || !strings.Contains(err.Error(), "403") {
+			t.Errorf("Fingerprints() with every request refused error = %v, want ErrForbidden naming status 403", err)
 		}
 		if n := f.loginCount(); n != 2 {
 			t.Errorf("Fingerprints() with every request refused logged in %d times, want 2", n)
@@ -334,6 +334,15 @@ func TestClient_ErrorsHideValues(t *testing.T) {
 		},
 		"ReadPending": func(c *bao.Client) error {
 			_, err := c.ReadPending(t.Context(), 7, fingerprint)
+			return err
+		},
+		"PutStored": func(c *bao.Client) error {
+			v := bao.StoredValue{Value: []byte(testValue), Fingerprint: fingerprint, Kind: "password"}
+			_, err := c.PutStored(t.Context(), 7, "ext.db.main.password", v, 0)
+			return err
+		},
+		"ReadStored": func(c *bao.Client) error {
+			_, err := c.ReadStored(t.Context(), 7, "ext.db.main.password")
 			return err
 		},
 	}

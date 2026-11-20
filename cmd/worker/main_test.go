@@ -3,13 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
 	"maps"
+	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -17,11 +21,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
+	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
+	"github.com/SH-Hong1/secret-externalizer/internal/worktree/worktreetest"
 )
 
 func noEnv(string) string { return "" }
@@ -68,6 +78,18 @@ func (f *fakeSecrets) DeletePending(_ context.Context, _ int64, fingerprint stri
 	defer f.mu.Unlock()
 	delete(f.pending, fingerprint)
 	return nil
+}
+
+// errNoStore is what fakeSecrets answers a stored-value call with. A check
+// never stores or reads a stored value.
+var errNoStore = errors.New("fake secrets: stored values are not kept")
+
+func (*fakeSecrets) ReadStored(context.Context, int64, string) (bao.Stored, error) {
+	return bao.Stored{}, errNoStore
+}
+
+func (*fakeSecrets) PutStored(context.Context, int64, string, bao.StoredValue, int) (int, error) {
+	return 0, errNoStore
 }
 
 func (f *fakeSecrets) get(fingerprint string) []byte {
@@ -175,6 +197,12 @@ func TestNewWorkerID(t *testing.T) {
 	}
 }
 
+// fakeDeps returns the dependencies of a worker that scans with fakeScanner
+// and keeps values in secrets.
+func fakeDeps(secrets *fakeSecrets) workerDeps {
+	return workerDeps{fingerprints: secrets, originals: secrets, vault: secrets, scanners: []scan.Scanner{fakeScanner{}}}
+}
+
 func TestRun_RunsQueuedScanUntilCancelled(t *testing.T) {
 	databaseURL := os.Getenv("TEST_DATABASE_URL")
 	if databaseURL == "" {
@@ -224,8 +252,8 @@ func TestRun_RunsQueuedScanUntilCancelled(t *testing.T) {
 	runCtx, stop := context.WithCancel(ctx)
 	defer stop()
 	secrets := &fakeSecrets{pending: map[string][]byte{}}
-	deps := func(config) (scanDeps, error) { //nolint:unparam // the signature is the one runWith takes
-		return scanDeps{fingerprints: secrets, originals: secrets, scanners: []scan.Scanner{fakeScanner{}}}, nil
+	deps := func(config) (workerDeps, error) { //nolint:unparam // the signature is the one runWith takes
+		return fakeDeps(secrets), nil
 	}
 	done := make(chan error, 1)
 	go func() {
@@ -270,4 +298,227 @@ func TestRun_RunsQueuedScanUntilCancelled(t *testing.T) {
 	if err := <-done; err != nil {
 		t.Errorf("runWith() after cancel = %v, want nil", err)
 	}
+}
+
+// testSchemaURL returns TEST_DATABASE_URL with its search path set to a
+// schema of its own, created for this test and dropped when it ends, so the
+// worker claims only the jobs the test queues. It skips the test when
+// TEST_DATABASE_URL is not set.
+func testSchemaURL(t *testing.T) string {
+	t.Helper()
+	raw := os.Getenv("TEST_DATABASE_URL")
+	if raw == "" {
+		t.Skip("set TEST_DATABASE_URL to run against postgres")
+	}
+	ctx := t.Context()
+	admin, err := pgxpool.New(ctx, raw)
+	if err != nil {
+		t.Fatalf("pgxpool.New() error = %v", err)
+	}
+	t.Cleanup(admin.Close)
+	suffix := make([]byte, 8)
+	if _, err := rand.Read(suffix); err != nil {
+		t.Fatalf("rand.Read() error = %v", err)
+	}
+	schema := "test_" + hex.EncodeToString(suffix)
+	if _, err := admin.Exec(ctx, "CREATE SCHEMA "+schema); err != nil {
+		t.Fatalf("CREATE SCHEMA %s error = %v", schema, err)
+	}
+	t.Cleanup(func() {
+		// The test context is already cancelled during cleanup.
+		if _, err := admin.Exec(context.WithoutCancel(ctx), "DROP SCHEMA "+schema+" CASCADE"); err != nil {
+			t.Errorf("DROP SCHEMA %s error = %v", schema, err)
+		}
+	})
+	u, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("TEST_DATABASE_URL is not a URL: %v", err)
+	}
+	q := u.Query()
+	q.Set("search_path", schema)
+	u.RawQuery = q.Encode()
+	return u.String()
+}
+
+// logWatch is the worker's standard error. It keeps what the worker logs
+// and wakes wait whenever a line is written.
+type logWatch struct {
+	wrote chan struct{}
+
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func newLogWatch() *logWatch { return &logWatch{wrote: make(chan struct{}, 1)} }
+
+func (w *logWatch) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	n, err := w.buf.Write(p)
+	w.mu.Unlock()
+	select {
+	case w.wrote <- struct{}{}:
+	default:
+	}
+	return n, err
+}
+
+// count returns how many log lines have msg as their message.
+func (w *logWatch) count(msg string) int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return strings.Count(w.buf.String(), `"msg":"`+msg+`"`)
+}
+
+// wait returns once n log lines have msg as their message. It fails the
+// test when ctx ends or the worker returns first.
+func (w *logWatch) wait(ctx context.Context, t *testing.T, done <-chan error, msg string, n int) {
+	t.Helper()
+	for w.count(msg) < n {
+		select {
+		case <-ctx.Done():
+			t.Fatalf("no %d %q log lines when the deadline passed; log:\n%s", n, msg, w.String())
+		case err := <-done:
+			t.Fatalf("runWith() returned %v before logging %q; log:\n%s", err, msg, w.String())
+		case <-w.wrote:
+		}
+	}
+}
+
+func (w *logWatch) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
+}
+
+// TestRun_HandlesApplyJobs runs a worker that scans a project from
+// WORKSPACE_ROOT, where the project folder is no git work tree, and checks
+// it from APPLY_WORKSPACE_ROOT, where the same files are a work tree. Only
+// a check that reads the apply root can find the work tree.
+func TestRun_HandlesApplyJobs(t *testing.T) {
+	tests := []struct {
+		name      string
+		git       bool
+		applyRoot bool
+		state     apply.State
+		blockers  []apply.Blocker
+	}{
+		{name: "ready", git: true, applyRoot: true, state: apply.StateReady},
+		{name: "no git", applyRoot: true, state: apply.StateBlocked, blockers: []apply.Blocker{apply.BlockerGitMissing}},
+		{name: "no apply root", git: true, state: apply.StateBlocked, blockers: []apply.Blocker{apply.BlockerWorkspaceReadOnly}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			databaseURL := testSchemaURL(t)
+			ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+			defer cancel()
+
+			scanRoot, applyRoot := t.TempDir(), t.TempDir()
+			for _, root := range []string{scanRoot, applyRoot} {
+				p := filepath.Join(root, "shop", "conf", "app.properties")
+				if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+					t.Fatalf("MkdirAll error = %v", err)
+				}
+				if err := os.WriteFile(p, []byte("password="+fakeValue+"\n"), 0o600); err != nil {
+					t.Fatalf("WriteFile error = %v", err)
+				}
+			}
+			worktreetest.Init(t, filepath.Join(applyRoot, "shop"))
+
+			store, err := db.Open(ctx, db.DSN(databaseURL))
+			if err != nil {
+				t.Fatalf("db.Open() error = %v", err)
+			}
+			defer store.Close()
+			if err := store.Migrate(ctx); err != nil {
+				t.Fatalf("Migrate() error = %v", err)
+			}
+			actor := audit.Actor{Subject: "worker-test"}
+			projectID, err := store.CreateProject(ctx, project.Project{Name: "shop", Path: "shop", CreatedBy: "worker-test"})
+			if err != nil {
+				t.Fatalf("CreateProject() error = %v", err)
+			}
+			scanID, err := store.RequestScan(ctx, projectID, actor)
+			if err != nil {
+				t.Fatalf("RequestScan() error = %v", err)
+			}
+
+			env := validEnv(t)
+			env["DATABASE_URL"] = databaseURL
+			env["WORKSPACE_ROOT"] = scanRoot
+			if tt.applyRoot {
+				env["APPLY_WORKSPACE_ROOT"] = applyRoot
+			}
+			git := ""
+			if tt.git {
+				git = gitPath(t)
+			}
+			tune := func(c *config) {
+				c.poll = 20 * time.Millisecond
+				c.heartbeat = 20 * time.Millisecond
+				c.gitBin = git
+			}
+			secrets := &fakeSecrets{pending: map[string][]byte{}}
+			deps := func(config) (workerDeps, error) { //nolint:unparam // the signature is the one runWith takes
+				return fakeDeps(secrets), nil
+			}
+			logs := newLogWatch()
+			runCtx, stop := context.WithCancel(ctx)
+			defer stop()
+			done := make(chan error, 1)
+			go func() {
+				done <- runWith(runCtx, []string{"worker"}, getenvFrom(env), io.Discard, logs, tune, deps)
+			}()
+
+			logs.wait(ctx, t, done, "scan finished", 1)
+			scanned, err := store.Scan(ctx, scanID)
+			if err != nil {
+				t.Fatalf("Scan(%d) error = %v", scanID, err)
+			}
+			// Only the apply root is a work tree, so a scan of it would
+			// have read a commit hash.
+			if scanned.Status != scan.StatusSucceeded || scanned.CommitHash != "" {
+				t.Errorf("Scan(%d) = status %q, commit hash %q; want succeeded with no commit hash, read from WORKSPACE_ROOT",
+					scanID, scanned.Status, scanned.CommitHash)
+			}
+			page, err := store.Entries(ctx, projectID, scanID, triage.Filter{Status: triage.StatusAll, Page: 1})
+			if err != nil || len(page.Entries) != 1 || page.Entries[0].Bundle == 0 {
+				t.Fatalf("Entries(%d, %d) = %+v, %v; want one bundle", projectID, scanID, page.Entries, err)
+			}
+			decision := triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}
+			if err := store.Decide(ctx, projectID, []triage.BundleID{page.Entries[0].Bundle}, decision, actor); err != nil {
+				t.Fatalf("Decide() error = %v", err)
+			}
+			id, err := store.RequestApplyCheck(ctx, projectID, actor)
+			if err != nil {
+				t.Fatalf("RequestApplyCheck(%d) error = %v", projectID, err)
+			}
+
+			logs.wait(ctx, t, done, "apply check finished", 1)
+			run, err := store.ApplyRun(ctx, id)
+			if err != nil {
+				t.Fatalf("ApplyRun(%d) error = %v", id, err)
+			}
+			if run.State != tt.state || !slices.Equal(run.Blockers, tt.blockers) {
+				t.Errorf("ApplyRun(%d) = state %q, blockers %v; want %q, %v; log:\n%s", id, run.State, run.Blockers, tt.state, tt.blockers, logs)
+			}
+			if strings.Contains(logs.String(), fakeValue) {
+				t.Errorf("the worker log holds the value")
+			}
+
+			stop()
+			if err := <-done; err != nil {
+				t.Errorf("runWith() after cancel = %v, want nil", err)
+			}
+		})
+	}
+}
+
+// gitPath returns the git executable, skipping the test when there is none.
+func gitPath(t *testing.T) string {
+	t.Helper()
+	p, err := exec.LookPath("git")
+	if err != nil {
+		t.Skip("git is not installed")
+	}
+	return p
 }

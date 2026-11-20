@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strconv"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -89,15 +90,19 @@ type lockedBundle struct {
 // is checked against what the user sees. It returns ErrNotFound when the
 // project has no such bundle.
 func lockBundle(ctx context.Context, tx pgx.Tx, projectID project.ID, id triage.BundleID, lock rowLock) (lockedBundle, error) {
-	query := "SELECT fingerprint, verdict, hold_reason, name, note FROM bundle WHERE id = $1 AND project_id = $2 FOR UPDATE"
+	const columns = "SELECT fingerprint, verdict, hold_reason, name, note, applied_at, store_path FROM bundle WHERE id = $1 AND project_id = $2"
+	query := columns + " FOR UPDATE"
 	if lock == lockNoKeyUpdate {
-		query = "SELECT fingerprint, verdict, hold_reason, name, note FROM bundle WHERE id = $1 AND project_id = $2 FOR NO KEY UPDATE"
+		query = columns + " FOR NO KEY UPDATE"
 	}
 	lb := lockedBundle{bundle: triage.Bundle{ID: id, ProjectID: projectID}}
 	b := &lb.bundle
-	var name *string
+	var (
+		name      *string
+		appliedAt *time.Time
+	)
 	err := tx.QueryRow(ctx, query, id, projectID).
-		Scan(&b.Fingerprint, &b.Decision.Verdict, &b.Decision.Reason, &name, &b.Decision.Note)
+		Scan(&b.Fingerprint, &b.Decision.Verdict, &b.Decision.Reason, &name, &b.Decision.Note, &appliedAt, &b.StorePath)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return lockedBundle{}, fmt.Errorf("reading bundle %d: %w", id, ErrNotFound)
 	}
@@ -107,6 +112,7 @@ func lockBundle(ctx context.Context, tx pgx.Tx, projectID project.ID, id triage.
 	if name != nil {
 		b.Decision.Name = triage.Name(*name)
 	}
+	b.AppliedAt = timeOf(appliedAt)
 	rows, err := tx.Query(ctx, `
 		SELECT id, file_path, category, kind, preview, has_original,
 			coalesce(last_scan_id = (
@@ -164,6 +170,15 @@ func (s *Store) Decide(ctx context.Context, projectID project.ID, ids []triage.B
 	}
 	defer rollback(ctx, tx, &err)
 
+	// FOR SHARE waits for a check or confirmation of an apply and lets scans
+	// and other decisions through.
+	if err := lockProject(ctx, tx, projectID, "FOR SHARE"); err != nil {
+		return err
+	}
+	if err := refuseActiveApply(ctx, tx, projectID); err != nil {
+		return fmt.Errorf("deciding bundles: %w", err)
+	}
+
 	var name *string
 	if d.Name != "" {
 		n := string(d.Name)
@@ -187,6 +202,10 @@ func (s *Store) Decide(ctx context.Context, projectID project.ID, ids []triage.B
 		if err := lb.bundle.Check(d); err != nil {
 			return fmt.Errorf("deciding bundle %d: %w", id, err)
 		}
+		if appliedExternalization(lb.bundle) &&
+			(d.Verdict != triage.VerdictExternalize || d.Name != lb.bundle.Decision.Name) {
+			return fmt.Errorf("deciding bundle %d: its value is applied under its name: %w", id, triage.ErrNotAllowed)
+		}
 		_, err = tx.Exec(ctx, `
 			UPDATE bundle SET verdict = $2, hold_reason = $3, name = $4, note = $5, decided_by = $6,
 				decided_at = CASE WHEN $6 = '' THEN NULL ELSE now() END
@@ -209,6 +228,19 @@ func (s *Store) Decide(ctx context.Context, projectID project.ID, ids []triage.B
 		return fmt.Errorf("committing decision: %w", err)
 	}
 	return nil
+}
+
+// appliedExternalization reports whether an apply has replaced b's value in
+// the source by its placeholder. The placeholder, the manifest and the store
+// path all carry b's name, so b keeps its verdict and name.
+func appliedExternalization(b triage.Bundle) bool {
+	return !b.AppliedAt.IsZero() && b.Decision.Verdict == triage.VerdictExternalize
+}
+
+// current reports whether the finding with the given ID is among b's
+// members, which lockBundle reads as those the latest succeeded scan found.
+func current(b triage.Bundle, id finding.ID) bool {
+	return slices.ContainsFunc(b.Members, func(m triage.Member) bool { return m.FindingID == id })
 }
 
 // decisionDetail returns the audit detail of d: the verdict, and the reason,
@@ -238,13 +270,30 @@ func decisionDetail(d triage.Decision) map[string]string {
 // fingerprint, holds customer data while the finding does not, or has a
 // decision it would no longer allow with the finding in it.
 // The decision is checked against the finding and the bundle's members that
-// the project's latest succeeded scan found.
+// the project's latest succeeded scan found. A finding moves out of a
+// bundle externalized by an apply only when that scan found it and it is not
+// the bundle's last finding (otherwise triage.ErrNotAllowed): a location the
+// apply replaced no longer holds the value, so the latest scan does not find
+// it, and it holds the placeholder of the bundle's name, which the manifest
+// and the apply's records name; deleting the bundle would free a name the
+// source and the store still use. A location the scan still finds holds the
+// value, and the next apply would replace it under the bundle's name unless
+// it moves.
+// Nothing moves while the project has an apply that is being checked, is
+// queued or runs (ErrApplyActive).
 func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (_ triage.BundleID, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("starting transaction: %w", err)
 	}
 	defer rollback(ctx, tx, &err)
+
+	if err := lockProject(ctx, tx, projectID, "FOR SHARE"); err != nil {
+		return 0, err
+	}
+	if err := refuseActiveApply(ctx, tx, projectID); err != nil {
+		return 0, fmt.Errorf("moving finding %d: %w", id, err)
+	}
 
 	var (
 		from     triage.BundleID
@@ -298,6 +347,9 @@ func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id findin
 		if err != nil {
 			return 0, err
 		}
+	}
+	if src := locked[from]; appliedExternalization(src.bundle) && (src.findings == 1 || !current(src.bundle, id)) {
+		return 0, fmt.Errorf("moving finding %d out of applied bundle %d: %w", id, from, triage.ErrNotAllowed)
 	}
 	dest := locked[to].bundle
 	switch {

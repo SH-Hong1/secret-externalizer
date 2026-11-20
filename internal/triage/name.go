@@ -48,3 +48,12 @@ func (n Name) Config() string { return namePrefix + "." + string(n) }
 func (n Name) Shell() string {
 	return strings.ToUpper(strings.ReplaceAll(n.Config(), ".", "_"))
 }
+
+// For returns the form n takes in file: the Shell form in a ShellFile and
+// the Config form anywhere else.
+func (n Name) For(file string) string {
+	if ShellFile(file) {
+		return n.Shell()
+	}
+	return n.Config()
+}

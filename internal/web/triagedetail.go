@@ -1,7 +1,6 @@
 package web
 
 import (
-	"path"
 	"strconv"
 	"strings"
 
@@ -199,12 +198,6 @@ func suggestionText(s triage.Suggestion) string {
 	return "제안: " + label + ". 규칙에 따른 제안입니다. 버튼을 눌러야 저장됩니다."
 }
 
-// shellFile reports whether file is a shell script, whose placeholder takes
-// the shell form.
-func shellFile(file string) bool {
-	return strings.EqualFold(path.Ext(file), ".sh")
-}
-
 // newNameField returns the name input of b: its stored name, or the
 // suggested one. The prefix is the shell one when every member is a shell
 // script; Config and Shell are the rendered forms the bundle's files take.
@@ -217,7 +210,7 @@ func newNameField(b triage.Bundle, s triage.Suggestion) *nameField {
 	}
 	shells := 0
 	for _, m := range b.Members {
-		if shellFile(m.File) {
+		if triage.ShellFile(m.File) {
 			shells++
 		}
 	}

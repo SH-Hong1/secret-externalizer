@@ -38,13 +38,14 @@ func (s *Store) Bundle(ctx context.Context, projectID project.ID, scanID scan.ID
 	b := triage.Bundle{ID: id, ProjectID: projectID}
 	err := s.readOnly(ctx, func(tx pgx.Tx) error {
 		var (
-			name      *string
-			decidedAt *time.Time
+			name                 *string
+			decidedAt, appliedAt *time.Time
 		)
 		err := tx.QueryRow(ctx, `
-			SELECT fingerprint, verdict, hold_reason, name, note, decided_by, decided_at FROM bundle
+			SELECT fingerprint, verdict, hold_reason, name, note, decided_by, decided_at, applied_at, store_path FROM bundle
 			WHERE id = $1 AND project_id = $2`, id, projectID).
-			Scan(&b.Fingerprint, &b.Decision.Verdict, &b.Decision.Reason, &name, &b.Decision.Note, &b.DecidedBy, &decidedAt)
+			Scan(&b.Fingerprint, &b.Decision.Verdict, &b.Decision.Reason, &name, &b.Decision.Note, &b.DecidedBy, &decidedAt,
+				&appliedAt, &b.StorePath)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return fmt.Errorf("reading bundle %d: %w", id, ErrNotFound)
 		}
@@ -54,9 +55,7 @@ func (s *Store) Bundle(ctx context.Context, projectID project.ID, scanID scan.ID
 		if name != nil {
 			b.Decision.Name = triage.Name(*name)
 		}
-		if decidedAt != nil {
-			b.DecidedAt = *decidedAt
-		}
+		b.DecidedAt, b.AppliedAt = timeOf(decidedAt), timeOf(appliedAt)
 		return readMembers(ctx, tx, scanID, &b)
 	})
 	if err != nil {

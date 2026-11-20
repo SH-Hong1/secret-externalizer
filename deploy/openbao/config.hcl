@@ -75,6 +75,17 @@ initialize "engines" {
     }
   }
 
+  # KV v2 keeps 10 versions of a path by default and drops the oldest on the
+  # eleventh write. An externalized value may have no other copy, so every
+  # path keeps 100 versions; the worker cannot delete any of them.
+  request "kv-max-versions" {
+    operation = "update"
+    path      = "secret/config"
+    data = {
+      max_versions = 100
+    }
+  }
+
   request "enable-approle" {
     operation = "update"
     path      = "sys/auth/approle"
@@ -85,6 +96,9 @@ initialize "engines" {
 }
 
 initialize "policies" {
+  # The worker reads back the externalized values it writes under projects/
+  # to check the stored bytes before it changes a source file. It has no
+  # delete and no metadata access there, so it cannot remove a version.
   request "worker-policy" {
     operation = "update"
     path      = "sys/policies/acl/worker"
@@ -97,7 +111,7 @@ initialize "policies" {
           capabilities = ["create", "update"]
         }
         path "secret/data/projects/*" {
-          capabilities = ["create", "update"]
+          capabilities = ["create", "update", "read"]
         }
         path "secret/metadata/pending/*" {
           capabilities = ["list", "delete"]
