@@ -152,6 +152,15 @@ worker 정책에 `secret/data/projects/*`의 `read`가 더해졌고, KV v2 마�
 
 > **경고:** `down -v`로 볼륨을 지우는 것은 **적용을 한 번도 하지 않은 환경에서만** 안전하다. 적용을 한 번이라도 한 환경에서는 `openbao-data` 볼륨에, git이 추적하지 않는 파일(키 파일, 무시된 설정 파일)에서 빼낸 값의 유일한 사본이 있을 수 있다. 그 파일은 적용이 지웠거나 자리표시자로 바꾸었으므로, 볼륨을 지우면 값이 영영 사라진다. 그런 환경에서 정책을 바꾸는 방법은 아직 없다(`docs/next-steps.md`).
 
+## PDF 변환기
+
+리포트의 PDF는 web이 `pdf` 서비스(Gotenberg 9.9.1의 Chromium 전용 이미지)에 HTML, 스타일시트, 글꼴을 한 요청으로 보내 만든다. 설정과 이유는 `docs/decisions/0043-pdf-converter-setup.md`에 있다.
+
+| 서비스 | 내용 |
+|---|---|
+| `pdf` | 호스트에 포트를 열지 않는다. 바깥으로 나가는 길이 없는 내부 네트워크 `pdf`에만 붙고, 그 네트워크에는 web만 함께 붙는다. web은 `http://pdf:3000`으로 부른다. Chromium은 요청으로 받은 파일(`/tmp` 아래)만 열고 JavaScript를 실행하지 않는다 |
+| `pdf-test` | `test` 프로필에서만 뜬다. `pdf`와 같은 이미지와 옵션이고, 기본 네트워크에 붙어 `127.0.0.1:13000`에 열린다 |
+
 ## 개발용 계정
 
 | 사용자 | 비밀번호 | 역할 | 볼 수 있는 화면 |
@@ -175,8 +184,9 @@ realm 설정은 `deploy/keycloak/realm.json`에 있다. Keycloak은 기동할 �
 | valkey | `127.0.0.1:16379` | 통합 테스트. 로컬에 설치한 redis가 6379를 쓰는 경우가 많아 16379로 연다 |
 | postgres | `127.0.0.1:15432` | 통합 테스트. 컨테이너끼리는 `postgres:5432`로 쓴다 |
 | openbao-test | `127.0.0.1:18200` | 통합 테스트. `test` 프로필에서만 뜬다 |
+| pdf-test | `http://127.0.0.1:13000` | 통합 테스트. `test` 프로필에서만 뜬다 |
 
-`openbao`는 호스트에 포트를 열지 않는다. worker만 compose 네트워크 안에서 `openbao:8200`으로 접속한다.
+`openbao`는 호스트에 포트를 열지 않는다. worker만 compose 네트워크 안에서 `openbao:8200`으로 접속한다. `pdf`도 포트를 열지 않고, web만 내부 네트워크 `pdf`에서 `pdf:3000`으로 접속한다.
 
 ## 발급자 주소
 
@@ -265,20 +275,23 @@ go test -count=1 -v -run 'TestRules|TestVersion' ./internal/ruleset/
 
 ## 통합 테스트
 
-valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이, OpenBao가 필요한 테스트는 `TEST_BAO_ADDR`가 없으면 건너뛴다. `make test-integration`은 셋 다 요구한다. OpenBao 테스트는 원본을 보관하는 `openbao`가 아니라 `test` 프로필의 `openbao-test`를 쓰고, 테스트가 개발용 루트 토큰으로 transit, KV, AppRole을 직접 만든다. compose의 서비스로 실행하려면 다음과 같이 한다. 새 셸에서는 compose 명령마다 `SE_WORKSPACE`가 설정되어 있어야 한다. 없으면 compose가 파일을 읽다가 멈춘다(worker를 띄우지 않는 명령도 같다).
+valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이, OpenBao가 필요한 테스트는 `TEST_BAO_ADDR`가, PDF 변환기가 필요한 테스트는 `TEST_PDF_URL`이 없으면 건너뛴다. `make test-integration`은 넷 다 요구한다. PDF 테스트는 `test` 프로필의 `pdf-test`(`http://127.0.0.1:13000`)를 쓴다. OpenBao 테스트는 원본을 보관하는 `openbao`가 아니라 `test` 프로필의 `openbao-test`를 쓰고, 테스트가 개발용 루트 토큰으로 transit, KV, AppRole을 직접 만든다. compose의 서비스로 실행하려면 다음과 같이 한다. 새 셸에서는 compose 명령마다 `SE_WORKSPACE`가 설정되어 있어야 한다. 없으면 compose가 파일을 읽다가 멈춘다(worker를 띄우지 않는 명령도 같다).
 
 실제 스캐너를 쓰는 테스트(`internal/scan`의 `TestHandle_RealScanners…`, `internal/ruleset`의 규칙 테스트 등)는 `bin/`에 스캐너가 없으면 실패하지 않고 건너뛴다. 통합 테스트를 돌리기 전에 `make scanners`를 먼저 실행하고, `-v` 출력에서 이 테스트가 `SKIP`이 아닌지 확인한다.
 
 ```sh
 export SE_WORKSPACE=$HOME/work     # 값은 존재하는 폴더면 된다
 docker compose up -d valkey postgres
-docker compose --profile test up -d openbao-test
+docker compose --profile test up -d openbao-test pdf-test
 make scanners                      # 처음 한 번. 없으면 실제 스캐너 테스트가 건너뛰어진다
 TEST_VALKEY_ADDR=127.0.0.1:16379 \
 TEST_DATABASE_URL=postgres://se_app:dev-only-se-app-password@127.0.0.1:15432/secret_externalizer_test \
 TEST_BAO_ADDR=http://127.0.0.1:18200 \
+TEST_PDF_URL=http://127.0.0.1:13000 \
 make test-integration
 ```
+
+Chromium이 든 `pdf`와 `pdf-test`는 각각 200MB 안팎의 메모리를 쓴다. Docker VM의 메모리가 2GB쯤이면(colima 기본값) 전체 스택과 `pdf-test`를 띄운 채 통합 테스트를 돌릴 때 큰 값을 다루는 `internal/apply` 테스트 중에 `openbao-test`가 메모리 부족으로 죽을 수 있다(`docker inspect`의 `OOMKilled`). 그때는 `docker compose stop pdf`로 `pdf`를 멈추고 `openbao-test`를 다시 띄운 뒤 돌리거나 VM 메모리를 늘린다.
 
 valkey는 디스크에 아무것도 남기지 않는다. valkey를 다시 띄우면 모든 세션이 사라지고 다시 로그인해야 한다. 메모리는 64MB로 제한하며, 다 차면 기존 키를 지우지 않고 새 쓰기만 거부한다(`noeviction`). 이때 새 로그인은 503 화면을 보고, 이미 로그인한 세션은 그대로 쓸 수 있다.
 

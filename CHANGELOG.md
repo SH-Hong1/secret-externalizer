@@ -10,6 +10,10 @@
 - 스캔 리포트의 자료를 한 스냅숏에서 읽는 `db.Store.Report`. 찾은 묶음과 판정별 건수, 이 스캔 전에 시작된 적용 실행이 바꾼 항목, 판정·옮기기·적용 확인 기록을 한 요청 단위로 묶은 판정 이력을 읽는다. 미리보기는 읽지 않는다
 - 마이그레이션 `0008`: `apply_run (project_id, id DESC)`, `audit_event (project_id, id DESC)` 인덱스
 - 스캔 리포트 화면 `GET /scans/{id}/report`. 요약 숫자 일곱 개와 이전 성공한 스캔 대비 증감, 외부화한 항목, 삭제·마스킹한 고객정보, 구조 변경이 필요한 항목, 남은 항목, 오탐, 판정 이력을 보인다. 값, 미리보기, 지문, 주변 줄은 싣지 않는다. 성공하지 않은 스캔은 스캔 화면으로 돌려보낸다. 성공한 스캔의 스캔 화면, 프로젝트 화면의 스캔 목록, 적용 결과 화면의 확인 스캔 옆에 리포트 링크를 둔다
+- compose의 `pdf` 서비스(Gotenberg 9.9.1 Chromium 전용 이미지, digest 고정)와 내부 네트워크 `pdf`. 호스트 포트가 없고 바깥으로 나가지 못하며 web만 함께 붙는다. Chromium 경로만 쓰고 JavaScript, webhook, 주소에서 내려받기를 끄며, Chromium은 요청으로 받은 파일만 연다. 요청 제한 15초, 본문 한도 32MB. 루트 파일 시스템은 읽기 전용이고 모든 capability를 뺀다(`docs/decisions/0043-pdf-converter-setup.md`). 통합 테스트용 `pdf-test`(`test` 프로필, `127.0.0.1:13000`)
+- web 컨테이너에 환경 변수 `PDF_URL`(`http://pdf:3000`)과 `pdf` 네트워크. web은 아직 이 값을 읽지 않는다
+- HTML 문서와 그 파일을 Gotenberg에 보내 A4 PDF를 받는 클라이언트 `internal/pdf`. 변환기가 없거나 늦으면 `ErrUnavailable`, 문서를 거부하거나 PDF가 아니거나 64MiB를 넘으면 `ErrRejected`다. 오류에 변환기의 응답 본문을 넣지 않는다
+- `make test-integration`이 `TEST_PDF_URL`을 요구한다
 - Go 모듈과 `cmd/web` 진입점 골격
 - 버전을 고정한 gofumpt, golangci-lint 설치와 `make fmt`, `make lint`, `make vet`, `make test`, `make check`
 - golangci-lint 설정

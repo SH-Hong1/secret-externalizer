@@ -460,23 +460,23 @@ PR 1을 만들고, 전체 검토를 거쳐 병합한다.
   func (c *Client) Convert(ctx context.Context, doc Document) ([]byte, error)
   ```
 
-- 요청: `POST <baseURL>/forms/chromium/convert/html`, multipart. 양식 필드는 A4(`paperWidth` 8.27, `paperHeight` 11.7), 여백 위·왼쪽·오른쪽 0.6, 아래 0.8(인치), `printBackground` true, `preferCssPageSize` false다. 이름과 단위는 Step 1에서 확인한 것을 쓴다. 오류의 글에는 응답 본문을 넣지 않는다(상태 코드만).
+- 요청: `POST <baseURL>/forms/chromium/convert/html`, multipart. 양식 필드는 `paperSize` `A4`, 여백 `marginTop`·`marginLeft`·`marginRight` `0.6in`, `marginBottom` `0.8in`, `printBackground` true, `preferCssPageSize` false다(Step 1에서 확인한 9.9.1의 이름과 단위. 결정 기록 0043). 오류의 글에는 응답 본문을 넣지 않는다(상태 코드만).
 - compose:
   - `pdf` 서비스: digest로 고정한 Gotenberg 이미지, `networks: [pdf]`, 호스트 포트 없음, `read_only: true`, `tmpfs: [/tmp]`, `cap_drop: [ALL]`, `no-new-privileges`, `restart: unless-stopped`, `/health` healthcheck. 옵션: Chromium 경로만, JavaScript 끔, Chromium 허용 주소는 자기 작업 폴더의 `file://`뿐, webhook과 주소에서 내려받기 끔, 요청 제한 15초(web의 변환 제한 20초보다 짧아 Gotenberg가 먼저 답한다), Chromium 미리 띄우기.
   - `networks: pdf: internal: true`. `web`은 `networks: [default, pdf]`, 환경 변수 `PDF_URL: http://pdf:3000`, `depends_on`에 `pdf: condition: service_started`.
   - `pdf-test` 서비스(`profiles: ["test"]`): 같은 이미지와 옵션, 기본 네트워크, `127.0.0.1:13000:3000`.
 
-- [ ] **Step 1:** "구현 전에 확인할 사실"의 Task 4 항목을 확인한다. Gotenberg의 공식 문서를 읽고, 이미지를 받아 임시로 띄워 `curl`로 한글 문서와 woff2를 보내 PDF를 받아 본다(받은 PDF는 scratchpad에 두고 Read로 연다). 옵션을 하나씩 켜 가며 `read_only` 등에서 뜨는지 본다. 결과와 고른 옵션, 풀어야 했던 제한을 결정 기록 0043에 쓴다. 계획과 다른 것이 있으면 계획을 고친다.
-- [ ] **Step 2: 실패하는 테스트를 쓴다** (`httptest.Server`가 가짜 Gotenberg다).
+- [x] **Step 1:** "구현 전에 확인할 사실"의 Task 4 항목을 확인한다. Gotenberg의 공식 문서를 읽고, 이미지를 받아 임시로 띄워 `curl`로 한글 문서와 woff2를 보내 PDF를 받아 본다(받은 PDF는 scratchpad에 두고 Read로 연다). 옵션을 하나씩 켜 가며 `read_only` 등에서 뜨는지 본다. 결과와 고른 옵션, 풀어야 했던 제한을 결정 기록 0043에 쓴다. 계획과 다른 것이 있으면 계획을 고친다.
+- [x] **Step 2: 실패하는 테스트를 쓴다** (`httptest.Server`가 가짜 Gotenberg다).
   - `TestConvert_SendsDocument`: 서버가 받은 요청이 `POST /forms/chromium/convert/html`이고, multipart에 `index.html`, `footer.html`, 준 파일들이 그 이름과 바이트로 있고, 양식 필드 값이 위와 같다. 서버가 `%PDF-1.7 fake`를 돌려주면 그 바이트를 그대로 받는다.
   - `TestConvert_Errors`: 표 형태. 닫힌 포트, 503, 504, context 제한 초과(서버가 답하지 않음)는 `ErrUnavailable`. 400, 500, 200인데 `%PDF-`로 시작하지 않는 본문, 200인데 `MaxBytes`를 넘는 본문(테스트는 한도를 줄일 수 있게 unexported 필드와 `export_test.go`를 쓴다)은 `ErrRejected`. 어느 오류의 글에도 서버가 보낸 본문이 없다.
   - `TestConvert_RejectsNames`: 빈 이름, `a/b.css`, `..`, `index.html`, `header.html`, `footer.html`, 같은 이름 둘, 줄바꿈이 든 이름은 서버에 요청이 가지 않고 오류다.
   - `TestNew_BadURL`: 빈 값, `pdf:3000`, `ftp://pdf`, 경로나 query나 사용자 정보가 있는 주소는 오류다.
   - `TestConvert_Real`(`integration_test.go`): `TEST_PDF_URL`이 없으면 건너뛴다. 한글 문단과 `@font-face`(저장소의 `IBMPlexSansKR-…-Regular.woff2`), `footer.html`을 보내면 `%PDF-`로 시작하는 PDF가 온다. `<script>`와 바깥 주소의 `<img>`가 든 문서도 제한 시간 안에 PDF가 온다(실행되거나 받아 오지 않는다는 것은 Task 6에서 확인한다).
-- [ ] **Step 3:** `go test ./internal/pdf/` 가 컴파일 오류로 실패하는 것을 본다.
-- [ ] **Step 4:** `internal/pdf/pdf.go`를 쓴다. 응답은 `io.LimitReader`로 `MaxBytes+1`까지만 읽는다.
-- [ ] **Step 5:** `compose.yaml`에 `pdf`, `pdf-test`, 네트워크를 더하고 `Makefile`의 `test-integration`이 `TEST_PDF_URL`을 요구하고 넘기게 한다. `docker compose --profile test up -d pdf-test` 뒤 `TEST_PDF_URL=http://127.0.0.1:13000 go test ./internal/pdf/ -run Real -count=1`이 통과한다.
-- [ ] **Step 6:** `docs/local-run.md`에 pdf 서비스와 `TEST_PDF_URL`을 적고, `CHANGELOG.md`에 줄을 더한다. `make check`가 통과한 뒤 커밋한다(`feat(pdf): convert a document through gotenberg`).
+- [x] **Step 3:** `go test ./internal/pdf/` 가 컴파일 오류로 실패하는 것을 본다.
+- [x] **Step 4:** `internal/pdf/pdf.go`를 쓴다. 응답은 `io.LimitReader`로 `MaxBytes+1`까지만 읽는다.
+- [x] **Step 5:** `compose.yaml`에 `pdf`, `pdf-test`, 네트워크를 더하고 `Makefile`의 `test-integration`이 `TEST_PDF_URL`을 요구하고 넘기게 한다. `docker compose --profile test up -d pdf-test` 뒤 `TEST_PDF_URL=http://127.0.0.1:13000 go test ./internal/pdf/ -run Real -count=1`이 통과한다.
+- [x] **Step 6:** `docs/local-run.md`에 pdf 서비스와 `TEST_PDF_URL`을 적고, `CHANGELOG.md`에 줄을 더한다. `make check`가 통과한 뒤 커밋한다(`feat(pdf): convert a document through gotenberg`).
 
 ### Task 5: PDF 내보내기
 
