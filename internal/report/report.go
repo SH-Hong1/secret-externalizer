@@ -98,7 +98,8 @@ type Event struct {
 	File     string
 }
 
-// Data is what the database tells about one scan. Latest is the project's
+// Data is what the database tells about one scan. Redactions holds one row
+// per kind, file and tracked state, so a file can appear twice for a kind. Latest is the project's
 // newest succeeded scan and Previous the succeeded scan before Scan, zero
 // when there is none. Events holds the newest MaxRows of EventTotal lines.
 type Data struct {
@@ -172,18 +173,24 @@ type Report struct {
 	History        List[Event]
 }
 
-// kindOrder is the order customer-data kinds are listed in. Kinds it does
-// not name follow, ordered by name.
-var kindOrder = []finding.Kind{
-	finding.KindPhone, finding.KindRRN, finding.KindEmail,
-	finding.KindCard, finding.KindAddress,
-}
-
+// kindRank is the place of a customer-data kind in the order phone, rrn,
+// email, card, address. Kinds it does not name follow, ordered by name.
 func kindRank(k finding.Kind) int {
-	if i := slices.Index(kindOrder, k); i >= 0 {
-		return i
+	//nolint:exhaustive // the kinds not named share the last rank
+	switch k {
+	case finding.KindPhone:
+		return 0
+	case finding.KindRRN:
+		return 1
+	case finding.KindEmail:
+		return 2
+	case finding.KindCard:
+		return 3
+	case finding.KindAddress:
+		return 4
+	default:
+		return 5
 	}
-	return len(kindOrder)
 }
 
 func compareKind(a, b finding.Kind) int {
@@ -193,7 +200,7 @@ func compareKind(a, b finding.Kind) int {
 // Build shapes d into the report made at now. It keeps no slice or map of d.
 func Build(d Data, now time.Time) Report {
 	r := Report{
-		Project:     d.Project,
+		Project:     cloneProject(d.Project),
 		Scan:        cloneScan(d.Scan),
 		Latest:      d.Latest,
 		Previous:    d.Previous,
@@ -229,6 +236,11 @@ func Build(d Data, now time.Time) Report {
 	}
 	r.History = List[Event]{Rows: capRows(events), Total: d.EventTotal}
 	return r
+}
+
+func cloneProject(p project.Project) project.Project {
+	p.Excludes = slices.Clone(p.Excludes)
+	return p
 }
 
 func cloneScan(s scan.Scan) scan.Scan {
@@ -332,14 +344,17 @@ func redacted(redactions []Redaction) ([]KindCount, List[Redaction]) {
 	})
 
 	var kinds []KindCount
+	var files map[string]bool
 	for _, x := range rows {
 		if n := len(kinds); n == 0 || kinds[n-1].Kind != x.Kind {
 			kinds = append(kinds, KindCount{Kind: x.Kind})
+			files = make(map[string]bool)
 		}
 		k := &kinds[len(kinds)-1]
 		k.Bundles += x.Bundles
 		k.Locations += x.Locations
-		k.Files++ // rows are sorted by kind, and a file has one row per kind
+		files[x.File] = true
+		k.Files = len(files)
 	}
 	return kinds, List[Redaction]{Rows: capRows(rows), Total: len(rows)}
 }

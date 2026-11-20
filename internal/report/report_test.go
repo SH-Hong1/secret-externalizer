@@ -12,7 +12,9 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/report"
+	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
@@ -126,17 +128,18 @@ func TestBuild_RedactedKinds(t *testing.T) {
 		{Kind: finding.KindCard, File: "b.txt", Bundles: 2, Locations: 3},
 		{Kind: finding.KindPhone, File: "z.txt", Bundles: 5, Locations: 5},
 		{Kind: finding.KindCard, File: "a.txt", Bundles: 1, Locations: 1},
+		{Kind: finding.KindCard, File: "a.txt", Untracked: true, Bundles: 1, Locations: 1},
 	}
 	r := report.Build(report.Data{Redactions: in}, now)
 
 	wantKinds := []report.KindCount{
 		{Kind: finding.KindPhone, Bundles: 5, Locations: 5, Files: 1},
-		{Kind: finding.KindCard, Bundles: 3, Locations: 4, Files: 2},
+		{Kind: finding.KindCard, Bundles: 4, Locations: 5, Files: 2},
 	}
 	if diff := cmp.Diff(wantKinds, r.RedactedKinds); diff != "" {
 		t.Errorf("Build(...).RedactedKinds mismatch (-want +got):\n%s", diff)
 	}
-	wantRows := []report.Redaction{in[1], in[2], in[0]}
+	wantRows := []report.Redaction{in[1], in[2], in[3], in[0]}
 	if diff := cmp.Diff(wantRows, r.Redacted.Rows); diff != "" {
 		t.Errorf("Build(...).Redacted.Rows mismatch (-want +got):\n%s", diff)
 	}
@@ -202,16 +205,29 @@ func TestBuild_Empty(t *testing.T) {
 }
 
 func TestBuild_KeepsNoInput(t *testing.T) {
-	d := report.Data{
-		Lines:      []report.Line{{Bundle: 1, File: "a"}},
-		Changes:    []report.Change{{Item: apply.Item{BundleID: 1, Name: "ext.a.b", File: "a", Line: 1}}},
-		Redactions: []report.Redaction{{Kind: finding.KindPhone, File: "p", Bundles: 1, Locations: 1}},
-		Events:     []report.Event{{Actor: audit.Actor{Name: "x"}, Detail: map[string]string{"verdict": "hold"}}},
-		EventTotal: 1,
+	newData := func() report.Data {
+		return report.Data{
+			Project: project.Project{Excludes: []string{"vendor"}},
+			Scan: scan.Scan{
+				ToolVersions:  map[string]string{"betterleaks": "1"},
+				SkippedFiles:  []string{"big.bin"},
+				ScannerErrors: map[string]int{"opengrep": 1},
+			},
+			Lines:      []report.Line{{Bundle: 1, File: "a"}},
+			Changes:    []report.Change{{Item: apply.Item{BundleID: 1, Name: "ext.a.b", File: "a", Line: 1}}},
+			Redactions: []report.Redaction{{Kind: finding.KindPhone, File: "p", Bundles: 1, Locations: 1}},
+			Events:     []report.Event{{Actor: audit.Actor{Name: "x"}, Detail: map[string]string{"verdict": "hold"}}},
+			EventTotal: 1,
+		}
 	}
+	d := newData()
 	r := report.Build(d, now)
-	want := report.Build(d, now)
+	want := report.Build(newData(), now)
 
+	d.Project.Excludes[0] = "changed"
+	d.Scan.ToolVersions["betterleaks"] = "changed"
+	d.Scan.SkippedFiles[0] = "changed"
+	d.Scan.ScannerErrors["opengrep"] = 99
 	d.Lines[0].File = "changed"
 	d.Changes[0].Item.File = "changed"
 	d.Changes[0].Item.Name = "ext.changed.name"
