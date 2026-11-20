@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -1254,5 +1255,59 @@ func TestHandle_SplitsConnectionString(t *testing.T) {
 	}
 	if fs := byFile["h2/application.yml"]; len(fs) != 1 || fs[0].Kind != finding.KindURL || fs[0].Fingerprint != fingerprintOf(h2) {
 		t.Errorf("Handle() findings in h2/application.yml = %+v, want the whole URL as one url finding", fs)
+	}
+}
+
+func TestHandle_PlaceholderIsNotAFinding(t *testing.T) {
+	const (
+		realPW      = "dev-only-fake-pw" //nolint:gosec // G101: an obviously fake fixture value
+		pwScanner   = "ssh-pass"
+		urlAllHold  = "jdbc:mysql://${ext.db.main3.account}:${ext.db.main8.password}@${ext.db.main3.host}:${ext.db.main.port}/report"
+		urlSomeHold = "jdbc:mysql://${ext.db.main.host}:3306/shop"
+	)
+	values := []string{
+		"${EXT_SSH_MAIN_PASSWORD}",
+		"${ext.secret.main.password}",
+		"prefix-${x}",
+		"${a}${b}",
+		realPW,
+	}
+	content := "sshpass -p '" + strings.Join(values, "' -p '") + "'\nurl=" + urlAllHold + "\nurl=" + urlSomeHold + "\n"
+	e := newEnv(t, map[string]string{"scripts/deploy.sh": content})
+	pw := func(needle string) *needleScanner {
+		return &needleScanner{tool: "opengrep", rule: pwScanner, category: finding.CategorySSH, kind: finding.KindPassword, needle: needle}
+	}
+	url := func(needle string) *needleScanner {
+		return &needleScanner{tool: "opengrep", rule: "yaml-jdbc-url", category: finding.CategoryStorage, kind: finding.KindURL, needle: needle}
+	}
+	var scanners []scan.Scanner
+	for _, v := range values {
+		scanners = append(scanners, pw(v))
+	}
+	scanners = append(scanners, url(urlAllHold), url(urlSomeHold))
+	if err := e.handle(t.Context(), scanners...); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t)
+	if got.Dropped != 0 {
+		t.Errorf("Handle() dropped %d results, want none", got.Dropped)
+	}
+	var gotFPs []string
+	for _, f := range got.Findings {
+		gotFPs = append(gotFPs, f.Fingerprint)
+	}
+	var wantFPs []string
+	for _, v := range []string{"prefix-${x}", "${a}${b}", realPW, "3306"} {
+		wantFPs = append(wantFPs, fingerprintOf(v))
+	}
+	slices.Sort(gotFPs)
+	slices.Sort(wantFPs)
+	if diff := cmp.Diff(wantFPs, gotFPs); diff != "" {
+		t.Errorf("Handle() finding fingerprints (-want +got):\n%s", diff)
+	}
+	for _, v := range []string{"${EXT_SSH_MAIN_PASSWORD}", "${ext.secret.main.password}", urlAllHold} {
+		if _, ok := e.orig.pending[fingerprintOf(v)]; ok {
+			t.Errorf("Handle() parked an original for %q, want none", v)
+		}
 	}
 }

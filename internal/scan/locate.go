@@ -146,19 +146,28 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 // splitConnections replaces each placed result of kind url whose value
 // connstr.Split knows with one result for each component: the same tool,
 // rule, and category, the component's kind, and the component's range in
-// the file. A URL it does not know stays one result. Parts of the URL that
-// are not components, such as the database name, are then neither a value
-// nor masked.
-func splitConnections(placed []*placedFile) {
+// the file. A URL it does not know stays one result, and a URL it knows in
+// which every component is a placeholder has no result. Parts of the URL
+// that are not components, such as the database name, are then neither a
+// value nor masked.
+//
+// It then drops every other text result whose whole value is one ${...}
+// placeholder, which a value of this tool's own is, and returns the files
+// that still have a result.
+func splitConnections(placed []*placedFile) []*placedFile {
+	var kept []*placedFile
 	for _, pf := range placed {
 		var spots []spot
 		for _, s := range pf.spots {
 			var parts []connstr.Part
+			known := false
 			if s.raw.Kind == finding.KindURL && !s.raw.wholeFile() {
-				parts = connstr.Split(s.value)
+				parts, known = connstr.Split(s.value)
 			}
-			if parts == nil {
-				spots = append(spots, s)
+			if !known {
+				if !isPlaceholderSpot(s) {
+					spots = append(spots, s)
+				}
 				continue
 			}
 			for _, p := range parts {
@@ -173,7 +182,21 @@ func splitConnections(placed []*placedFile) {
 			}
 		}
 		pf.spots = spots
+		if len(spots) > 0 {
+			kept = append(kept, pf)
+		}
 	}
+	return kept
+}
+
+// isPlaceholderSpot reports whether s is a text result whose whole value is
+// one ${...} placeholder. A whole-file result, a private key, and customer
+// data are never one.
+func isPlaceholderSpot(s spot) bool {
+	return !s.raw.wholeFile() &&
+		s.raw.Kind != finding.KindPrivateKey &&
+		s.raw.Category != finding.CategoryCustomerData &&
+		connstr.IsPlaceholder(s.value)
 }
 
 // place returns the range of raw's value in f.Text. bom is the length of
