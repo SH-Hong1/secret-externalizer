@@ -341,10 +341,9 @@ func (s *fakeStore) SettledFingerprints(ctx context.Context, projectID project.I
 	return slices.Clone(s.settled), nil
 }
 
-func (s *fakeStore) FinishApply(ctx context.Context, jobID int64, workerID string, id apply.ID, items []apply.Item) error {
-	if err := s.enter(ctx, "FinishApply", jobID, workerID, id, items); err != nil {
-		return err
-	}
+// merge stores the outcomes in items as the database does when a run ends:
+// an item replaces one that is planned, skipped or interrupted.
+func (s *fakeStore) merge(id apply.ID, items []apply.Item) {
 	for _, it := range items {
 		k := keyOf(id, it)
 		old, ok := s.items[k]
@@ -353,18 +352,54 @@ func (s *fakeStore) FinishApply(ctx context.Context, jobID int64, workerID strin
 			s.items[k] = it
 		}
 	}
+}
+
+func (s *fakeStore) FinishApply(ctx context.Context, jobID int64, workerID string, id apply.ID, items []apply.Item) error {
+	if err := s.enter(ctx, "FinishApply", jobID, workerID, id, items); err != nil {
+		return err
+	}
+	s.merge(id, items)
 	s.finished = slices.Clone(items)
 	s.state[id] = apply.StateSucceeded
 	return s.leave(ctx, "FinishApply")
 }
 
-func (s *fakeStore) FailApply(ctx context.Context, jobID int64, workerID string, id apply.ID, reason string, blockers []apply.Blocker) error {
-	if err := s.enter(ctx, "FailApply", jobID, workerID, id, reason, blockers); err != nil {
+func (s *fakeStore) FailApply(ctx context.Context, jobID int64, workerID string, id apply.ID, reason string,
+	blockers []apply.Blocker, items []apply.Item,
+) error {
+	if err := s.enter(ctx, "FailApply", jobID, workerID, id, reason, blockers, items); err != nil {
 		return err
 	}
+	s.merge(id, items)
 	s.failed = &failedRun{Reason: reason, Blockers: slices.Clone(blockers)}
 	s.state[id] = apply.StateFailed
 	return nil
+}
+
+func (s *fakeStore) ApplyItems(ctx context.Context, id apply.ID) ([]apply.Item, error) {
+	if err := s.enter(ctx, "ApplyItems", id); err != nil {
+		return nil, err
+	}
+	return s.runItems(id), nil
+}
+
+func (s *fakeStore) ApplyRun(ctx context.Context, id apply.ID) (apply.Run, error) {
+	if err := s.enter(ctx, "ApplyRun", id); err != nil {
+		return apply.Run{}, err
+	}
+	r := apply.Run{ID: id, State: s.state[id]}
+	for _, it := range s.runItems(id) {
+		switch it.Status {
+		case apply.StatusApplied:
+			r.Applied++
+		case apply.StatusSkipped:
+			r.Skipped++
+		case apply.StatusFailed:
+			r.Failed++
+		case apply.StatusPlanned, apply.StatusWriting:
+		}
+	}
+	return r, nil
 }
 
 // errSavedButLost, queued for a PutStored, stores the value and answers
@@ -377,6 +412,9 @@ type fakeRecord struct {
 	file     []bool
 	deleted  bool
 }
+
+// keyedSum is a store key and the SHA-256 of a value given for it.
+type keyedSum struct{ key, sum string }
 
 // fakeVault is an apply.Vault in memory. The fingerprint of a value is its
 // SHA-256 in hex, unless lie maps that to another fingerprint.
@@ -396,10 +434,13 @@ type fakeVault struct {
 	// seen holds the SHA-256 of every value passed to Fingerprints, taken
 	// when it was passed; put the SHA-256 of every value passed to
 	// PutStored; held every value slice passed to either, as passed.
-	seen      []string
-	put       []string
-	held      [][]byte
-	calls     []string
+	seen  []string
+	put   []string
+	held  [][]byte
+	calls []string
+	// stores holds, for every PutStored call, the key and the SHA-256 of
+	// the bytes it was given, taken when it was called.
+	stores    []keyedSum
 	readCalls map[string]int
 	cas       map[string][]int
 	dropped   []string
@@ -476,6 +517,7 @@ func (v *fakeVault) PutStored(_ context.Context, projectID int64, key string, va
 	v.puts++
 	v.held = append(v.held, val.Value)
 	v.calls = append(v.calls, fmt.Sprintf("PutStored %+v", []any{projectID, key, val, cas}))
+	v.stores = append(v.stores, keyedSum{key, sha(val.Value)})
 	v.cas[key] = append(v.cas[key], cas)
 	if kind, err := finding.ParseKind(val.Kind); err != nil || kind.CustomerData() {
 		return 0, errors.New("fake vault: the kind is not a kind of secret")

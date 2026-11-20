@@ -3,6 +3,7 @@ package apply_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -22,12 +23,19 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/manifest"
+	"github.com/SH-Hong1/secret-externalizer/internal/rewrite"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 // mainValue is the one password three files of TestApply_ReplacesAndStores
 // share.
 const mainValue = "dev-only-fake-db-main-password"
+
+// quotedFile holds quotedValue, a value that JSON escapes.
+const (
+	quotedFile  = "conf/quoted.properties"
+	quotedValue = `dev-only-fake-"quoted\value`
+)
 
 // errCrash is what a call answers with when the worker stops during it.
 var errCrash = errors.New("fake: the worker stopped")
@@ -42,6 +50,9 @@ func (f *fixture) apply(ctx context.Context) error {
 	in.Run.State = apply.StateRunning
 	f.store.in = in
 	r := apply.NewRunner(slog.New(slog.NewJSONHandler(&f.logs, nil)), f.store, f.vault, f.opts)
+	if f.wrap != nil {
+		apply.WrapDir(r, f.wrap)
+	}
 	run := cmpOr(f.run, testRun)
 	return r.Apply(ctx, job.Job{ID: testJob + int64(run), Kind: job.KindApply, ApplyID: int64(run), Attempts: 1})
 }
@@ -58,6 +69,24 @@ func (f *fixture) mustApply() {
 	}
 	if got := f.store.state[cmpOr(f.run, testRun)]; got != apply.StateSucceeded {
 		f.t.Fatalf("Apply() left the run %q, want succeeded; calls %v", got, f.store.calls)
+	}
+	f.assertNoValue(err)
+}
+
+// mustEnd runs Apply and fails the test unless the run ended as reason
+// says: succeeded for "", failed with reason otherwise.
+func (f *fixture) mustEnd(reason string) {
+	f.t.Helper()
+	if reason == "" {
+		f.mustApply()
+		return
+	}
+	err := f.apply(f.t.Context())
+	if err != nil {
+		f.t.Fatalf("Apply() error = %v, want nil", err)
+	}
+	if f.store.failed == nil || f.store.failed.Reason != reason {
+		f.t.Fatalf("Apply() failed the run with %+v, want reason %q; calls %v", f.store.failed, reason, f.store.calls)
 	}
 	f.assertNoValue(err)
 }
@@ -334,7 +363,7 @@ func TestApply_StoreFailureLeavesSource(t *testing.T) {
 	}
 	before := snapshot(t, f.root)
 
-	f.mustApply()
+	f.mustEnd(apply.FailureSecretStore)
 
 	if diff := cmp.Diff(before, snapshot(t, f.root)); diff != "" {
 		t.Errorf("Apply() changed the workspace (-before +after):\n%s", diff)
@@ -405,7 +434,7 @@ func TestApply_VerifyMismatchLeavesSource(t *testing.T) {
 			tt.setup(f)
 			before := read(t, f.dir, ymlFile)
 
-			f.mustApply()
+			f.mustEnd(apply.FailureSecretStore)
 
 			if !bytes.Equal(before, read(t, f.dir, ymlFile)) {
 				t.Errorf("Apply() changed %s, want it as it was", ymlFile)
@@ -459,7 +488,11 @@ func TestApply_OtherValueAtPath(t *testing.T) {
 			tt.setup(f)
 			before := read(t, f.dir, ymlFile)
 
-			f.mustApply()
+			if tt.wantVersion == 0 {
+				f.mustEnd(apply.FailureSecretStore)
+			} else {
+				f.mustApply()
+			}
 
 			if diff := cmp.Diff(tt.wantCAS, f.vault.cas[key]); diff != "" {
 				t.Errorf("PutStored check-and-set versions (-want +got):\n%s", diff)
@@ -733,7 +766,11 @@ func TestApply_KeyFileNotStoredKeepsFile(t *testing.T) {
 			tt.setup(f)
 			before := read(t, f.dir, pemFile)
 
-			f.mustApply()
+			if tt.removed {
+				f.mustApply()
+			} else {
+				f.mustEnd(apply.FailureSecretStore)
+			}
 
 			if diff := cmp.Diff(map[string]string{kf: tt.wantFile, kb: tt.wantBlock}, f.items()); diff != "" {
 				t.Errorf("items (-want +got):\n%s", diff)
@@ -1295,6 +1332,10 @@ func TestApply_ValuesAreCleared(t *testing.T) {
 
 func TestApply_NoValueOutsideVault(t *testing.T) {
 	everything := func(f *fixture) {
+		// A value with a quote and a backslash, which JSON logs escape.
+		write(f.t, f.dir, quotedFile, "pw="+quotedValue+"\n")
+		f.commit()
+		f.secret("db.quoted.password", quotedValue, quotedFile)
 		f.secret("db.yaml.password", ymlValue, ymlFile)
 		f.secret("db.xml.password", xmlValue, xmlFile)
 		f.secret("db.euckr.password", euckrValue, euckrFile)
@@ -1433,5 +1474,541 @@ func TestCheckAgreesWithApply(t *testing.T) {
 	slices.Sort(done)
 	if diff := cmp.Diff(checked, done); diff != "" {
 		t.Errorf("planned by Check (-) and applied by Apply (+):\n%s", diff)
+	}
+}
+
+// unflushed is a project folder whose changes reach the disk and then fail
+// to be flushed, as rewrite reports with ErrAfterCommit. A file it creates
+// also leaves its temporary file behind.
+type unflushed struct {
+	apply.ProjectDir
+	t *testing.T
+}
+
+func (d unflushed) Write(rel string, content []byte, was rewrite.Seen, tmp string) error {
+	if err := d.ProjectDir.Write(rel, content, was, tmp); err != nil {
+		return err
+	}
+	return fmt.Errorf("fake flush: %w", rewrite.ErrAfterCommit)
+}
+
+func (d unflushed) Create(rel string, content []byte, tmp string) error {
+	if err := d.ProjectDir.Create(rel, content, tmp); err != nil {
+		return err
+	}
+	if err := d.ProjectDir.Create(tmp, content, tmp+".se-apply-0000000000000000.tmp"); err != nil {
+		d.t.Errorf("leaving the temporary file %s behind: %v", tmp, err)
+	}
+	return fmt.Errorf("fake removal of the temporary file: %w", rewrite.ErrAfterCommit)
+}
+
+func TestApply_ChangedButNotFlushed(t *testing.T) {
+	f := newShop(t, inRepository)
+	keys, want := f.twoFiles()
+	f.wrap = func(d apply.ProjectDir) apply.ProjectDir { return unflushed{d, t} }
+
+	f.mustApply()
+
+	f.assertApplied(keys, want)
+	if len(f.store.open) != 0 {
+		t.Errorf("open records = %+v, want none", f.store.open)
+	}
+	err := filepath.WalkDir(f.dir, func(p string, d fs.DirEntry, err error) error {
+		if err == nil && strings.Contains(d.Name(), ".se-apply-") {
+			t.Errorf("temporary file %s left in the project folder", p)
+		}
+		return err
+	})
+	if err != nil {
+		t.Fatalf("walking the project folder: %v", err)
+	}
+	if !strings.Contains(f.logs.String(), "apply file changed but not flushed") {
+		t.Errorf("the log does not say the change was not flushed")
+	}
+}
+
+func TestApply_RecordFailures(t *testing.T) {
+	tests := []struct {
+		name string
+		// setup makes a record call fail with a live context.
+		setup func(f *fixture)
+		// changed says whether the YAML file holds its placeholder after the
+		// run; open, how many records are left for reconciliation.
+		changed bool
+		open    int
+	}{
+		{name: "announcement refused", setup: func(f *fixture) { f.store.errs["BeginFile"] = errRefused }},
+		{name: "an item settled", setup: func(f *fixture) { f.store.errs["BeginFile"] = errFakeSettled }},
+		{name: "confirmation refused", changed: true, open: 1, setup: func(f *fixture) {
+			f.store.errs["EndFile"] = errRefused
+		}},
+		{name: "announced again", changed: true, open: 1, setup: func(f *fixture) {
+			f.store.hooks["EndFile"] = func(context.Context) error {
+				f.store.open[0].TempName = ymlFile + ".se-apply-0000000000000000.tmp"
+				return nil
+			}
+		}},
+		{name: "a failed write not recorded", open: 1, setup: func(f *fixture) {
+			f.store.after["BeginFile"] = func(context.Context) error {
+				write(f.t, f.dir, ymlFile, string(read(f.t, f.dir, ymlFile))+"# changed while writing\n")
+				return nil
+			}
+			f.store.errs["ResolveFile"] = errRefused
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newShop(t, inRepository)
+			f.twoFiles()
+			xmlBefore := read(t, f.dir, xmlFile)
+			tt.setup(f)
+
+			f.mustEnd(apply.FailureOther)
+
+			if !bytes.Equal(xmlBefore, read(t, f.dir, xmlFile)) {
+				t.Errorf("Apply() changed %s after the run had to stop", xmlFile)
+			}
+			if got := bytes.Contains(read(t, f.dir, ymlFile), []byte("${ext.db.yaml.password}")); got != tt.changed {
+				t.Errorf("%s holds its placeholder: %v, want %v", ymlFile, got, tt.changed)
+			}
+			if len(f.store.open) != tt.open {
+				t.Errorf("open records = %+v, want %d", f.store.open, tt.open)
+			}
+			for _, o := range f.store.open {
+				if o.TempName != "" && f.exists(o.TempName) {
+					t.Errorf("temporary file %s exists, want it gone", o.TempName)
+				}
+			}
+		})
+	}
+}
+
+func TestApply_KeyFileRemovalRefused(t *testing.T) {
+	const fileKey = "ext.ssh.partner.key"
+	tests := []struct {
+		name  string
+		setup func(f *fixture)
+		// announced says whether the removal was written down before it
+		// was refused.
+		announced bool
+	}{
+		{name: "changed before the removal", announced: true, setup: func(f *fixture) {
+			f.store.after["BeginFile"] = func(context.Context) error {
+				write(f.t, f.dir, pemFile, string(read(f.t, f.dir, pemFile))+"\n")
+				return nil
+			}
+		}},
+		{name: "changed after it was stored, same size and time", setup: func(f *fixture) {
+			full := filepath.Join(f.dir, filepath.FromSlash(pemFile))
+			f.vault.onRead = func(key string, call int, st bao.Stored, err error) (bao.Stored, error) {
+				if key == fileKey && call == 2 {
+					info, statErr := os.Stat(full)
+					if statErr != nil {
+						f.t.Fatalf("Stat(%s) error = %v", pemFile, statErr)
+					}
+					changed := bytes.Replace(read(f.t, f.dir, pemFile), []byte("FAKE"), []byte("EKAF"), 1)
+					if err := os.WriteFile(full, changed, 0o600); err != nil {
+						f.t.Fatalf("changing %s: %v", pemFile, err)
+					}
+					if err := os.Chtimes(full, info.ModTime(), info.ModTime()); err != nil {
+						f.t.Fatalf("setting the time of %s: %v", pemFile, err)
+					}
+				}
+				return st, err
+			}
+		}},
+		{name: "hard-linked", announced: true, setup: func(f *fixture) {
+			if err := os.Link(filepath.Join(f.dir, pemFile), filepath.Join(f.dir, "conf", "partner.copy")); err != nil {
+				f.t.Fatalf("linking %s: %v", pemFile, err)
+			}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newShop(t, inRepository)
+			raw := read(t, f.dir, pemFile)
+			k := f.keyFile("ssh.partner.key", pemFile)
+			tt.setup(f)
+
+			f.mustApply()
+
+			if !f.exists(pemFile) {
+				t.Errorf("%s was removed, want it kept", pemFile)
+			}
+			if got := f.items()[k]; got != failedFor(apply.ReasonWriteFailed) {
+				t.Errorf("item %s = %q, want %q", k, got, failedFor(apply.ReasonWriteFailed))
+			}
+			if !bytes.Equal(f.vault.value(fileKey), raw) {
+				t.Errorf("vault path %s does not hold the key file", fileKey)
+			}
+			if got := f.beginsOf(pemFile) > 0; got != tt.announced {
+				t.Errorf("removal of %s written down: %v, want %v", pemFile, got, tt.announced)
+			}
+			if len(f.store.open) != 0 {
+				t.Errorf("open records = %+v, want none", f.store.open)
+			}
+		})
+	}
+}
+
+func TestApply_HardLinkedTextRefused(t *testing.T) {
+	f := newShop(t, inRepository)
+	k := f.secret("db.yaml.password", ymlValue, ymlFile)[0]
+	if err := os.Link(filepath.Join(f.dir, ymlFile), filepath.Join(f.dir, "src", "main", "resources", "copy.yml")); err != nil {
+		t.Fatalf("linking %s: %v", ymlFile, err)
+	}
+	before := read(t, f.dir, ymlFile)
+
+	f.mustApply()
+
+	if !bytes.Equal(before, read(t, f.dir, ymlFile)) {
+		t.Errorf("Apply() changed the hard-linked %s, want it as it was", ymlFile)
+	}
+	if got := f.items()[k]; got != failedFor(apply.ReasonWriteFailed) {
+		t.Errorf("item %s = %q, want %q", k, got, failedFor(apply.ReasonWriteFailed))
+	}
+}
+
+func TestApply_CrashAroundRemoval(t *testing.T) {
+	tests := []struct {
+		name     string
+		method   string
+		before   bool
+		wantDone bool
+	}{
+		{"before the removal", "BeginFile", false, false},
+		{"after the removal", "EndFile", true, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newShop(t, inRepository)
+			k := f.keyFile("ssh.partner.key", pemFile)
+
+			f.crashThenApply(func(cancel context.CancelFunc) { f.crash(cancel, tt.method, 1, tt.before) })
+
+			if f.exists(pemFile) {
+				t.Errorf("%s exists, want it removed", pemFile)
+			}
+			if got := f.items()[k]; got != applied {
+				t.Errorf("item %s = %q, want applied", k, got)
+			}
+			if len(f.store.resolved) != 1 || f.store.resolved[0].Done != tt.wantDone {
+				t.Errorf("ResolveFile calls %+v, want one with done %v", f.store.resolved, tt.wantDone)
+			}
+			if v := f.vault.version("ext.ssh.partner.key"); v != 1 {
+				t.Errorf("vault version %d, want 1", v)
+			}
+			entries := f.readManifest().Entries
+			if len(entries) != 1 || len(entries[0].Locations) != 1 {
+				t.Errorf("manifest entries = %+v, want the key file once", entries)
+			}
+		})
+	}
+}
+
+func TestApply_StoreStage(t *testing.T) {
+	const key = "ext.db.yaml.password"
+	tests := []struct {
+		name        string
+		setup       func(f *fixture)
+		wantCAS     []int
+		wantVersion int // 0: not stored
+	}{
+		{name: "the first read fails", setup: func(f *fixture) {
+			f.vault.onRead = func(_ string, call int, st bao.Stored, err error) (bao.Stored, error) {
+				if call == 1 {
+					return bao.Stored{}, errRefused
+				}
+				return st, err
+			}
+		}},
+		{name: "forbidden", wantCAS: []int{0}, setup: func(f *fixture) {
+			f.vault.putErrs[key] = []error{fmt.Errorf("fake vault: %w", bao.ErrForbidden)}
+		}},
+		{name: "a conflict with a newer version", wantCAS: []int{0, 1}, wantVersion: 2, setup: func(f *fixture) {
+			// Another writer stores a version between the first read and the
+			// write.
+			f.vault.stored[key] = &fakeRecord{versions: [][]byte{[]byte("dev-only-fake-newer")}, file: []bool{false}}
+			f.vault.onRead = func(_ string, call int, st bao.Stored, err error) (bao.Stored, error) {
+				if call == 1 {
+					return bao.Stored{}, fmt.Errorf("fake vault: %w", bao.ErrNotStored)
+				}
+				return st, err
+			}
+		}},
+		{name: "the right bytes stored as a file", wantCAS: []int{1}, wantVersion: 2, setup: func(f *fixture) {
+			f.vault.stored[key] = &fakeRecord{versions: [][]byte{[]byte(ymlValue)}, file: []bool{true}}
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newShop(t, inRepository)
+			f.secret("db.yaml.password", ymlValue, ymlFile)
+			tt.setup(f)
+
+			if tt.wantVersion == 0 {
+				f.mustEnd(apply.FailureSecretStore)
+			} else {
+				f.mustApply()
+			}
+
+			if diff := cmp.Diff(tt.wantCAS, f.vault.cas[key]); diff != "" {
+				t.Errorf("PutStored check-and-set versions (-want +got):\n%s", diff)
+			}
+			items := f.store.runItems(testRun)
+			if len(items) != 1 || items[0].StoreVersion != tt.wantVersion && tt.wantVersion != 0 {
+				t.Errorf("items = %+v, want one with store version %d", items, tt.wantVersion)
+			}
+			if tt.wantVersion != 0 && !bytes.Contains(read(t, f.dir, ymlFile), []byte("${ext.db.yaml.password}")) {
+				t.Errorf("%s does not hold its placeholder", ymlFile)
+			}
+		})
+	}
+}
+
+func TestApply_StopsDuringStore(t *testing.T) {
+	f := newShop(t, inRepository)
+	f.twoFiles()
+	before := snapshot(t, f.root)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f.vault.onRead = func(_ string, _ int, _ bao.Stored, _ error) (bao.Stored, error) {
+		cancel()
+		return bao.Stored{}, ctx.Err()
+	}
+
+	err := f.apply(ctx)
+
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("Apply() error = %v, want context.Canceled", err)
+	}
+	if f.store.failed != nil || f.store.state[testRun] != apply.StateRunning || f.store.begins() != 0 {
+		t.Errorf("run %q, failed %+v, %d announcements; want it left running with none",
+			f.store.state[testRun], f.store.failed, f.store.begins())
+	}
+	if diff := cmp.Diff(before, snapshot(t, f.root)); diff != "" {
+		t.Errorf("Apply() changed the workspace (-before +after):\n%s", diff)
+	}
+}
+
+func TestApply_ManifestWriteFails(t *testing.T) {
+	f := newShop(t, inRepository)
+	k := f.secret("db.yaml.password", ymlValue, ymlFile)[0]
+	// A manifest appears after the run read the folder, so creating one
+	// fails.
+	f.store.after["BeginFile"] = func(context.Context) error {
+		if f.store.open[len(f.store.open)-1].File == manifest.FileName {
+			write(f.t, f.dir, manifest.FileName, "version: 1\nentries: []\n")
+		}
+		return nil
+	}
+
+	f.mustEnd(apply.FailureManifestWrite)
+
+	if got := f.items()[k]; got != applied {
+		t.Errorf("item %s = %q, want applied", k, got)
+	}
+	if len(f.store.open) != 0 {
+		t.Errorf("open records = %+v, want the manifest's closed as not done", f.store.open)
+	}
+	if string(read(t, f.dir, manifest.FileName)) != "version: 1\nentries: []\n" {
+		t.Errorf("the manifest was overwritten")
+	}
+	entries, err := os.ReadDir(f.dir)
+	if err != nil {
+		t.Fatalf("ReadDir error = %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".se-apply-") {
+			t.Errorf("temporary file %s left in the project folder", e.Name())
+		}
+	}
+}
+
+func TestApply_StoreFailsOnRetry(t *testing.T) {
+	f := newShop(t, inRepository)
+	keys, _ := f.twoFiles()
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	f.crash(cancel, "EndFile", 1, false)
+	if err := f.apply(ctx); err == nil {
+		t.Fatalf("Apply() with the worker stopping = nil, want an error")
+	}
+	f.store.after = map[string]func(context.Context) error{}
+	f.vault.onRead = func(key string, _ int, st bao.Stored, err error) (bao.Stored, error) {
+		if key == "ext.db.xml.password" {
+			return bao.Stored{}, errRefused
+		}
+		return st, err
+	}
+
+	f.mustApply()
+
+	want := map[string]string{keys[0]: applied, keys[1]: failedFor(apply.ReasonStoreFailed)}
+	if diff := cmp.Diff(want, f.items()); diff != "" {
+		t.Errorf("items (-want +got):\n%s", diff)
+	}
+}
+
+func TestApply_ManifestIsATarget(t *testing.T) {
+	const stored = "dev-only-fake-manifest-store"
+	f := newShop(t, inRepository)
+	kept := manifest.Entry{
+		Name: "ext.kept.thing", Category: finding.CategoryOther, Action: manifest.ActionExternalized,
+		Store: stored, Locations: []manifest.Location{{File: "conf/other.yml", Line: 4}},
+	}
+	content, err := manifest.Manifest{Entries: []manifest.Entry{kept}}.Encode()
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	// A hand-written manifest may quote its store; the placeholder then
+	// stays a quoted string the manifest reader accepts.
+	content = bytes.Replace(content, []byte(stored), []byte(`"`+stored+`"`), 1)
+	write(t, f.dir, manifest.FileName, string(content))
+	f.commit()
+	line := f.lineOf(manifest.FileName, stored)
+	f.secret("manifest.store.password", stored, manifest.FileName)
+
+	f.mustApply()
+
+	kept.Store = "${ext.manifest.store.password}"
+	want := []manifest.Entry{
+		kept,
+		{
+			Name: "ext.manifest.store.password", Category: finding.CategoryStorage, Action: manifest.ActionExternalized,
+			Store: storePath("ext.manifest.store.password"), Locations: []manifest.Location{{File: manifest.FileName, Line: line}},
+		},
+	}
+	if diff := cmp.Diff(want, f.readManifest().Entries); diff != "" {
+		t.Errorf("manifest entries (-want +got):\n%s", diff)
+	}
+}
+
+func TestApply_FinishedLogCounts(t *testing.T) {
+	f := newShop(t, inRepository)
+	keys, want := f.twoFiles()
+
+	f.crashThenApply(func(cancel context.CancelFunc) { f.crash(cancel, "EndFile", 1, false) })
+
+	f.assertApplied(keys, want)
+	var last map[string]any
+	for line := range strings.Lines(f.logs.String()) {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("log line is not JSON: %v", err)
+		}
+		if rec["msg"] == "apply finished" {
+			last = rec
+		}
+	}
+	if last == nil || last["applied"] != float64(2) || last["skipped"] != float64(0) || last["failed"] != float64(0) {
+		t.Errorf("last apply finished line = %v, want the run's stored counts: 2 applied, none skipped or failed", last)
+	}
+}
+
+// halfWritten is a project folder whose write of the YAML file fails after
+// it made the temporary file, leaving it behind; refuseTemp also makes
+// removing a temporary file fail.
+type halfWritten struct {
+	apply.ProjectDir
+	t          *testing.T
+	refuseTemp bool
+}
+
+func (d halfWritten) Write(rel string, content []byte, was rewrite.Seen, tmp string) error {
+	if rel != ymlFile {
+		return d.ProjectDir.Write(rel, content, was, tmp)
+	}
+	if err := d.Create(tmp, content, tmp+".se-apply-0000000000000000.tmp"); err != nil {
+		d.t.Errorf("leaving the temporary file %s behind: %v", tmp, err)
+	}
+	return errRefused
+}
+
+func (d halfWritten) RemoveTemp(tmp string) error {
+	if d.refuseTemp {
+		return errRefused
+	}
+	return d.ProjectDir.RemoveTemp(tmp)
+}
+
+func TestApply_FailedWriteLeavesNoTemp(t *testing.T) {
+	tests := []struct {
+		name       string
+		refuseTemp bool
+	}{
+		{"temporary file removed", false},
+		{"temporary file cannot be removed", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newShop(t, inRepository)
+			keys, _ := f.twoFiles()
+			f.wrap = func(d apply.ProjectDir) apply.ProjectDir { return halfWritten{d, t, tt.refuseTemp} }
+
+			if !tt.refuseTemp {
+				f.mustApply()
+				want := map[string]string{keys[0]: failedFor(apply.ReasonWriteFailed), keys[1]: applied}
+				if diff := cmp.Diff(want, f.items()); diff != "" {
+					t.Errorf("items (-want +got):\n%s", diff)
+				}
+				if len(f.store.open) != 0 {
+					t.Errorf("open records = %+v, want none", f.store.open)
+				}
+				if got := f.store.begins(); got != 3 {
+					t.Errorf("BeginFile was called %d times, want 3", got)
+				}
+			} else {
+				f.mustEnd(apply.FailureOther)
+				if len(f.store.open) != 1 || f.store.open[0].File != ymlFile {
+					t.Errorf("open records = %+v, want the YAML file's left for the next start", f.store.open)
+				}
+			}
+			var temps []string
+			err := filepath.WalkDir(f.dir, func(p string, d fs.DirEntry, err error) error {
+				if err == nil && strings.Contains(d.Name(), ".se-apply-") {
+					temps = append(temps, p)
+				}
+				return err
+			})
+			if err != nil {
+				t.Fatalf("walking the project folder: %v", err)
+			}
+			if wantTemps := map[bool]int{false: 0, true: 1}[tt.refuseTemp]; len(temps) != wantTemps {
+				t.Errorf("temporary files %v, want %d", temps, wantTemps)
+			}
+		})
+	}
+}
+
+// timedWrite records when each change of a file was made.
+type timedWrite struct {
+	apply.ProjectDir
+	done *time.Time
+}
+
+func (d timedWrite) Write(rel string, content []byte, was rewrite.Seen, tmp string) error {
+	err := d.ProjectDir.Write(rel, content, was, tmp)
+	*d.done = time.Now()
+	return err
+}
+
+func TestApply_RecordAfterChangeHasItsOwnLimit(t *testing.T) {
+	f := newShop(t, inRepository)
+	f.secret("db.yaml.password", ymlValue, ymlFile)
+	var done time.Time
+	f.wrap = func(d apply.ProjectDir) apply.ProjectDir { return timedWrite{d, &done} }
+	var left time.Duration
+	f.store.hooks["EndFile"] = func(ctx context.Context) error {
+		if deadline, ok := ctx.Deadline(); ok && left == 0 {
+			left = deadline.Sub(done)
+		}
+		return nil
+	}
+
+	f.mustApply()
+
+	if left < 5*time.Second {
+		t.Errorf("EndFile had %v left after the change, want the whole 5s limit", left)
 	}
 }

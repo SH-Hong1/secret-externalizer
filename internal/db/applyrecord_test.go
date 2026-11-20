@@ -653,10 +653,10 @@ func TestFailApply(t *testing.T) {
 	writeFile(t, s, id, "conf/a.yml", hashOf("1"), applied)
 
 	blockers := []apply.Blocker{apply.BlockerDirty}
-	if err := s.FailApply(ctx, j.ID, "worker-b", id, "the work tree has uncommitted changes", blockers); !errors.Is(err, job.ErrLeaseLost) {
+	if err := s.FailApply(ctx, j.ID, "worker-b", id, "the work tree has uncommitted changes", blockers, nil); !errors.Is(err, job.ErrLeaseLost) {
 		t.Fatalf("FailApply(worker-b) error = %v, want ErrLeaseLost", err)
 	}
-	if err := s.FailApply(ctx, j.ID, "worker-a", id, "the work tree has uncommitted changes", blockers); err != nil {
+	if err := s.FailApply(ctx, j.ID, "worker-a", id, "the work tree has uncommitted changes", blockers, nil); err != nil {
 		t.Fatalf("FailApply(%d) error = %v", id, err)
 	}
 	r := readRun(t, s, id)
@@ -684,7 +684,7 @@ func TestFailApply(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ClaimJob() error = %v", err)
 		}
-		if err := s.FailApply(ctx, j.ID, "worker-a", id, "fake reason from an error", nil); err == nil {
+		if err := s.FailApply(ctx, j.ID, "worker-a", id, "fake reason from an error", nil, nil); err == nil {
 			t.Errorf("FailApply(unknown reason) error = nil, want an error")
 		}
 		if r := readRun(t, s, id); r.State != apply.StateChecking || r.FailureReason != "" {
@@ -694,11 +694,38 @@ func TestFailApply(t *testing.T) {
 	t.Run("manifest", func(t *testing.T) {
 		pid, _, _, _ := decidedProject(t, s, "manifest")
 		id, j := claimApply(t, s, pid)
-		if err := s.FailApply(ctx, j.ID, "worker-a", id, apply.FailureManifestWrite, nil); err != nil {
+		if err := s.FailApply(ctx, j.ID, "worker-a", id, apply.FailureManifestWrite, nil, nil); err != nil {
 			t.Fatalf("FailApply(%d, manifest) error = %v", id, err)
 		}
 		if r := readRun(t, s, id); r.State != apply.StateFailed || r.FailureReason != apply.FailureManifestWrite {
 			t.Errorf("ApplyRun(%d) after failing = %+v, want failed with the manifest reason", id, r)
+		}
+	})
+	t.Run("with items", func(t *testing.T) {
+		pid, _, pw, _ := decidedProject(t, s, "items")
+		id, j := claimApply(t, s, pid)
+		failed := replaceItem(t, s, pid, pw, "conf/a.yml")
+		failed.Status, failed.Reason = apply.StatusFailed, apply.ReasonStoreFailed
+		if err := s.FailApply(ctx, j.ID, "worker-a", id, apply.FailureSecretStore, nil, []apply.Item{failed}); err != nil {
+			t.Fatalf("FailApply(%d, items) error = %v", id, err)
+		}
+		if diff := cmp.Diff([]apply.Item{failed}, applyItems(t, s, id)); diff != "" {
+			t.Errorf("ApplyItems(%d) after failing (-want +got):\n%s", id, diff)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateFailed || r.Failed != 1 {
+			t.Errorf("ApplyRun(%d) after failing = %+v, want failed with one failed item", id, r)
+		}
+	})
+	t.Run("check with items", func(t *testing.T) {
+		pid, _, pw, _ := decidedProject(t, s, "check-items")
+		id := requestCheck(t, s, pid)
+		j, err := s.ClaimJob(ctx, "worker-a", time.Minute)
+		if err != nil {
+			t.Fatalf("ClaimJob() error = %v", err)
+		}
+		it := replaceItem(t, s, pid, pw, "conf/a.yml")
+		if err := s.FailApply(ctx, j.ID, "worker-a", id, apply.FailureOther, nil, []apply.Item{it}); err == nil {
+			t.Errorf("FailApply(check with items) error = nil, want an error")
 		}
 	})
 	t.Run("check", func(t *testing.T) {
@@ -708,7 +735,7 @@ func TestFailApply(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ClaimJob() error = %v", err)
 		}
-		if err := s.FailApply(ctx, j.ID, "worker-a", id, "the project folder is not a git work tree", nil); err != nil {
+		if err := s.FailApply(ctx, j.ID, "worker-a", id, "the project folder is not a git work tree", nil, nil); err != nil {
 			t.Fatalf("FailApply(check %d) error = %v", id, err)
 		}
 		if r := readRun(t, s, id); r.State != apply.StateFailed || r.FailureReason != "the project folder is not a git work tree" {

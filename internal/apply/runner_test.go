@@ -3,6 +3,7 @@ package apply_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -100,6 +101,12 @@ type fixture struct {
 	run          apply.ID
 	allow        bool
 	irreversible []string
+	// storeSums holds, by store key, the SHA-256 of the one value that may
+	// be stored under it: the fingerprint of the bundle, which the fake
+	// vault computes as that SHA-256.
+	storeSums map[string]string
+	// wrap, when set, wraps the project folder an apply opens.
+	wrap func(apply.ProjectDir) apply.ProjectDir
 }
 
 // newShop copies the example project into a new workspace with the files
@@ -280,6 +287,12 @@ func (f *fixture) add(b triage.Bundle) []string {
 		}
 	}
 	f.bundles = append(f.bundles, b)
+	if b.Decision.Verdict == triage.VerdictExternalize {
+		if f.storeSums == nil {
+			f.storeSums = map[string]string{}
+		}
+		f.storeSums[b.Decision.Name.Config()] = b.Fingerprint
+	}
 	return keys
 }
 
@@ -420,10 +433,23 @@ func (f *fixture) assertNoValue(err error) {
 		places["error"] = err.Error()
 	}
 	for _, v := range f.values {
+		forms := []string{v}
+		if b, jsonErr := json.Marshal(v); jsonErr == nil && string(b[1:len(b)-1]) != v {
+			forms = append(forms, string(b[1:len(b)-1]))
+		}
 		for where, text := range places {
-			if strings.Contains(text, v) {
-				f.t.Errorf("the %s holds the value %q", where, v)
+			for _, form := range forms {
+				if strings.Contains(text, form) {
+					f.t.Errorf("the %s holds a value of the example (%d bytes)", where, len(v))
+				}
 			}
+		}
+	}
+	// The vault receives values only where they belong: each value given to
+	// PutStored is the one value of its store key.
+	for _, st := range f.vault.stores {
+		if want, ok := f.storeSums[st.key]; !ok || st.sum != want {
+			f.t.Errorf("PutStored(%s) got bytes that are not the value of that key", st.key)
 		}
 	}
 }

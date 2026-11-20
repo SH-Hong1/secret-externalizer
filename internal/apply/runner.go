@@ -24,7 +24,8 @@ import (
 
 // Store is the part of the database the runner uses: ApplyInput,
 // StartApply, OpenFiles, ResolveFile, WrittenFiles, SaveCheck, BeginFile,
-// EndFile, MarkInManifest, SettledFingerprints, FinishApply, FailApply.
+// EndFile, MarkInManifest, SettledFingerprints, FinishApply, FailApply,
+// ApplyItems, ApplyRun.
 type Store interface {
 	ApplyInput(ctx context.Context, id ID) (Input, error)
 	StartApply(ctx context.Context, id ID, phase job.Kind) error
@@ -38,7 +39,9 @@ type Store interface {
 	MarkInManifest(ctx context.Context, projectID project.ID) error
 	SettledFingerprints(ctx context.Context, projectID project.ID) ([]string, error)
 	FinishApply(ctx context.Context, jobID int64, workerID string, id ID, items []Item) error
-	FailApply(ctx context.Context, jobID int64, workerID string, id ID, reason string, blockers []Blocker) error
+	FailApply(ctx context.Context, jobID int64, workerID string, id ID, reason string, blockers []Blocker, items []Item) error
+	ApplyItems(ctx context.Context, id ID) ([]Item, error)
+	ApplyRun(ctx context.Context, id ID) (Run, error)
 }
 
 // Vault computes fingerprints, keeps externalized values, and drops
@@ -110,6 +113,18 @@ var (
 	errManifestWrite = errors.New("writing the manifest")
 )
 
+// projectDir is a project folder as the runner reads and changes it.
+// *rewrite.Dir is the implementation; tests wrap it to make a step fail.
+type projectDir interface {
+	Read(rel string, maxBytes int64) ([]byte, rewrite.Seen, error)
+	TempName(rel string) (string, error)
+	Write(rel string, content []byte, was rewrite.Seen, tmp string) error
+	Create(rel string, content []byte, tmp string) error
+	Remove(rel string, was rewrite.Seen) error
+	RemoveTemp(tmp string) error
+	Close() error
+}
+
 // Runner carries out the checks and applies of claimed jobs. It keeps no
 // value it reads once a handler has returned.
 type Runner struct {
@@ -117,6 +132,9 @@ type Runner struct {
 	store  Store
 	vault  Vault
 	opts   Options
+	// wrapDir, when set, replaces each project folder the runner opens.
+	// Only tests set it.
+	wrapDir func(projectDir) projectDir
 }
 
 // NewRunner returns a Runner that records runs in store and uses vault for
@@ -192,7 +210,7 @@ func (r *Runner) end(ctx, limited context.Context, j job.Job, err error) error {
 	}
 	r.logger.ErrorContext(ctx, "apply run failed", "apply_id", id, "job_id", j.ID, "kind", string(j.Kind),
 		"error", err.Error())
-	if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, reason, nil); err != nil {
+	if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, reason, nil, nil); err != nil {
 		return fmt.Errorf("failing apply %d: %w", id, err)
 	}
 	return nil
@@ -248,6 +266,9 @@ type target struct {
 	// status is set once an apply has applied the target or failed at it;
 	// it is empty while the target is planned or skipped for reason.
 	status Status
+	// storedHash is, for a whole-file target, the hash of the bytes the
+	// apply stored and confirmed.
+	storedHash string
 }
 
 // sourceFile is a file the plan changes, as the run read it. It is only ever
@@ -311,7 +332,7 @@ type prepared struct {
 	// folder is the resolved project folder and dir the folder opened;
 	// both are unset when the folder could not be opened.
 	folder string
-	dir    *rewrite.Dir
+	dir    projectDir
 	// state is what git reports, valid when inspected is set.
 	state     worktree.State
 	inspected bool
@@ -478,9 +499,13 @@ func (r *Runner) openFolder(ctx context.Context, j job.Job, p *prepared) error {
 	if err != nil {
 		return fmt.Errorf("resolving the project folder: %w", err)
 	}
-	dir, err := rewrite.Open(folder)
+	opened, err := rewrite.Open(folder)
 	if err != nil {
 		return err
+	}
+	var dir projectDir = opened
+	if r.wrapDir != nil {
+		dir = r.wrapDir(dir)
 	}
 	p.folder, p.dir = folder, dir
 	if err := r.reconcile(ctx, j, p.in.Project.ID, dir); err != nil {
@@ -499,7 +524,7 @@ func (r *Runner) openFolder(ctx context.Context, j job.Job, p *prepared) error {
 // has the announced hash, or, for a removal, is gone. The record's
 // temporary file, if any, is removed first; then the record goes to
 // ResolveFile as it was read.
-func (r *Runner) reconcile(ctx context.Context, j job.Job, projectID project.ID, dir *rewrite.Dir) error {
+func (r *Runner) reconcile(ctx context.Context, j job.Job, projectID project.ID, dir projectDir) error {
 	open, err := r.store.OpenFiles(ctx, projectID)
 	if err != nil {
 		return fmt.Errorf("listing open file records: %w", err)
@@ -527,7 +552,7 @@ func (r *Runner) reconcile(ctx context.Context, j job.Job, projectID project.ID,
 // remove it. A link, a folder or anything else that is not a regular file
 // at that name is not the tool's and is left in place, and so is a file
 // outside the folder of the record's file, where the tool never makes one.
-func (r *Runner) removeTemp(ctx context.Context, j job.Job, dir *rewrite.Dir, f OpenFile) error {
+func (r *Runner) removeTemp(ctx context.Context, j job.Job, dir projectDir, f OpenFile) error {
 	if f.TempName == "" {
 		return nil
 	}
@@ -549,7 +574,7 @@ func (r *Runner) removeTemp(ctx context.Context, j job.Job, dir *rewrite.Dir, f 
 }
 
 // announced reports whether the file of f now is as f announced it.
-func (r *Runner) announced(dir *rewrite.Dir, f OpenFile) (bool, error) {
+func (r *Runner) announced(dir projectDir, f OpenFile) (bool, error) {
 	hash, exists, err := r.hashOf(dir, f.File)
 	if err != nil {
 		return false, err
@@ -564,7 +589,7 @@ func (r *Runner) announced(dir *rewrite.Dir, f OpenFile) (bool, error) {
 // that is not a regular file, or is too large, has no hash. Changes write
 // placeholders that can be longer than the values they replace, so the
 // limit is twice the one for reading a file to change.
-func (r *Runner) hashOf(dir *rewrite.Dir, rel string) (hash string, exists bool, err error) {
+func (r *Runner) hashOf(dir projectDir, rel string) (hash string, exists bool, err error) {
 	raw, seen, err := dir.Read(rel, 2*r.opts.MaxFileBytes)
 	clear(raw)
 	switch {
@@ -618,7 +643,7 @@ func (r *Runner) inspect(ctx context.Context, j job.Job, p *prepared) error {
 // ownChange reports whether the file rel is as one of the changes in
 // written left it: it has the hash of one, or one removed it and it is
 // gone. A file that cannot be read is not.
-func (r *Runner) ownChange(dir *rewrite.Dir, rel string, written []Written) bool {
+func (r *Runner) ownChange(dir projectDir, rel string, written []Written) bool {
 	if len(written) == 0 {
 		return false
 	}

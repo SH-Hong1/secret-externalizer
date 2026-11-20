@@ -550,11 +550,15 @@ func (s *Store) FinishApply(ctx context.Context, jobID int64, workerID string, i
 // FailApply closes the job the worker holds for run id as failed, in one
 // transaction, and the run with it: a checking run's apply-check job, or a
 // queued or running run's apply job. The run keeps reason, which must be
-// one of the fixed failure reasons (knownFailureReason), and blockers. Its
-// items and file records stay as they are. It returns job.ErrLeaseLost, changing nothing,
-// when the worker does not hold the job, and ErrNotFound when the run is in
-// no state a job works on.
-func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id apply.ID, reason string, blockers []apply.Blocker) error {
+// one of the fixed failure reasons (knownFailureReason), and blockers.
+// items, which only an apply may give, are merged into the run's items as
+// FinishApply merges them; the run's other items and its file records stay
+// as they are. It returns job.ErrLeaseLost, changing nothing, when the
+// worker does not hold the job, and ErrNotFound when the run is in no state
+// a job works on.
+func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id apply.ID, reason string,
+	blockers []apply.Blocker, items []apply.Item,
+) error {
 	if !knownFailureReason(reason) {
 		return fmt.Errorf("failing apply %d: the reason is not one of the fixed failure reasons", id)
 	}
@@ -572,6 +576,9 @@ func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id 
 	)
 	switch state {
 	case apply.StateChecking:
+		if len(items) > 0 {
+			return fmt.Errorf("failing apply %d: a check records its items with SaveCheck", id)
+		}
 		kind, from = job.KindApplyCheck, []string{"checking"}
 	case apply.StateQueued, apply.StateRunning:
 		kind, from = job.KindApply, []string{"queued", "running"}
@@ -581,6 +588,9 @@ func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id 
 		return fmt.Errorf("failing apply %d: unknown state %q", id, state)
 	}
 	return s.closeApplyJob(ctx, jobID, workerID, int64(id), kind, "failed", func(tx pgx.Tx) error {
+		if err := upsertItems(ctx, tx, id, items, "", replaceByFinish, false); err != nil {
+			return err
+		}
 		return finishRun(ctx, tx, id, from, apply.StateFailed, reason, blockers)
 	})
 }

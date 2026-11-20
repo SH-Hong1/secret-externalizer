@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"slices"
 	"time"
 
@@ -52,13 +53,14 @@ func (r *Runner) apply(ctx context.Context, j job.Job) error {
 	if len(p.blockers) > 0 {
 		r.logger.WarnContext(ctx, "apply refused", "apply_id", id, "job_id", j.ID, "blockers", p.blockers,
 			"dirty", len(p.dirty))
-		if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, refusal(p.blockers), p.blockers); err != nil {
+		if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, refusal(p.blockers), p.blockers, nil); err != nil {
 			return fmt.Errorf("refusing the run: %w", err)
 		}
 		return nil
 	}
 
-	if err := r.storeValues(ctx, j, p); err != nil {
+	storeFailures, err := r.storeValues(ctx, j, p)
+	if err != nil {
 		return err
 	}
 	settleRemovals(p)
@@ -76,19 +78,64 @@ func (r *Runner) apply(ctx context.Context, j job.Job) error {
 	if err := r.writeManifest(ctx, j, p); err != nil {
 		return err
 	}
+	return r.close(ctx, j, p, storeFailures)
+}
 
+// close ends the run. A run that stored nothing it was asked to store and
+// applied nothing, in this attempt or an earlier one, fails with the
+// secret-store reason; any other run succeeds with its counts. Either way
+// the outcome of every location is recorded.
+func (r *Runner) close(ctx context.Context, j job.Job, p *prepared, storeFailures int) error {
+	id := ID(j.ApplyID)
 	outcome := finalItems(p)
+	failed, err := r.storedNothing(ctx, p, id, storeFailures)
+	if err != nil {
+		return err
+	}
+	if failed {
+		r.logger.WarnContext(ctx, "apply stored nothing", "apply_id", id, "job_id", j.ID, "store_failures", storeFailures)
+		if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, FailureSecretStore, nil, outcome); err != nil {
+			return fmt.Errorf("failing the run: %w", err)
+		}
+		return nil
+	}
 	if err := r.store.FinishApply(ctx, j.ID, r.opts.WorkerID, id, outcome); err != nil {
 		return fmt.Errorf("finishing the run: %w", err)
 	}
-	counts := map[Status]int{}
-	for _, it := range p.items() {
-		counts[it.Status]++
+	if run, err := r.store.ApplyRun(ctx, id); err != nil {
+		r.logger.WarnContext(ctx, "apply finished", "apply_id", id, "job_id", j.ID, "error", err.Error())
+	} else {
+		r.logger.InfoContext(ctx, "apply finished", "apply_id", id, "job_id", j.ID, "applied", run.Applied,
+			"skipped", run.Skipped, "failed", run.Failed)
 	}
-	r.logger.InfoContext(ctx, "apply finished", "apply_id", id, "job_id", j.ID, "applied", counts[StatusApplied],
-		"skipped", counts[StatusSkipped], "failed", counts[StatusFailed])
 	r.dropSettled(ctx, j, p)
 	return nil
+}
+
+// storedNothing reports whether the run failed at storing and has applied
+// nothing: some value could not be stored, no file changed in this attempt,
+// and no earlier attempt of the run applied an item.
+func (r *Runner) storedNothing(ctx context.Context, p *prepared, id ID, storeFailures int) (bool, error) {
+	if storeFailures == 0 {
+		return false, nil
+	}
+	for _, f := range p.files {
+		for _, t := range f.targets {
+			if t.status == StatusApplied {
+				return false, nil
+			}
+		}
+	}
+	items, err := r.store.ApplyItems(ctx, id)
+	if err != nil {
+		return false, fmt.Errorf("reading the items of the run: %w", err)
+	}
+	for _, it := range items {
+		if it.Status == StatusApplied {
+			return false, nil
+		}
+	}
+	return true, nil
 }
 
 // refusal returns the failure reason of a run refused for blockers.
@@ -107,10 +154,12 @@ func refusal(blockers []Blocker) string {
 }
 
 // storeValues stores the value of every planned target that has a store
-// key, once per key, and confirms it (R3). A target whose value was not
-// stored and confirmed fails with store-failed. Every value is zeroed
-// afterwards: nothing later needs one.
-func (r *Runner) storeValues(ctx context.Context, j job.Job, p *prepared) error {
+// key, once per key, and confirms it (R3), and returns how many keys could
+// not be stored. A target whose value was not stored and confirmed fails
+// with store-failed. A whole-file target keeps the hash of the bytes
+// stored, which the file must still have when it is removed. Every value is
+// zeroed afterwards: nothing later needs one.
+func (r *Runner) storeValues(ctx context.Context, j job.Job, p *prepared) (int, error) {
 	defer func() {
 		for _, f := range p.files {
 			for _, t := range f.targets {
@@ -119,7 +168,6 @@ func (r *Runner) storeValues(ctx context.Context, j job.Job, p *prepared) error 
 			}
 		}
 	}()
-	refuseKeyFilesWithCustomerData(p)
 	var keys []string
 	byKey := map[string][]*target{}
 	for _, f := range p.files {
@@ -133,15 +181,17 @@ func (r *Runner) storeValues(ctx context.Context, j job.Job, p *prepared) error 
 			byKey[t.StoreKey] = append(byKey[t.StoreKey], t)
 		}
 	}
+	failures := 0
 	for _, key := range keys {
 		targets := byKey[key]
 		version, err := r.storeKey(ctx, p, key, targets)
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
-				return ctxErr
+				return 0, ctxErr
 			}
 			r.logger.WarnContext(ctx, "apply value not stored", "apply_id", j.ApplyID, "job_id", j.ID,
 				"store_key", key, "error", err.Error())
+			failures++
 			for _, t := range targets {
 				t.status, t.reason = StatusFailed, ReasonStoreFailed
 			}
@@ -149,26 +199,13 @@ func (r *Runner) storeValues(ctx context.Context, j job.Job, p *prepared) error 
 		}
 		for _, t := range targets {
 			t.Item.StoreVersion = version
-		}
-	}
-	return nil
-}
-
-// refuseKeyFilesWithCustomerData skips the whole-file target of a file that
-// also has customer data to redact. The plan never gives such a file one,
-// since a file that may hold customer data is never stored; this keeps it
-// so whatever the plan says.
-func refuseKeyFilesWithCustomerData(p *prepared) {
-	for _, f := range p.files {
-		if !slices.ContainsFunc(f.targets, func(t *target) bool { return t.Item.Action == ActionRedact }) {
-			continue
-		}
-		for _, t := range f.targets {
-			if t.WholeFile && t.reason == "" {
-				t.reason = ReasonKeyHoldsCustomerData
+			if t.WholeFile {
+				sum := sha256.Sum256(t.value)
+				t.storedHash = hex.EncodeToString(sum[:])
 			}
 		}
 	}
+	return failures, nil
 }
 
 // storeKey stores the value of targets, which all have the store key key,
@@ -320,15 +357,25 @@ func (r *Runner) changeFile(ctx context.Context, j job.Job, p *prepared, f *sour
 	if len(targets) == 0 {
 		return nil
 	}
-	if slices.ContainsFunc(targets, func(t *target) bool { return t.WholeFile }) {
+	if i := slices.IndexFunc(targets, func(t *target) bool { return t.WholeFile }); i >= 0 {
+		// Removing is the one change that cannot be undone, so the file
+		// must still hold exactly the bytes that were stored.
+		raw, seen, err := p.dir.Read(f.rel, r.opts.MaxFileBytes)
+		clear(raw)
+		if err != nil {
+			return r.cannotChange(ctx, j, f, targets, err)
+		}
+		if seen.Hash != targets[i].storedHash {
+			return r.cannotChange(ctx, j, f, targets, errors.New("the file is not the one stored"))
+		}
 		items := make([]Item, 0, len(targets))
 		for _, t := range targets {
 			t.Item.Line = 0
 			items = append(items, t.Item)
 		}
 		return r.commit(ctx, j, p.dir, targets, change{
-			file: f.rel, before: f.seen.Hash, items: items,
-			do: func() error { return p.dir.Remove(f.rel, f.seen) },
+			file: f.rel, before: seen.Hash, items: items,
+			do: func() error { return p.dir.Remove(f.rel, seen) },
 		})
 	}
 
@@ -388,7 +435,7 @@ type change struct {
 // of targets: applied when the change is on disk, write-failed when it could
 // not be made. A failure to write the change down stops the run: the file is
 // then not changed, or, after the change, the next start settles it.
-func (r *Runner) commit(ctx context.Context, j job.Job, dir *rewrite.Dir, targets []*target, c change) error {
+func (r *Runner) commit(ctx context.Context, j job.Job, dir projectDir, targets []*target, c change) error {
 	done, err := r.commitChange(ctx, j, dir, c)
 	if err != nil {
 		return err
@@ -407,14 +454,16 @@ func (r *Runner) commit(ctx context.Context, j job.Job, dir *rewrite.Dir, target
 // made, and reports whether it is on disk. A change that could not be made
 // is written down as not made. The records after the change use a context
 // detached from the job's, with a limit of their own (R9).
-func (r *Runner) commitChange(ctx context.Context, j job.Job, dir *rewrite.Dir, c change) (bool, error) {
+func (r *Runner) commitChange(ctx context.Context, j job.Job, dir projectDir, c change) (bool, error) {
 	id := ID(j.ApplyID)
 	if err := r.store.BeginFile(ctx, id, c.file, c.before, c.after, c.temp, c.items); err != nil {
 		return false, fmt.Errorf("writing down the change of %s: %w", c.file, err)
 	}
+	err := c.do()
+	// The records after the change run even when the job's context has
+	// ended, and get their own limit, which starts once the change is made.
 	record, cancel := context.WithTimeout(context.WithoutCancel(ctx), recordLimit)
 	defer cancel()
-	err := c.do()
 	switch {
 	case err == nil:
 	case errors.Is(err, rewrite.ErrAfterCommit):
@@ -431,6 +480,14 @@ func (r *Runner) commitChange(ctx context.Context, j job.Job, dir *rewrite.Dir, 
 	default:
 		r.logger.WarnContext(ctx, "apply file not changed", "apply_id", id, "job_id", j.ID, "file", c.file,
 			"error", err.Error())
+		// The record is the only thing that names the temporary file, so
+		// the file goes first; if it cannot, the record stays open for the
+		// next start to settle.
+		if c.temp != "" {
+			if err := dir.RemoveTemp(c.temp); err != nil {
+				return false, fmt.Errorf("removing the temporary file of %s: %w", c.file, err)
+			}
+		}
 		f := OpenFile{Run: id, File: c.file, AfterHash: c.after, TempName: c.temp}
 		if err := r.store.ResolveFile(record, f, false); err != nil {
 			return false, fmt.Errorf("writing down that %s did not change: %w", c.file, err)
@@ -454,6 +511,13 @@ func (r *Runner) writeManifest(ctx context.Context, j job.Job, p *prepared) erro
 	if len(entries) == 0 {
 		return nil
 	}
+	// The rewrite stage may have changed the manifest itself, as any file of
+	// the plan, so it is read again.
+	current, has, seen, err := readManifestFile(p.dir)
+	if err != nil {
+		return fmt.Errorf("%w: reading it again: %w", errManifestWrite, err)
+	}
+	p.manifest, p.hasManifest, p.manifestSeen = current, has, seen
 	content, err := p.manifest.Merge(entries).Encode()
 	if err != nil {
 		return fmt.Errorf("%w: encoding: %w", errManifestWrite, err)
@@ -484,6 +548,23 @@ func (r *Runner) writeManifest(ctx context.Context, j job.Job, p *prepared) erro
 		return fmt.Errorf("%w: marking the listed items: %w", errManifestWrite, err)
 	}
 	return nil
+}
+
+// readManifestFile reads and parses the manifest in dir, and reports
+// whether there is one and what it looked like.
+func readManifestFile(dir projectDir) (manifest.Manifest, bool, rewrite.Seen, error) {
+	raw, seen, err := dir.Read(manifest.FileName, manifest.MaxSize)
+	if errors.Is(err, fs.ErrNotExist) {
+		return manifest.Manifest{}, false, rewrite.Seen{}, nil
+	}
+	if err != nil {
+		return manifest.Manifest{}, false, rewrite.Seen{}, err
+	}
+	m, err := manifest.Parse(raw)
+	if err != nil {
+		return manifest.Manifest{}, false, rewrite.Seen{}, err
+	}
+	return m, true, seen, nil
 }
 
 // manifestEntries returns an entry for each applied secret not yet in the
