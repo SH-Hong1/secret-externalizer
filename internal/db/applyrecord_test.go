@@ -170,6 +170,12 @@ func TestApplyInput(t *testing.T) {
 	if diff := cmp.Diff([]string{"logs/x.log", "logs/y.log"}, in.CustomerDataFiles); diff != "" {
 		t.Errorf("ApplyInput(%d).CustomerDataFiles (-want +got):\n%s", id, diff)
 	}
+	if diff := cmp.Diff(phoneSpans("logs/x.log", "logs/y.log"), in.CustomerDataSpans); diff != "" {
+		t.Errorf("ApplyInput(%d).CustomerDataSpans (-want +got):\n%s", id, diff)
+	}
+	if got, want := apply.NewPlan(in).Digest, readRun(t, s, id).PlanDigest; got != want {
+		t.Errorf("NewPlan(ApplyInput(%d)).Digest = %s, want the run's digest %s", id, got, want)
+	}
 	replaced.Status = apply.StatusApplied
 	if diff := cmp.Diff([]apply.Item{replaced}, in.Unlisted); diff != "" {
 		t.Errorf("ApplyInput(%d).Unlisted before MarkInManifest (-want +got):\n%s", id, diff)
@@ -184,6 +190,48 @@ func TestApplyInput(t *testing.T) {
 
 	if _, err := s.ApplyInput(ctx, id+100); !errors.Is(err, db.ErrNotFound) {
 		t.Errorf("ApplyInput(no run) error = %v, want ErrNotFound", err)
+	}
+}
+
+func TestApplyInput_CustomerDataSpans(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	email := fnd(fpD, "conf/db.properties", finding.CategoryCustomerData, finding.KindEmail, 5)
+	email.Locations[0].StartCol, email.Locations[0].EndCol = 30, 45
+	second := email.Locations[0]
+	second.StartLine, second.EndLine = 2, 2
+	email.Locations = append(email.Locations, second)
+	sid := save(t, s, pid, append(mixed(), email)...)
+	decide(t, s, pid, externalizeDB, bundleOf(t, s, pid, fpA, "conf/a.yml"))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldConfirm}, bundleOf(t, s, pid, fpD, "conf/db.properties"))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictRedact}, bundleOf(t, s, pid, fpC, "logs/x.log"))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive}, bundleOf(t, s, pid, fpC, "logs/y.log"))
+
+	in := applyInput(t, s, requestCheck(t, s, pid))
+	want := []apply.CustomerSpan{
+		{File: "conf/db.properties", StartLine: 2, StartCol: 30, EndLine: 2, EndCol: 45},
+		{File: "conf/db.properties", StartLine: 5, StartCol: 30, EndLine: 5, EndCol: 45},
+		{File: "logs/x.log", StartLine: 7, StartCol: 1, EndLine: 7, EndCol: 4},
+	}
+	if in.Scan.ID != sid {
+		t.Fatalf("ApplyInput().Scan.ID = %d, want %d", in.Scan.ID, sid)
+	}
+	if diff := cmp.Diff(want, in.CustomerDataSpans); diff != "" {
+		t.Errorf("ApplyInput().CustomerDataSpans with hold, redact and false positive (-want +got):\n%s", diff)
+	}
+}
+
+func TestApplyItem_HoldsCustomerData(t *testing.T) {
+	s := newMigratedStore(t)
+	pid, _, pw, _ := decidedProject(t, s, "shop")
+	id := requestCheck(t, s, pid)
+	it := replaceItem(t, s, pid, pw, "conf/a.yml")
+	it.Status, it.Reason = apply.StatusSkipped, apply.ReasonHoldsCustomerData
+	if err := s.InsertApplyItem(t.Context(), id, it); err != nil {
+		t.Fatalf("InsertApplyItem(%d, skipped as %s) error = %v", id, it.Reason, err)
+	}
+	if diff := cmp.Diff([]apply.Item{it}, applyItems(t, s, id)); diff != "" {
+		t.Errorf("ApplyItems(%d) (-want +got):\n%s", id, diff)
 	}
 }
 

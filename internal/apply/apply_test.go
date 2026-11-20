@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
@@ -41,9 +43,18 @@ func plan() []triage.Bundle {
 	}
 }
 
+// customer is the customer data the scan of plan found: the redacted phone
+// number and an email on hold in a.yml.
+func customer() []apply.CustomerSpan {
+	return []apply.CustomerSpan{
+		{File: "logs/x.log", StartLine: 1, StartCol: 5, EndLine: 1, EndCol: 20},
+		{File: "conf/a.yml", StartLine: 3, StartCol: 12, EndLine: 3, EndCol: 18},
+	}
+}
+
 func TestDigest(t *testing.T) {
 	const sid scan.ID = 42
-	base := apply.Digest(sid, plan())
+	base := apply.Digest(sid, plan(), customer())
 	if len(base) != 64 || strings.Trim(base, "0123456789abcdef") != "" {
 		t.Fatalf("Digest() = %q, want 64 lower-case hex digits", base)
 	}
@@ -70,7 +81,7 @@ func TestDigest(t *testing.T) {
 	}
 	for name, change := range same {
 		t.Run("same/"+name, func(t *testing.T) {
-			if got := apply.Digest(sid, change(plan())); got != base {
+			if got := apply.Digest(sid, change(plan()), customer()); got != base {
 				t.Errorf("Digest(%s) = %s, want %s as before", name, got, base)
 			}
 		})
@@ -125,23 +136,56 @@ func TestDigest(t *testing.T) {
 	}
 	for name, change := range different {
 		t.Run("different/"+name, func(t *testing.T) {
-			if got := apply.Digest(sid, change(plan())); got == base {
+			if got := apply.Digest(sid, change(plan()), customer()); got == base {
 				t.Errorf("Digest(%s) = %s, want a digest other than before", name, got)
 			}
 		})
 	}
 	t.Run("different/scan", func(t *testing.T) {
-		if got := apply.Digest(sid+1, plan()); got == base {
+		if got := apply.Digest(sid+1, plan(), customer()); got == base {
 			t.Errorf("Digest(scan %d) = %s, want a digest other than scan %d's", sid+1, got, sid)
 		}
 	})
 
+	t.Run("same/customer spans reordered", func(t *testing.T) {
+		c := customer()
+		if got := apply.Digest(sid, plan(), []apply.CustomerSpan{c[1], c[0]}); got != base {
+			t.Errorf("Digest(customer spans reordered) = %s, want %s as before", got, base)
+		}
+	})
+	spanChanges := map[string]func([]apply.CustomerSpan) []apply.CustomerSpan{
+		"customer span removed": func(c []apply.CustomerSpan) []apply.CustomerSpan { return c[:1] },
+		"customer span added": func(c []apply.CustomerSpan) []apply.CustomerSpan {
+			return append(c, apply.CustomerSpan{File: "conf/b.xml", StartLine: 4, StartCol: 1, EndLine: 4, EndCol: 9})
+		},
+		"customer span end column": func(c []apply.CustomerSpan) []apply.CustomerSpan {
+			c[1].EndCol = 19
+			return c
+		},
+		"customer span file": func(c []apply.CustomerSpan) []apply.CustomerSpan {
+			c[1].File = "conf/b.yml"
+			return c
+		},
+		"no customer spans": func([]apply.CustomerSpan) []apply.CustomerSpan { return nil },
+	}
+	for name, change := range spanChanges {
+		t.Run("different/"+name, func(t *testing.T) {
+			if got := apply.Digest(sid, plan(), change(customer())); got == base {
+				t.Errorf("Digest(%s) = %s, want a digest other than before", name, got)
+			}
+		})
+	}
+
 	t.Run("input untouched", func(t *testing.T) {
 		in := []triage.Bundle{plan()[1], plan()[0]}
 		in[1].Members = []triage.Member{in[1].Members[1], in[1].Members[0]}
-		apply.Digest(sid, in)
+		spans := customer()
+		apply.Digest(sid, in, spans)
 		if in[0].ID != 7 || in[1].Members[0].FindingID != 11 {
 			t.Errorf("Digest() reordered its argument to bundles %d, %d, want it left as given", in[0].ID, in[1].ID)
+		}
+		if diff := cmp.Diff(customer(), spans); diff != "" {
+			t.Errorf("Digest() changed its customer spans argument (-want +got):\n%s", diff)
 		}
 	})
 }

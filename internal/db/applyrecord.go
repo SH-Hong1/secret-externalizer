@@ -122,6 +122,9 @@ func (s *Store) ApplyInput(ctx context.Context, id apply.ID) (apply.Input, error
 		if in.CustomerDataFiles, err = pgx.CollectRows(rows, pgx.RowTo[string]); err != nil {
 			return fmt.Errorf("listing customer data files of scan %d: %w", r.ScanID, err)
 		}
+		if in.CustomerDataSpans, err = customerSpans(ctx, tx, r.ProjectID, r.ScanID); err != nil {
+			return err
+		}
 		rows, err = tx.Query(ctx, `
 			SELECT `+itemColumns+` FROM apply_item
 			WHERE apply_id IN (SELECT id FROM apply_run WHERE project_id = $1)

@@ -108,6 +108,7 @@ const (
 	ReasonNestedRepository      Reason = "nested-repository"
 	ReasonKeyInSourceFile       Reason = "key-in-source-file"
 	ReasonKeyHoldsCustomerData  Reason = "key-holds-customer-data"
+	ReasonHoldsCustomerData     Reason = "holds-customer-data"
 	ReasonFileRemoved           Reason = "file-removed"
 	ReasonTooLarge              Reason = "too-large"
 	ReasonStoreFailed           Reason = "store-failed"
@@ -170,15 +171,23 @@ type Item struct {
 	Reason              Reason
 }
 
-// Digest identifies a plan: the SHA-256, in hex, of the scan ID and, for
-// each bundle in ID order, its ID, verdict, name and its members in
-// ascending ID order, each member with its file and each of its locations
-// (start and end, file hash) in order, one field per line. Two plans that
-// differ in any of these give different digests; the order of bundles,
-// members and locations in the arguments, a note, a hold reason and the
-// times do not change it. A file name is quoted, so no field can run into
-// the next.
-func Digest(scanID scan.ID, bundles []triage.Bundle) string {
+// CustomerSpan is a location of customer data that a scan found and that is
+// not judged a false positive: the file and the first and last character.
+type CustomerSpan struct {
+	File                string
+	StartLine, StartCol int
+	EndLine, EndCol     int
+}
+
+// Digest identifies a plan: the SHA-256, in hex, of the scan ID; for each
+// bundle in ID order, its ID, verdict, name and its members in ascending ID
+// order, each member with its file and each of its locations (start and
+// end, file hash) in order; and each customer-data span in order of file,
+// start and end; one field per line. Two plans that differ in any of these
+// give different digests; the order of bundles, members, locations and
+// spans in the arguments, a note, a hold reason and the times do not change
+// it. A file name is quoted, so no field can run into the next.
+func Digest(scanID scan.ID, bundles []triage.Bundle, customer []CustomerSpan) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "scan %d\n", scanID)
 	sorted := slices.Clone(bundles)
@@ -196,8 +205,23 @@ func Digest(scanID scan.ID, bundles []triage.Bundle) string {
 			}
 		}
 	}
+	spans := slices.Clone(customer)
+	slices.SortFunc(spans, compareSpans)
+	for _, c := range spans {
+		fmt.Fprintf(&b, "customer %s %d %d %d %d\n", strconv.Quote(c.File), c.StartLine, c.StartCol, c.EndLine, c.EndCol)
+	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return hex.EncodeToString(sum[:])
+}
+
+func compareSpans(x, y CustomerSpan) int {
+	return cmp.Or(
+		cmp.Compare(x.File, y.File),
+		cmp.Compare(x.StartLine, y.StartLine),
+		cmp.Compare(x.StartCol, y.StartCol),
+		cmp.Compare(x.EndLine, y.EndLine),
+		cmp.Compare(x.EndCol, y.EndCol),
+	)
 }
 
 func compareLocations(x, y finding.Location) int {
@@ -222,6 +246,11 @@ type Input struct {
 	// CustomerDataFiles holds every file in which Scan found customer data,
 	// whatever its verdict.
 	CustomerDataFiles []string
+	// CustomerDataSpans holds every location of customer data that Scan
+	// found and whose bundle is not judged a false positive: undecided, on
+	// hold or to redact. No secret whose range shares a character with one
+	// of them is stored.
+	CustomerDataSpans []CustomerSpan
 	// Unlisted holds the project's applied secret items, of any run, that
 	// are not in the manifest yet.
 	Unlisted []Item

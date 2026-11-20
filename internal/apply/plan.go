@@ -32,7 +32,7 @@ type Plan struct {
 	Digest   string
 	Blockers []Blocker // scan-not-latest, nothing-to-apply
 	Targets  []Target  // ordered by file, then position
-	Skipped  []Item    // not-allowed, overlap, key-holds-customer-data, key-in-source-file
+	Skipped  []Item    // not-allowed, overlap, holds-customer-data, key-holds-customer-data, key-in-source-file
 }
 
 // NewPlan decides from in alone, without reading a file, OpenBao or the
@@ -44,11 +44,15 @@ type Plan struct {
 // is redacted with Marker and never stored. A key file is removed whole
 // under the rules of keyFileReason. Two locations in one file whose ranges
 // overlap are both skipped, since neither can be replaced without touching
-// the other; a whole-file target does not count. The plan is blocked when
+// the other; a whole-file target does not count. A secret to replace whose
+// range shares a character with a span in in.CustomerDataSpans is skipped
+// as holds-customer-data, even when it also overlaps another target, since
+// storing it would copy customer data into OpenBao; the other target keeps
+// its own outcome. The plan is blocked when
 // in.Scan is not the project's newest scan, or when there is no target and
 // no applied item waiting for the manifest.
 func NewPlan(in Input) Plan {
-	p := Plan{Digest: Digest(in.Scan.ID, in.Bundles)}
+	p := Plan{Digest: Digest(in.Scan.ID, in.Bundles, in.CustomerDataSpans)}
 	customer := customerDataFiles(in)
 	type place struct {
 		bundle                       triage.BundleID
@@ -88,12 +92,16 @@ func NewPlan(in Input) Plan {
 		}
 	}
 	slices.SortFunc(targets, compareTargets)
+	spans := spansByFile(in.CustomerDataSpans)
 	for _, t := range splitOverlaps(targets) {
-		if t.overlaps {
+		switch {
+		case t.Item.Action == ActionReplace && holdsCustomerData(t.Location, spans[t.Item.File]):
+			p.Skipped = append(p.Skipped, skipped(t.Item, ReasonHoldsCustomerData))
+		case t.overlaps:
 			p.Skipped = append(p.Skipped, skipped(t.Item, ReasonOverlap))
-			continue
+		default:
+			p.Targets = append(p.Targets, t.Target)
 		}
-		p.Targets = append(p.Targets, t.Target)
 	}
 	slices.SortFunc(p.Skipped, compareItems)
 
@@ -285,6 +293,27 @@ func splitOverlaps(sorted []Target) []checkedTarget {
 	return out
 }
 
+// spansByFile groups spans by file.
+func spansByFile(spans []CustomerSpan) map[string][]CustomerSpan {
+	out := make(map[string][]CustomerSpan)
+	for _, c := range spans {
+		out[c.File] = append(out[c.File], c)
+	}
+	return out
+}
+
+// holdsCustomerData reports whether l shares at least one character with
+// one of spans, all in l's file. Both ends are inclusive.
+func holdsCustomerData(l finding.Location, spans []CustomerSpan) bool {
+	for _, c := range spans {
+		if comparePositions(c.StartLine, c.StartCol, l.EndLine, l.EndCol) <= 0 &&
+			comparePositions(l.StartLine, l.StartCol, c.EndLine, c.EndCol) <= 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // comparePositions compares line l1, column c1 with line l2, column c2.
 func comparePositions(l1, c1, l2, c2 int) int {
 	return cmp.Or(cmp.Compare(l1, l2), cmp.Compare(c1, c2))
@@ -322,7 +351,8 @@ func Marker(k finding.Kind) string {
 // PEMOnly reports whether text holds at least one PEM block and nothing
 // else but white space. A block starts with a "-----BEGIN <label>-----"
 // line and ends with the "-----END <label>-----" line of the same label;
-// the lines between are its content. A line may end in "\r".
+// the lines between are its content: blank lines, RFC 1421 header lines
+// ("Name: value") and base64 lines. A line may end in "\r".
 func PEMOnly(text []byte) bool {
 	const (
 		begin = "-----BEGIN "
@@ -344,9 +374,43 @@ func PEMOnly(text []byte) bool {
 		case s == end+label+dash:
 			inside = false
 			blocks++
-		case strings.HasPrefix(s, begin), strings.HasPrefix(s, end):
+		case !pemContent(strings.TrimSpace(s)):
 			return false
 		}
 	}
 	return !inside && blocks > 0
+}
+
+// pemContent reports whether s, a line inside a PEM block with white space
+// trimmed, is blank, an RFC 1421 header line or a base64 line.
+func pemContent(s string) bool {
+	if s == "" {
+		return true
+	}
+	if name, value, ok := strings.Cut(s, ": "); ok {
+		return pemHeaderName(name) && value != ""
+	}
+	for _, r := range s {
+		if !base64Rune(r) {
+			return false
+		}
+	}
+	return true
+}
+
+// pemHeaderName reports whether name is a header name: letters, digits and
+// hyphens, starting with a letter.
+func pemHeaderName(name string) bool {
+	for i, r := range name {
+		letter := r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z'
+		if !letter && (i == 0 || r != '-' && (r < '0' || r > '9')) {
+			return false
+		}
+	}
+	return name != ""
+}
+
+// base64Rune reports whether r is a character of standard base64.
+func base64Rune(r rune) bool {
+	return r >= 'A' && r <= 'Z' || r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '+' || r == '/' || r == '='
 }

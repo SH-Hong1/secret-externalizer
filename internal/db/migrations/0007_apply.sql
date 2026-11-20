@@ -54,7 +54,7 @@ CREATE TABLE apply_item (
     reason        text NOT NULL DEFAULT '' CHECK (reason IN
                       ('', 'file-changed', 'file-missing', 'not-text', 'value-mismatch', 'not-allowed', 'overlap',
                        'untracked-irreversible', 'nested-repository', 'key-in-source-file',
-                       'key-holds-customer-data', 'file-removed', 'too-large', 'store-failed',
+                       'key-holds-customer-data', 'holds-customer-data', 'file-removed', 'too-large', 'store-failed',
                        'write-failed', 'interrupted')),
     in_manifest   boolean NOT NULL DEFAULT false,
     UNIQUE (apply_id, finding_id, start_line, start_col)

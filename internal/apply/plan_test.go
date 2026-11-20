@@ -1,6 +1,8 @@
 package apply_test
 
 import (
+	"path"
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -62,6 +64,63 @@ func planInput(bundles ...triage.Bundle) apply.Input {
 		NewestScan: 3,
 		Bundles:    bundles,
 	}
+}
+
+// replaceTarget returns the target that replaces the password of
+// externalized, bundle b, finding f, at l in file.
+func replaceTarget(b triage.BundleID, f finding.ID, file string, l finding.Location) apply.Target {
+	name := triage.Name("db.main.password").For(file)
+	return apply.Target{
+		Item: apply.Item{
+			BundleID: b, FindingID: f, File: file, StartLine: l.StartLine, StartCol: l.StartCol,
+			Action: apply.ActionReplace, Category: finding.CategoryStorage, Kind: finding.KindPassword,
+			Name: name, StorePath: "secret/data/projects/7/ext.db.main.password",
+			CodeChange: strings.EqualFold(path.Ext(file), ".java"), Status: apply.StatusPlanned,
+		},
+		Location:    l,
+		Fingerprint: "fp-secret",
+		StoreKey:    "ext.db.main.password",
+		Text:        "${" + name + "}",
+	}
+}
+
+// redactTarget returns the target that redacts customer data of kind k of
+// redacted, bundle b, finding f, at l in file.
+func redactTarget(b triage.BundleID, f finding.ID, k finding.Kind, file string, l finding.Location) apply.Target {
+	return apply.Target{
+		Item: apply.Item{
+			BundleID: b, FindingID: f, File: file, StartLine: l.StartLine, StartCol: l.StartCol,
+			Action: apply.ActionRedact, Category: finding.CategoryCustomerData, Kind: k, Status: apply.StatusPlanned,
+		},
+		Location:    l,
+		Fingerprint: "fp-customer",
+		Text:        apply.Marker(k),
+	}
+}
+
+// wholeTarget returns the target that removes file, the key file of
+// keyFile, bundle b, finding f, at l.
+func wholeTarget(b triage.BundleID, f finding.ID, file string, l finding.Location, pemOnly bool) apply.Target {
+	return apply.Target{
+		Item: apply.Item{
+			BundleID: b, FindingID: f, File: file, StartLine: l.StartLine, StartCol: l.StartCol,
+			Action: apply.ActionRemoveFile, Category: finding.CategorySSH, Kind: finding.KindKeyFile,
+			Name: triage.Name("ssh.partner.key").For(file), StorePath: "secret/data/projects/7/ext.ssh.partner.key",
+			Status: apply.StatusPlanned,
+		},
+		Location:    l,
+		Fingerprint: "fp-key",
+		StoreKey:    "ext.ssh.partner.key",
+		WholeFile:   true,
+		PEMOnly:     pemOnly,
+	}
+}
+
+// skippedAs returns the item of t skipped for reason.
+func skippedAs(t apply.Target, reason apply.Reason) apply.Item {
+	it := t.Item
+	it.Status, it.Reason = apply.StatusSkipped, reason
+	return it
 }
 
 // targetsIn returns the targets of p in file.
@@ -265,27 +324,18 @@ func TestPlan_KeyFile(t *testing.T) {
 				}
 			}
 			if !tt.target {
-				if len(gotWhole) != 0 {
-					t.Errorf("NewPlan(key file %q) whole-file targets = %+v, want none", tt.file, gotWhole)
+				want := apply.Plan{
+					Digest:  p.Digest,
+					Targets: []apply.Target{replaceTarget(2, 21, tt.file, span(25, 3, 25, 18))},
+					Skipped: []apply.Item{skippedAs(wholeTarget(1, 11, tt.file, whole, false), apply.ReasonKeyInSourceFile)},
 				}
-				skipped := skippedIn(p, tt.file)
-				if len(skipped) != 1 || skipped[0].Reason != apply.ReasonKeyInSourceFile || skipped[0].Action != apply.ActionRemoveFile {
-					t.Errorf("NewPlan(key file %q).Skipped = %+v, want one remove-file item skipped as %s", tt.file, skipped, apply.ReasonKeyInSourceFile)
+				if diff := cmp.Diff(want, p); diff != "" {
+					t.Errorf("NewPlan(key file in %q) (-want +got):\n%s", tt.file, diff)
 				}
-			} else {
-				want := []apply.Target{{
-					Item: apply.Item{
-						BundleID: 1, FindingID: 11, File: tt.file, StartLine: 1, StartCol: 1,
-						Action: apply.ActionRemoveFile, Category: finding.CategorySSH, Kind: finding.KindKeyFile,
-						Name: "ext.ssh.partner.key", StorePath: "secret/data/projects/7/ext.ssh.partner.key",
-						Status: apply.StatusPlanned,
-					},
-					Location:    whole,
-					Fingerprint: "fp-key",
-					StoreKey:    "ext.ssh.partner.key",
-					WholeFile:   true,
-					PEMOnly:     tt.pemOnly,
-				}}
+				return
+			}
+			{
+				want := []apply.Target{wholeTarget(1, 11, tt.file, whole, tt.pemOnly)}
 				if diff := cmp.Diff(want, gotWhole); diff != "" {
 					t.Errorf("NewPlan(key file %q) whole-file targets (-want +got):\n%s", tt.file, diff)
 				}
@@ -336,25 +386,23 @@ func TestPlan_KeyFileWithCustomerData(t *testing.T) {
 	in.CustomerDataFiles = []string{"conf/other.pem", "conf/partner.pem", "logs/app.log"}
 	p := apply.NewPlan(in)
 
-	for _, tg := range p.Targets {
-		if tg.WholeFile || tg.StoreKey != "" || tg.Item.StorePath != "" {
-			t.Errorf("NewPlan(key files holding customer data) target %+v, want no whole-file or stored target", tg)
-		}
+	held := apply.ReasonKeyHoldsCustomerData
+	want := apply.Plan{
+		Digest: apply.Digest(in.Scan.ID, in.Bundles, nil),
+		Targets: []apply.Target{
+			redactTarget(7, 71, finding.KindEmail, "conf/other.pem", span(25, 1, 25, 22)),
+			redactTarget(6, 61, finding.KindPhone, "logs/app.log", span(30, 7, 30, 19)),
+		},
+		Skipped: []apply.Item{
+			skippedAs(wholeTarget(5, 51, "conf/other.pem", whole, false), held),
+			skippedAs(wholeTarget(4, 41, "conf/partner.pem", whole, false), held),
+			skippedAs(wholeTarget(3, 31, "data/keys.txt", whole, false), held),
+			skippedAs(wholeTarget(1, 11, "logs/app.log", whole, false), held),
+			skippedAs(wholeTarget(2, 21, "samples/dump.sql", whole, false), held),
+		},
 	}
-	for _, file := range []string{"logs/app.log", "samples/dump.sql", "data/keys.txt", "conf/partner.pem", "conf/other.pem"} {
-		skipped := skippedIn(p, file)
-		if len(skipped) != 1 || skipped[0].Reason != apply.ReasonKeyHoldsCustomerData {
-			t.Errorf("NewPlan(key file %q).Skipped = %+v, want one item skipped as %s", file, skipped, apply.ReasonKeyHoldsCustomerData)
-		}
-	}
-	var redactions []string
-	for _, tg := range p.Targets {
-		if tg.Item.Action == apply.ActionRedact {
-			redactions = append(redactions, tg.Item.File)
-		}
-	}
-	if diff := cmp.Diff([]string{"conf/other.pem", "logs/app.log"}, redactions); diff != "" {
-		t.Errorf("NewPlan(key files holding customer data) redactions (-want +got):\n%s", diff)
+	if diff := cmp.Diff(want, p); diff != "" {
+		t.Errorf("NewPlan(key files holding customer data) (-want +got):\n%s", diff)
 	}
 
 	t.Run("customer data bundle without the list", func(t *testing.T) {
@@ -395,18 +443,25 @@ func TestPEMOnly(t *testing.T) {
 		{"begin inside a block", "-----BEGIN PRIVATE KEY-----\n" + block, false},
 		{"text after the end marker", "-----BEGIN PRIVATE KEY-----\nZGV2\n-----END PRIVATE KEY----- trailing\n", false},
 		{"end without begin", "-----END PRIVATE KEY-----\n", false},
+		{"source code inside a block", "-----BEGIN PRIVATE KEY-----\nString pw = \"dev-only-fake\";\n-----END PRIVATE KEY-----\n", false},
+		{"phone number inside a block", "-----BEGIN PRIVATE KEY-----\nZGV2\n010-0000-0000\n-----END PRIVATE KEY-----\n", false},
+		{"assignment inside a block", "-----BEGIN PRIVATE KEY-----\npassword=dev-only-fake\n-----END PRIVATE KEY-----\n", false},
+		{"header without a value", "-----BEGIN PRIVATE KEY-----\nProc-Type: \nZGV2\n-----END PRIVATE KEY-----\n", false},
+		{"header name with a space", "-----BEGIN PRIVATE KEY-----\nkey name: dev-only-fake\nZGV2\n-----END PRIVATE KEY-----\n", false},
+		{"indented base64 inside a block", "-----BEGIN PRIVATE KEY-----\n  ZGV2LW9ubHk=  \n-----END PRIVATE KEY-----\n", true},
 	}
 	for _, tt := range tests {
-		if got := apply.PEMOnly([]byte(tt.text)); got != tt.want {
-			t.Errorf("PEMOnly(%s) = %v, want %v", tt.name, got, tt.want)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			if got := apply.PEMOnly([]byte(tt.text)); got != tt.want {
+				t.Errorf("PEMOnly(%q) = %v, want %v", tt.text, got, tt.want)
+			}
+		})
 	}
 }
 
 func TestPlan_Overlap(t *testing.T) {
 	const file = "conf/a.yml"
 	dup := externalized(7, at(71, file, span(12, 1, 12, 9), span(12, 1, 12, 9)))
-	dup.Fingerprint = "fp-dup"
 	keyLoc := span(1, 1, 40, 5)
 	privateKey := externalized(9, at(91, "conf/k.pem", span(2, 1, 4, 10)))
 	privateKey.Kind = finding.KindPrivateKey
@@ -426,21 +481,107 @@ func TestPlan_Overlap(t *testing.T) {
 	)
 	p := apply.NewPlan(in)
 
-	var targets, overlapped []triage.BundleID
-	for _, tg := range p.Targets {
-		targets = append(targets, tg.Item.BundleID)
+	pk := replaceTarget(9, 91, "conf/k.pem", span(2, 1, 4, 10))
+	pk.Item.Kind = finding.KindPrivateKey
+	overlap := apply.ReasonOverlap
+	want := apply.Plan{
+		Digest: apply.Digest(in.Scan.ID, in.Bundles, nil),
+		Targets: []apply.Target{
+			replaceTarget(3, 31, file, span(5, 1, 5, 1)),
+			replaceTarget(4, 41, file, span(5, 3, 5, 3)),
+			replaceTarget(5, 51, file, span(6, 1, 6, 1)),
+			replaceTarget(6, 61, file, span(6, 2, 6, 4)),
+			replaceTarget(7, 71, file, span(12, 1, 12, 9)),
+			wholeTarget(8, 81, "conf/k.pem", keyLoc, false),
+			pk,
+			replaceTarget(12, 121, "conf/other.yml", span(3, 10, 3, 30)),
+		},
+		Skipped: []apply.Item{
+			skippedAs(replaceTarget(1, 11, file, span(3, 5, 3, 20)), overlap),
+			skippedAs(replaceTarget(2, 21, file, span(3, 10, 3, 30)), overlap),
+			skippedAs(redactTarget(10, 101, finding.KindPhone, file, span(8, 1, 10, 3)), overlap),
+			skippedAs(replaceTarget(11, 111, file, span(9, 50, 9, 60)), overlap),
+		},
 	}
-	for _, it := range p.Skipped {
-		if it.Reason != apply.ReasonOverlap {
-			t.Errorf("NewPlan(overlaps) skipped %+v as %s, want only %s", it, it.Reason, apply.ReasonOverlap)
-		}
-		overlapped = append(overlapped, it.BundleID)
+	if diff := cmp.Diff(want, p); diff != "" {
+		t.Errorf("NewPlan(overlaps) (-want +got):\n%s", diff)
 	}
-	if diff := cmp.Diff([]triage.BundleID{3, 4, 5, 6, 7, 8, 9, 12}, targets); diff != "" {
-		t.Errorf("NewPlan(overlaps) target bundles in order (-want +got):\n%s", diff)
+}
+
+func TestPlan_HoldsCustomerData(t *testing.T) {
+	const file = "conf/db.properties"
+	cd := func(sl, sc, el, ec int) apply.CustomerSpan {
+		return apply.CustomerSpan{File: file, StartLine: sl, StartCol: sc, EndLine: el, EndCol: ec}
 	}
-	if diff := cmp.Diff([]triage.BundleID{1, 2, 10, 11}, overlapped); diff != "" {
-		t.Errorf("NewPlan(overlaps) overlapped bundles in order (-want +got):\n%s", diff)
+	in := planInput(
+		// A URL whose user and host part an email rule also reported.
+		externalized(1, at(11, file, span(3, 10, 3, 60))),
+		// Ends right before the customer data: kept.
+		externalized(2, at(21, file, span(5, 1, 5, 10))),
+		// Shares one character with the customer data.
+		externalized(3, at(31, file, span(6, 5, 6, 9))),
+		// A value over three lines, with customer data on the middle one.
+		externalized(4, at(41, file, span(8, 1, 10, 2))),
+		// A secret over a redacted email: the secret holds customer data,
+		// the redaction overlaps the secret.
+		externalized(5, at(51, file, span(12, 1, 12, 30))),
+		redacted(6, finding.KindEmail, at(61, file, span(12, 5, 12, 20))),
+		// A redaction on its own span: unchanged.
+		redacted(7, finding.KindPhone, at(71, file, span(14, 1, 14, 12))),
+		// The same position in another file: kept.
+		externalized(8, at(81, "conf/other.properties", span(3, 10, 3, 60))),
+	)
+	in.CustomerDataSpans = []apply.CustomerSpan{
+		cd(14, 1, 14, 12), cd(3, 30, 3, 45), cd(5, 11, 5, 20), cd(6, 1, 6, 5), cd(9, 1, 9, 3), cd(12, 5, 12, 20),
+	}
+	in.CustomerDataFiles = []string{file}
+	p := apply.NewPlan(in)
+
+	held := apply.ReasonHoldsCustomerData
+	want := apply.Plan{
+		Digest: apply.Digest(in.Scan.ID, in.Bundles, in.CustomerDataSpans),
+		Targets: []apply.Target{
+			replaceTarget(2, 21, file, span(5, 1, 5, 10)),
+			redactTarget(7, 71, finding.KindPhone, file, span(14, 1, 14, 12)),
+			replaceTarget(8, 81, "conf/other.properties", span(3, 10, 3, 60)),
+		},
+		Skipped: []apply.Item{
+			skippedAs(replaceTarget(1, 11, file, span(3, 10, 3, 60)), held),
+			skippedAs(replaceTarget(3, 31, file, span(6, 5, 6, 9)), held),
+			skippedAs(replaceTarget(4, 41, file, span(8, 1, 10, 2)), held),
+			skippedAs(replaceTarget(5, 51, file, span(12, 1, 12, 30)), held),
+			skippedAs(redactTarget(6, 61, finding.KindEmail, file, span(12, 5, 12, 20)), apply.ReasonOverlap),
+		},
+	}
+	if diff := cmp.Diff(want, p); diff != "" {
+		t.Errorf("NewPlan(secrets over customer data) (-want +got):\n%s", diff)
+	}
+}
+
+func TestPlan_KindCategoryMismatch(t *testing.T) {
+	secretPhone := externalized(1, at(11, "conf/a.yml", span(3, 5, 3, 20)))
+	secretPhone.Kind = finding.KindPhone
+	customerPassword := redacted(2, finding.KindPassword, at(21, "logs/x.log", span(2, 1, 2, 13)))
+	tests := []struct {
+		name   string
+		bundle triage.Bundle
+	}{
+		{"storage category with a phone kind, externalized", secretPhone},
+		{"customer-data category with a password kind, redacted", customerPassword},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if err := tt.bundle.Check(tt.bundle.Decision); err != nil {
+				t.Fatalf("Bundle.Check(%+v) = %v, want nil so that only the kind guard refuses it", tt.bundle.Decision, err)
+			}
+			p := apply.NewPlan(planInput(tt.bundle))
+			if len(p.Targets) != 0 {
+				t.Errorf("NewPlan(%s).Targets = %+v, want none", tt.name, p.Targets)
+			}
+			if len(p.Skipped) != 1 || p.Skipped[0].Reason != apply.ReasonNotAllowed {
+				t.Errorf("NewPlan(%s).Skipped = %+v, want one item skipped as %s", tt.name, p.Skipped, apply.ReasonNotAllowed)
+			}
+		})
 	}
 }
 
@@ -504,8 +645,9 @@ func TestPlan_Order(t *testing.T) {
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("NewPlan(unordered bundles) target order (-want +got):\n%s", diff)
 	}
-	if got, want := p.Digest, apply.Digest(in.Scan.ID, in.Bundles); got != want {
-		t.Errorf("NewPlan(unordered bundles).Digest = %q, want Digest(scan, bundles) = %q", got, want)
+	in.CustomerDataSpans = []apply.CustomerSpan{{File: "logs/b.log", StartLine: 2, StartCol: 1, EndLine: 2, EndCol: 13}}
+	if got, want := apply.NewPlan(in).Digest, apply.Digest(in.Scan.ID, in.Bundles, in.CustomerDataSpans); got != want {
+		t.Errorf("NewPlan(unordered bundles).Digest = %q, want Digest(scan, bundles, spans) = %q", got, want)
 	}
 	if p.Digest == "" {
 		t.Errorf("NewPlan(unordered bundles).Digest is empty")

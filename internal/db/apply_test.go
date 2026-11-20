@@ -34,6 +34,16 @@ func decidedProject(t *testing.T, s *db.Store, name string) (pid project.ID, sid
 	return pid, sid, pw, ph
 }
 
+// phoneSpans are the customer-data spans of mixed: the phone number in
+// each log.
+func phoneSpans(files ...string) []apply.CustomerSpan {
+	var out []apply.CustomerSpan
+	for _, f := range files {
+		out = append(out, apply.CustomerSpan{File: f, StartLine: 7, StartCol: 1, EndLine: 7, EndCol: 4})
+	}
+	return out
+}
+
 func requestCheck(t *testing.T, s *db.Store, pid project.ID) apply.ID {
 	t.Helper()
 	id, err := s.RequestApplyCheck(t.Context(), pid, tester)
@@ -105,7 +115,8 @@ func TestRequestApplyCheck(t *testing.T) {
 
 	id := requestCheck(t, s, pid)
 	got := readRun(t, s, id)
-	want := apply.Digest(sid, []triage.Bundle{readBundle(t, s, pid, sid, pw), readBundle(t, s, pid, sid, ph)})
+	want := apply.Digest(sid, []triage.Bundle{readBundle(t, s, pid, sid, pw), readBundle(t, s, pid, sid, ph)},
+		phoneSpans("logs/x.log", "logs/y.log"))
 	if got.State != apply.StateChecking || got.ProjectID != pid || got.ScanID != sid || got.Requester != tester ||
 		got.RequestedAt.IsZero() || got.PlanDigest != want {
 		t.Errorf("ApplyRun(%d) = %+v, want a checking run of project %d, scan %d, by %v, digest %s", id, got, pid, sid, tester, want)
@@ -153,7 +164,7 @@ func TestRequestApplyCheck_PlanLeavesOutUndecided(t *testing.T) {
 	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldLater}, bundleOf(t, s, pid, fpB, "conf/b.xml"))
 
 	r := readRun(t, s, requestCheck(t, s, pid))
-	if want := apply.Digest(sid, nil); r.PlanDigest != want {
+	if want := apply.Digest(sid, nil, phoneSpans("logs/x.log", "logs/y.log")); r.PlanDigest != want {
 		t.Errorf("PlanDigest with no bundle to externalize or redact = %s, want %s", r.PlanDigest, want)
 	}
 }
@@ -211,6 +222,21 @@ func TestConfirmApply_PlanChanged(t *testing.T) {
 		pid, _, _, ph := decidedProject(t, s, "shop")
 		r := readyRun(t, s, pid)
 		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive}, ph)
+		assertRefused(t, s, r.ID, r.PlanDigest, db.ErrPlanChanged)
+	})
+	t.Run("customer data judged a false positive", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, _, _ := decidedProject(t, s, "shop")
+		r := readyRun(t, s, pid)
+		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive}, bundleOf(t, s, pid, fpC, "logs/y.log"))
+		assertRefused(t, s, r.ID, r.PlanDigest, db.ErrPlanChanged)
+	})
+	t.Run("customer data put on hold", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, _, _ := decidedProject(t, s, "shop")
+		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive}, bundleOf(t, s, pid, fpC, "logs/y.log"))
+		r := readyRun(t, s, pid)
+		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldConfirm}, bundleOf(t, s, pid, fpC, "logs/y.log"))
 		assertRefused(t, s, r.ID, r.PlanDigest, db.ErrPlanChanged)
 	})
 	t.Run("name changed", func(t *testing.T) {

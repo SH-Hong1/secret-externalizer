@@ -71,9 +71,11 @@ func TestShellFile(t *testing.T) {
 		"scripts.sh/x.yml": false,
 	}
 	for file, want := range tests {
-		if got := triage.ShellFile(file); got != want {
-			t.Errorf("ShellFile(%q) = %v, want %v", file, got, want)
-		}
+		t.Run(file, func(t *testing.T) {
+			if got := triage.ShellFile(file); got != want {
+				t.Errorf("ShellFile(%q) = %v, want %v", file, got, want)
+			}
+		})
 	}
 }
 
@@ -87,9 +89,11 @@ func TestNameFor(t *testing.T) {
 		"deploy":               "ext.db.main.password",
 	}
 	for file, want := range tests {
-		if got := n.For(file); got != want {
-			t.Errorf("Name(%q).For(%q) = %q, want %q", n, file, got, want)
-		}
+		t.Run(file, func(t *testing.T) {
+			if got := n.For(file); got != want {
+				t.Errorf("Name(%q).For(%q) = %q, want %q", n, file, got, want)
+			}
+		})
 	}
 }
 

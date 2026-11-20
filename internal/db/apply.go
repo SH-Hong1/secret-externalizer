@@ -96,7 +96,9 @@ func latestScanID(ctx context.Context, tx pgx.Tx, projectID project.ID) (scan.ID
 // RequestApplyCheck creates a run in state checking with the digest of the
 // current plan and its apply-check job, and marks the project's earlier
 // ready and blocked runs superseded. The current plan is the bundles to
-// externalize or redact that the project's latest succeeded scan found.
+// externalize or redact that the project's latest succeeded scan found,
+// together with the customer data it found that is not judged a false
+// positive.
 // It returns ErrScanActive when the project has a queued or running scan,
 // ErrApplyActive when it has an active apply, and ErrNotFound when there is
 // no project or it has no succeeded scan.
@@ -124,6 +126,10 @@ func (s *Store) RequestApplyCheck(ctx context.Context, projectID project.ID, by 
 	if err != nil {
 		return 0, err
 	}
+	spans, err := customerSpans(ctx, tx, projectID, scanID)
+	if err != nil {
+		return 0, err
+	}
 	if _, err := tx.Exec(ctx,
 		"UPDATE apply_run SET state = 'superseded' WHERE project_id = $1 AND state IN ('ready', 'blocked')",
 		projectID); err != nil {
@@ -133,7 +139,7 @@ func (s *Store) RequestApplyCheck(ctx context.Context, projectID project.ID, by 
 	err = tx.QueryRow(ctx, `
 		INSERT INTO apply_run (project_id, scan_id, plan_digest, requested_by, requester_name)
 		VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-		projectID, scanID, apply.Digest(scanID, bundles), by.Subject, by.Name).Scan(&id)
+		projectID, scanID, apply.Digest(scanID, bundles, spans), by.Subject, by.Name).Scan(&id)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) && pgErr.Code == uniqueViolation {
 		return 0, fmt.Errorf("requesting apply check of project %d: %w", projectID, ErrApplyActive)
@@ -200,7 +206,11 @@ func (s *Store) ConfirmApply(ctx context.Context, id apply.ID, digest string, al
 	if err != nil {
 		return err
 	}
-	if apply.Digest(latest, bundles) != planDigest {
+	spans, err := customerSpans(ctx, tx, projectID, latest)
+	if err != nil {
+		return err
+	}
+	if apply.Digest(latest, bundles, spans) != planDigest {
 		return fmt.Errorf("confirming apply %d: %w", id, ErrPlanChanged)
 	}
 
@@ -229,6 +239,32 @@ func (s *Store) ConfirmApply(ctx context.Context, id apply.ID, digest string, al
 		return fmt.Errorf("committing apply confirmation: %w", err)
 	}
 	return nil
+}
+
+// customerSpans returns the distinct locations of customer data that scanID
+// found in the project and whose bundle is not judged a false positive,
+// ordered by file, start and end.
+func customerSpans(ctx context.Context, tx pgx.Tx, projectID project.ID, scanID scan.ID) ([]apply.CustomerSpan, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT DISTINCT f.file_path, l.start_line, l.start_col, l.end_line, l.end_col
+		FROM finding f
+			JOIN location l ON l.finding_id = f.id
+			JOIN bundle b ON b.id = f.bundle_id
+		WHERE f.project_id = $1 AND l.scan_id = $2 AND f.category = 'customer-data'
+			AND b.verdict <> 'false-positive'
+		ORDER BY f.file_path, l.start_line, l.start_col, l.end_line, l.end_col`, projectID, scanID)
+	if err != nil {
+		return nil, fmt.Errorf("listing customer data spans of scan %d: %w", scanID, err)
+	}
+	spans, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (apply.CustomerSpan, error) {
+		var c apply.CustomerSpan
+		err := row.Scan(&c.File, &c.StartLine, &c.StartCol, &c.EndLine, &c.EndCol)
+		return c, err
+	})
+	if err != nil {
+		return nil, fmt.Errorf("listing customer data spans of scan %d: %w", scanID, err)
+	}
+	return spans, nil
 }
 
 // applyBundles returns the project's bundles whose verdict is externalize or
