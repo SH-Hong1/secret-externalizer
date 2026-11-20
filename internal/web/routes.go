@@ -60,5 +60,6 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	mux.Handle("/projects/{id}/bundles/{bundle}/original", handlePostOnly(logger, rd))
 	mux.Handle("POST /projects/{id}/scans", usesStore(handleScanCreate(logger, rd, scans)))
 	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, projects, scans, triage, stores.Applies)))
+	mux.Handle("GET /scans/{id}/report", usesStore(handleReport(logger, rd, stores.Reports, time.Now)))
 	mux.Handle("/", handleNotFound(logger, rd))
 }

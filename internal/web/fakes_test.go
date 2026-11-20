@@ -15,6 +15,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/report"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
@@ -368,6 +369,10 @@ func (b *blockingStore) counts() (calls, deadlines int) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.calls, b.deadlines
+}
+
+func (b *blockingStore) Report(ctx context.Context, _ scan.ID) (report.Data, error) {
+	return report.Data{}, b.wait(ctx)
 }
 
 func (b *blockingStore) CreateProject(ctx context.Context, _ project.Project) (project.ID, error) {
@@ -1064,4 +1069,36 @@ func (f *fakeApplies) confirmCalls() []confirmCall {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.confirms)
+}
+
+// fakeReports keeps the report data of scans in memory. A non-nil err makes
+// Report return that error.
+type fakeReports struct {
+	err error
+
+	mu   sync.Mutex
+	data map[scan.ID]report.Data
+}
+
+func newFakeReports() *fakeReports {
+	return &fakeReports{data: make(map[scan.ID]report.Data)}
+}
+
+func (f *fakeReports) Report(_ context.Context, id scan.ID) (report.Data, error) {
+	if f.err != nil {
+		return report.Data{}, f.err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	d, ok := f.data[id]
+	if !ok {
+		return report.Data{}, fmt.Errorf("reading report of scan %d: %w", id, db.ErrNotFound)
+	}
+	return d, nil
+}
+
+func (f *fakeReports) put(d report.Data) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.data[d.Scan.ID] = d
 }

@@ -462,3 +462,50 @@ func (h *HeldLock) Blocking(ctx context.Context, s *Store) (bool, error) {
 		"SELECT count(*) FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))", h.pid).Scan(&n)
 	return n > 0, err
 }
+
+// SetScan puts the scan with the given ID in status, with the request time
+// at and applyID, zero for none, as the apply it confirms.
+func (s *Store) SetScan(ctx context.Context, id scan.ID, status scan.Status, at time.Time, applyID apply.ID) error {
+	_, err := s.pool.Exec(ctx, "UPDATE scan SET status = $2, requested_at = $3, apply_id = $4 WHERE id = $1",
+		id, status, at, nullID(applyID))
+	return err
+}
+
+// SetApplyRunTimes stores started and finished, nil for NULL, as the start
+// and finish times of the apply run with the given ID.
+func (s *Store) SetApplyRunTimes(ctx context.Context, id apply.ID, started, finished *time.Time) error {
+	_, err := s.pool.Exec(ctx, "UPDATE apply_run SET started_at = $2, finished_at = $3 WHERE id = $1",
+		id, started, finished)
+	return err
+}
+
+// InsertAuditEvents adds events to the audit trail with the times they
+// carry, in one batch. Their IDs are ignored.
+func (s *Store) InsertAuditEvents(ctx context.Context, events ...audit.Event) error {
+	var b pgx.Batch
+	for _, e := range events {
+		detail := e.Detail
+		if detail == nil {
+			detail = map[string]string{}
+		}
+		b.Queue(`
+			INSERT INTO audit_event (at, actor_subject, actor_name, action, project_id, bundle_id, finding_id, detail)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+			e.At, e.Actor.Subject, e.Actor.Name, e.Action, e.ProjectID, nullID(e.BundleID), nullID(e.FindingID), detail)
+	}
+	return s.pool.SendBatch(ctx, &b).Close()
+}
+
+// DeleteBundleRows removes the bundle with the given ID, its findings and
+// their locations, leaving apply items and audit events as they are.
+func (s *Store) DeleteBundleRows(ctx context.Context, id triage.BundleID) error {
+	if _, err := s.pool.Exec(ctx,
+		"DELETE FROM location WHERE finding_id IN (SELECT id FROM finding WHERE bundle_id = $1)", id); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx, "DELETE FROM finding WHERE bundle_id = $1", id); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, "DELETE FROM bundle WHERE id = $1", id)
+	return err
+}

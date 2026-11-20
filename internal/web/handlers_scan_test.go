@@ -568,3 +568,34 @@ func TestScanPage_Confirmation(t *testing.T) {
 		wantNotIn(t, "GET /scans/8", res.body, "확인 스캔", "/applies/")
 	})
 }
+
+func TestHandleScan_ReportLink(t *testing.T) {
+	for _, tt := range []struct {
+		status scan.Status
+		want   bool
+	}{
+		{scan.StatusSucceeded, true},
+		{scan.StatusFailed, false},
+		{scan.StatusRunning, false},
+	} {
+		t.Run(string(tt.status), func(t *testing.T) {
+			e := newTestEnv(t)
+			pid := e.newProject(t)
+			sc := scan.Scan{ID: 7, ProjectID: pid, Status: tt.status}
+			e.scans.put(sc)
+			if tt.status == scan.StatusSucceeded {
+				e.triage.setScan(sc, map[triage.Verdict]int{})
+			}
+			res := e.do(t, http.MethodGet, "/scans/7", nil, e.user(t))
+			if res.status != http.StatusOK {
+				t.Fatalf("GET /scans/7 status = %d, want 200", res.status)
+			}
+			const link = `href="/scans/7/report"`
+			if tt.want {
+				wantIn(t, "GET /scans/7 of a "+string(tt.status)+" scan", res.body, link)
+			} else {
+				wantNotIn(t, "GET /scans/7 of a "+string(tt.status)+" scan", res.body, link)
+			}
+		})
+	}
+}

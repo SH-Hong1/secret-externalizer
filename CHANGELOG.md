@@ -6,6 +6,10 @@
 
 ### 추가
 
+- 스캔 리포트의 타입과 만드는 함수 `internal/report`(`Build`). 찾은 것, 적용한 것, 판정 이력을 절로 나누고 줄을 1,000개로 자른다. 미리보기, 지문, 주변 줄은 싣지 않는다(`docs/decisions/0042-what-a-scan-report-shows.md`)
+- 스캔 리포트의 자료를 한 스냅숏에서 읽는 `db.Store.Report`. 찾은 묶음과 판정별 건수, 이 스캔 전에 시작된 적용 실행이 바꾼 항목, 판정·옮기기·적용 확인 기록을 한 요청 단위로 묶은 판정 이력을 읽는다. 미리보기는 읽지 않는다
+- 마이그레이션 `0008`: `apply_run (project_id, id DESC)`, `audit_event (project_id, id DESC)` 인덱스
+- 스캔 리포트 화면 `GET /scans/{id}/report`. 요약 숫자 일곱 개와 이전 성공한 스캔 대비 증감, 외부화한 항목, 삭제·마스킹한 고객정보, 구조 변경이 필요한 항목, 남은 항목, 오탐, 판정 이력을 보인다. 값, 미리보기, 지문, 주변 줄은 싣지 않는다. 성공하지 않은 스캔은 스캔 화면으로 돌려보낸다. 성공한 스캔의 스캔 화면, 프로젝트 화면의 스캔 목록, 적용 결과 화면의 확인 스캔 옆에 리포트 링크를 둔다
 - Go 모듈과 `cmd/web` 진입점 골격
 - 버전을 고정한 gofumpt, golangci-lint 설치와 `make fmt`, `make lint`, `make vet`, `make test`, `make check`
 - golangci-lint 설정

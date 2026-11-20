@@ -8,8 +8,9 @@
 <div class="page-head">
 <h1 class="page-title">스캔 #{{.Scan.ID}}</h1>
 <span class="badge badge-lg badge-{{.Scan.Status}}">{{.StatusLabel}}</span>
-{{if and .Succeeded .Triage}}<span class="grow"></span>
-<a class="btn btn-primary btn-lg" href="{{.Triage}}">판정하기 · 미판정 {{.Undecided}}</a>
+{{if .Report}}<span class="grow"></span>
+<a class="btn btn-secondary" href="{{.Report}}">리포트</a>
+{{end}}{{if and .Succeeded .Triage}}<a class="btn btn-primary btn-lg" href="{{.Triage}}">판정하기 · 미판정 {{.Undecided}}</a>
 {{end}}</div>
 {{with .Confirmation}}<p class="lede"><a href="{{.RunHref}}">적용 #{{.RunID}}</a>의 확인 스캔입니다. 외부화한 값이 소스에서 사라졌는지 확인합니다.</p>
 {{end}}</div>

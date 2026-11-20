@@ -34,6 +34,7 @@ type testEnv struct {
 	audits    *fakeAudit
 	originals *fakeOriginals
 	applies   *fakeApplies
+	reports   *fakeReports
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -48,12 +49,13 @@ func newTestEnv(t *testing.T) *testEnv {
 		triage:   newFakeTriage(),
 		calls:    &callLog{},
 		applies:  newFakeApplies(),
+		reports:  newFakeReports(),
 	}
 	e.audits = &fakeAudit{log: e.calls}
 	e.originals = &fakeOriginals{log: e.calls}
 	logger := slog.New(slog.NewJSONHandler(e.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts,
-		web.Stores{Projects: e.projects, Scans: e.scans, Triage: e.triage, Audits: e.audits, Applies: e.applies},
+		web.Stores{Projects: e.projects, Scans: e.scans, Triage: e.triage, Audits: e.audits, Applies: e.applies, Reports: e.reports},
 		web.NewHistorySuggester(e.triage), e.originals, time.Minute)
 	return e
 }

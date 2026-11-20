@@ -87,6 +87,7 @@ type runPlace struct {
 // "unsure" (nothing found again, but the run stopped while changing files
 // whose places are not recorded as applied, so the count may leave them
 // out) or "again" (Reappeared findings of applied bundles found again).
+// ReportHref is the report of the scan once it has succeeded.
 type confirmationView struct {
 	ScanID        scan.ID
 	ScanHref      string
@@ -96,6 +97,7 @@ type confirmationView struct {
 	Reappeared    int
 	UncheckedHref string
 	AppliedHref   string
+	ReportHref    string
 }
 
 // failureOf returns what a page says about the reason a check or an apply
@@ -240,6 +242,9 @@ func newConfirmation(sc scan.Scan, run apply.ID, pid project.ID, n int) *confirm
 		ScanID: sc.ID, ScanHref: scanPath(sc.ID), RunID: run, RunHref: runPath(run), Reappeared: n,
 		UncheckedHref: scanPath(sc.ID) + "#unchecked",
 		AppliedHref:   triagePath(pid) + "?status=" + statusApplied,
+	}
+	if sc.Status == scan.StatusSucceeded {
+		c.ReportHref = reportPath(sc.ID)
 	}
 	switch {
 	case sc.Status.Active():

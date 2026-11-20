@@ -1341,6 +1341,92 @@
   a.badge:hover {
     text-decoration: underline;
   }
+
+  /* The report of a scan, on the screen and in its PDF. Its tables wrap
+     long paths and notes inside their cells instead of growing past the
+     page, and a cell's second line is smaller and lighter. */
+  .report {
+    display: flex;
+    flex-direction: column;
+    gap: 28px;
+  }
+  .report-head {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .report-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .report-section .section-title {
+    margin: 0;
+  }
+  .report-tiles {
+    grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  }
+  .report-count {
+    display: block;
+    margin-top: 4px;
+    font-size: var(--text-section);
+    font-weight: 700;
+  }
+  .report-delta {
+    display: block;
+    margin-top: 2px;
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+  }
+  .report-delta .delta {
+    color: var(--color-ink);
+    font-family: var(--font-mono);
+    font-weight: 700;
+  }
+  .report-table td {
+    overflow-wrap: anywhere;
+  }
+  .report-table .badge {
+    white-space: normal;
+  }
+  .report-table .report-time {
+    font-size: var(--text-sm);
+    white-space: nowrap;
+  }
+  .report-table .report-user {
+    overflow-wrap: normal;
+    word-break: keep-all;
+  }
+  .report-name {
+    display: block;
+    font-weight: 700;
+  }
+  .report-sub {
+    display: block;
+    color: var(--color-ink-2);
+    font-size: var(--text-xs);
+  }
+  .report-sub.mono {
+    font-size: var(--text-xs);
+  }
+  .report-path {
+    font-size: var(--text-sm);
+  }
+  .report-note {
+    white-space: pre-line;
+  }
+  .report-places {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    font-family: var(--font-mono);
+    font-size: var(--text-sm);
+  }
+  .report-more {
+    margin: 0;
+    color: var(--color-ink-muted);
+    font-size: var(--text-sm);
+  }
 }
 
 @keyframes progress-slide {
