@@ -910,9 +910,20 @@ func TestApplyRunPage(t *testing.T) {
 			}),
 			want: []string{
 				"바꾸던 중에 멈춘 파일 1개는 바뀌었을 수도, 그대로일 수도 있습니다", "바꾸던 중에 멈춘 위치 1곳", "conf/d.properties:5",
-				"확인 스캔이 요청되지 않았습니다",
+				"확인 스캔이 요청되지 않았습니다", "프로젝트에서 스캔 시작",
 			},
-			wantNot: []string{"이미 바꾼 파일", "소스는 바뀌지 않았습니다"},
+			wantNot: []string{"이미 바꾼 파일", "소스는 바뀌지 않았습니다", "바꾼 파일이 없어"},
+		},
+		{
+			name: "stopped while writing, then scanned", run: gaveUp,
+			items: append(slices.Clone(notApplied), apply.Item{
+				BundleID: 101, FindingID: 1008, File: "conf/d.properties", StartLine: 5,
+				Action: apply.ActionReplace, Category: finding.CategoryStorage, Kind: finding.KindPassword, Name: "ext.db.main.password",
+				Status: apply.StatusWriting,
+			}),
+			later:   &scan.Scan{ID: 9, ProjectID: 1, Status: scan.StatusQueued, RequestedAt: time.Date(2026, 11, 20, 11, 0, 0, 0, time.UTC)},
+			want:    []string{"확인 스캔은 없지만 이 실행 뒤에 요청된 스캔이 있습니다", `<a href="/scans/9">스캔 #9</a>`},
+			wantNot: []string{"바꾼 파일이 없어", "확인 스캔이 요청되지 않았습니다"},
 		},
 		{
 			name: "failed before changing anything", run: gaveUp, items: notApplied,

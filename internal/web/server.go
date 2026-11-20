@@ -65,20 +65,20 @@ type ScanStore interface {
 	CategoryCounts(ctx context.Context, id scan.ID) ([]scan.CategoryCount, error)
 }
 
-// TriageStore keeps the bundles of a project and the verdicts users give
-// them. LatestScan returns the project's newest succeeded scan, or an error
-// matching db.ErrNotFound. Entries returns one page of the triage list of a
-// scan; a page past the last gives the last. Bundle returns a bundle with
-// the members the scan found, or an error matching db.ErrNotFound.
-// CustomerGroup returns the customer data a key names, with no bundles when
-// it names nothing. SameValueBundles returns the other bundles of a bundle's
-// value that the scan found. AppliedBundles returns one page of the
-// project's applied bundles, newest first, and AppliedCount their number. Decide and MoveFinding record a user's choice;
-// Decide fails with an error matching triage.ErrNotAllowed or db.ErrDuplicate
-// when it stores nothing because of the decision, MoveFinding with one
-// matching triage.ErrNotAllowed when the finding may not move there, and both
-// with one matching db.ErrNotFound when something they name is unknown and
-// db.ErrApplyActive while an apply of the project is active.
+// TriageStore keeps the bundles of a project and the verdicts users give them.
+// LatestScan returns the project's newest succeeded scan, or an error matching
+// db.ErrNotFound. Entries returns one page of the triage list of a scan; a
+// page past the last gives the last. Bundle returns a bundle with the members
+// the scan found, or an error matching db.ErrNotFound. CustomerGroup returns
+// the customer data a key names, with no bundles when it names nothing.
+// SameValueBundles returns the other bundles of a bundle's value that the scan
+// found. AppliedBundles returns one page of the project's applied bundles,
+// newest first, and AppliedCount their number. Decide and MoveFinding record a
+// user's choice; Decide fails with an error matching triage.ErrNotAllowed or
+// db.ErrDuplicate when it stores nothing because of the decision, MoveFinding
+// with one matching triage.ErrNotAllowed when the finding may not move there,
+// and both with one matching db.ErrNotFound when something they name is
+// unknown and db.ErrApplyActive while an apply of the project is active.
 type TriageStore interface {
 	LatestScan(ctx context.Context, projectID project.ID) (scan.Scan, error)
 	Entries(ctx context.Context, projectID project.ID, scanID scan.ID, f triage.Filter) (triage.Page, error)
