@@ -76,6 +76,43 @@ docker compose up --build -d
 
 스캔 결과 화면과 판정 화면은 postgres에 저장된 가린 값만 보여 준다. 원본 값은 `admin`이 판정 화면에서 "원본 보기"를 누를 때만 보인다(아래).
 
+## 적용을 끝까지 해 보기
+
+적용은 git 작업본에서만 된다. 예제 폴더를 커밋이 있는 저장소로 만들고, EUC-KR 파일과 git이 추적하지 않는 로그를 더한다(값은 모두 가짜다).
+
+```sh
+cp -R internal/ruleset/testdata/legacy-shop "$SE_WORKSPACE/legacy-shop"
+cd "$SE_WORKSPACE/legacy-shop"
+printf '# \354\243\274\353\254\270 \354\204\244\354\240\225\r\njdbc.password=dev-only-fake-euckr-password\r\n' | iconv -f UTF-8 -t EUC-KR > conf/euckr.properties
+cp logs/app-2026-11-01.log local/debug.log   # local/은 .gitignore에 있다: 추적되지 않는 고객정보
+git init -q && git config core.autocrlf false
+git add -A && git -c user.name=dev -c user.email=dev@example.invalid commit -q -m "sample"
+```
+
+- `git config core.autocrlf false`를 빼지 않는다. 호스트의 git에 `core.autocrlf`가 켜져 있으면 CRLF 파일이 LF로 커밋되고, 그 설정이 없는 worker 컨테이너의 git은 그 파일을 "커밋되지 않은 변경"으로 본다. 실제 프로젝트에서 같은 일이 생기면 그 파일 이름이 점검 화면의 "커밋되지 않은 변경"에 나온다.
+- worker가 작업본에 쓸 수 있어야 한다. Linux 호스트에서는 `SE_UID=$(id -u) SE_GID=$(id -g) docker compose up -d`로 띄운다.
+
+1. 프로젝트를 등록하고 스캔한 뒤 판정한다. 외부화와 삭제·마스킹으로 판정한 묶음만 적용 대상이다.
+2. 프로젝트 화면의 "적용"(`/projects/{id}/apply`)에서 "조건 점검"을 누른다. worker가 소스를 바꾸지 않고 조건(git 작업본, 저장소 설정, 커밋되지 않은 변경, manifest, 최신 스캔, 적용할 판정)을 확인하고, 바뀔 위치와 건너뛸 위치를 사유와 함께 보인다.
+3. git이 추적하지 않는 파일의 고객정보는 "복구 불가"에 따로 나온다. 동의란을 체크해야 그 파일을 가린다. 체크하지 않으면 그 파일만 건너뛴다.
+4. "적용"을 누르면 결과 화면(`/applies/{id}`)으로 넘어간다. 끝나면 확인 스캔이 자동으로 돌고, 외부화한 값이 다시 발견되었는지 알린다.
+5. 작업본에서 확인한다. `git diff`에는 판정한 위치만 있다. `.sh` 파일에는 `${EXT_이름}`, 그 밖에는 `${ext.이름}`이 들어가고, 통째로 옮긴 키 파일은 삭제로 보이며, `secrets-manifest.yml`이 생긴다. 도구는 커밋하지 않는다. 되돌리려면 `git checkout .`을 쓴다. OpenBao에 저장된 값은 남는다.
+6. 판정 화면의 "적용됨" 탭에 묶음이 저장 경로와 함께 보인다. Java 리터럴에 들어간 placeholder에는 "코드 수정 필요"가 붙는다. 값을 코드로 읽게 고치는 일은 사람이 한다.
+
+적용 중에는 그 프로젝트의 스캔 시작과 판정이 거부된다. 도구가 바꾼 파일은 커밋하지 않아도 다음 점검을 막지 않지만, 그 파일을 손으로 더 고치면 "커밋되지 않은 변경"으로 막힌다.
+
+### 저장된 값을 확인하기
+
+루트 토큰은 초기화 뒤 폐기되므로 worker의 AppRole로 로그인해 읽는다. 값은 base64로 저장되어 있고, 디코딩하면 소스에 적혀 있던 글자 그대로다. 이 명령은 값을 터미널에 출력하므로 로컬 개발 환경의 가짜 값에만 쓴다.
+
+```sh
+docker compose exec -e BAO_ADDR=http://127.0.0.1:8200 openbao sh -c '
+  T=$(bao write -field=token auth/approle/login role_id=se-worker secret_id="$(cat /openbao/secrets/worker/secret-id)")
+  BAO_TOKEN=$T bao read -format=json secret/data/projects/1/ext.db.main.password'
+```
+
+경로는 `secret/data/projects/<프로젝트 ID>/ext.<이름>`이고 manifest의 `store`와 같다. worker는 이 경로를 지울 수 없다(`bao delete`는 `permission denied`).
+
 ## 원본 보기와 감사 로그
 
 1. `dev-admin`으로 로그인하고 위의 예제 프로젝트를 스캔한 뒤 판정 화면(`/projects/{id}/triage`)을 연다.
@@ -105,6 +142,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
   docker compose up -d openbao
   ```
 
+- self-init의 요청 하나가 거부되면 OpenBao는 초기화를 끝내지 못하고 멈춘다(`docker compose logs openbao`에 `failed to initialize`). 이때 저장소는 초기화된 것으로 남아 다시 띄워도 정책과 AppRole이 없으므로, 위의 세 명령으로 두 볼륨을 지우고 다시 띄운다. 새 KV v2 마운트는 저장소를 올리는 동안 요청을 거부하므로 `config.hcl`은 마운트를 맨 처음에 만들고 버전 수 설정(`secret/config`)을 맨 끝에 보낸다. 이 순서를 바꾸지 않는다.
 - 봉인 해제 키가 데이터와 같은 Docker 볼륨 영역에 있으므로, 이 구성은 개발자 PC 한 대에서만 쓴다.
 - 적용은 외부화한 값을 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 쓴다. 이미 값이 있으면 저장된 바이트를 다시 읽어 지문을 비교하고, 다를 때만 check-and-set으로 새 버전을 쓴다. 이전 값은 이전 버전에 남는다. worker 정책은 이 경로를 쓰고 읽을 수만 있고 지우거나 메타데이터를 볼 수 없다. KV v2 마운트는 경로마다 버전을 100개 남긴다. 값 하나는 16MiB까지 저장하고, 그보다 큰 값(큰 키 파일)은 `too-large`로 건너뛰어 소스에 남는다. OpenBao는 요청 하나를 32MiB까지 받는다(`docs/decisions/0035-externalized-values-in-openbao.md`).
 
