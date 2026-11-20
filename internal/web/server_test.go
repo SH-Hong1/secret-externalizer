@@ -20,7 +20,9 @@ func newTestServer(t *testing.T, logOut io.Writer) *httptest.Server {
 	t.Helper()
 	logger := slog.New(slog.NewJSONHandler(logOut, nil))
 	tr := newFakeTriage()
-	srv := httptest.NewServer(web.NewServer(logger, &fakeAuthenticator{}, newFakeSessions(), newFakeAttempts(), newFakeProjects(), newFakeScans(), tr, web.NewHistorySuggester(tr), &fakeAudit{log: &callLog{}}, &fakeOriginals{log: &callLog{}}, time.Minute))
+	srv := httptest.NewServer(web.NewServer(logger, &fakeAuthenticator{}, newFakeSessions(), newFakeAttempts(),
+		web.Stores{Projects: newFakeProjects(), Scans: newFakeScans(), Triage: tr, Audits: &fakeAudit{log: &callLog{}}, Applies: newFakeApplies()},
+		web.NewHistorySuggester(tr), &fakeOriginals{log: &callLog{}}, time.Minute))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -164,6 +166,11 @@ func TestStoreCallsHaveTimeLimit(t *testing.T) {
 		{http.MethodPost, "/projects/1/findings/1/move", "to=new"},
 		{http.MethodPost, "/projects/1/bundles/1/original", ""},
 		{http.MethodGet, "/audit", ""},
+		{http.MethodGet, "/projects/1/apply", ""},
+		{http.MethodPost, "/projects/1/apply/check", ""},
+		{http.MethodPost, "/projects/1/apply", "run=1&digest=" + strings.Repeat("a", 64)},
+		{http.MethodGet, "/applies/1", ""},
+		{http.MethodGet, "/projects/1/triage?status=applied", ""},
 	}
 	for _, tt := range tests {
 		t.Run(tt.method+" "+tt.target, func(t *testing.T) {
@@ -178,7 +185,9 @@ func TestStoreCallsHaveTimeLimit(t *testing.T) {
 					t.Fatalf("fakeSessions.Create() error = %v", err)
 				}
 				store := &blockingStore{}
-				h := web.NewServer(logger, &fakeAuthenticator{}, sessions, newFakeAttempts(), store, store, store, web.NewHistorySuggester(store), store, store, limit)
+				h := web.NewServer(logger, &fakeAuthenticator{}, sessions, newFakeAttempts(),
+					web.Stores{Projects: store, Scans: store, Triage: store, Audits: store, Applies: store},
+					web.NewHistorySuggester(store), store, limit)
 
 				req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, strings.NewReader(tt.body))
 				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

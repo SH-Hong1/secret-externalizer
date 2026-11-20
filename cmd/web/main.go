@@ -117,8 +117,9 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 		return fmt.Errorf("preparing openbao client: %w", err)
 	}
 
-	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store, database, database, database,
-		web.NewHistorySuggester(database), database, originals, databaseLimit))
+	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store,
+		web.Stores{Projects: database, Scans: database, Triage: database, Audits: database, Applies: database},
+		web.NewHistorySuggester(database), originals, databaseLimit))
 }
 
 // databaseLimit bounds the database and secret store calls of one request,

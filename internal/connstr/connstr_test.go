@@ -52,6 +52,7 @@ func TestSplit(t *testing.T) {
 		{"deploy@host.invalid:2222", []part{{account, "deploy"}, {host, "host.invalid"}, {port, "2222"}}},
 		{"deploy@host.invalid:/srv/app", []part{{account, "deploy"}, {host, "host.invalid"}}},
 		{"jdbc:mysql://${db.host}:${db.port}/shop", nil},
+		{"jdbc:mysql://${db.user}:${db.pw}@${db.host}:${db.port}/report", nil},
 		{"jdbc:mysql://${db.host}:3306/shop", []part{{port, "3306"}}},
 		{"jdbc:h2:mem:test", nil},
 		{
@@ -91,7 +92,7 @@ func TestSplit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.in, func(t *testing.T) {
 			value := []byte(tt.in)
-			parts := connstr.Split(value)
+			parts, _ := connstr.Split(value)
 			var got []part
 			end := 0
 			for _, p := range parts {
@@ -105,6 +106,61 @@ func TestSplit(t *testing.T) {
 				t.Errorf("Split(%q) (-want +got):\n%s", tt.in, diff)
 			}
 		})
+	}
+}
+
+func TestSplit_Known(t *testing.T) {
+	tests := []struct {
+		in        string
+		wantParts int
+		wantKnown bool
+	}{
+		{"jdbc:mysql://${ext.db.main.host}:${ext.db.main.port}/shop", 0, true},
+		{
+			"jdbc:mysql://${ext.db.main3.account}:${ext.db.main8.password}@${ext.db.main3.host}:${ext.db.main.port}/report",
+			0, true,
+		},
+		{"jdbc:mysql://${ext.db.main.host}:3306/shop", 1, true},
+		{"jdbc:mysql://db.invalid:3306/shop", 2, true},
+		{"jdbc:h2:mem:test", 0, false},
+		{"not a url", 0, false},
+		{"jdbc:mysql://db.invalid:port/shop", 0, false},
+		{"jdbc:oracle:thin:@(DESCRIPTION=(ADDRESS=(HOST=db.invalid)))", 0, false},
+		{"", 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.in, func(t *testing.T) {
+			parts, known := connstr.Split([]byte(tt.in))
+			if len(parts) != tt.wantParts || known != tt.wantKnown {
+				t.Errorf("Split(%q) = %d parts, known %v, want %d parts, known %v", tt.in, len(parts), known, tt.wantParts, tt.wantKnown)
+			}
+			if !known && parts != nil {
+				t.Errorf("Split(%q) = %+v with known false, want nil parts", tt.in, parts)
+			}
+		})
+	}
+}
+
+func TestIsPlaceholder(t *testing.T) {
+	tests := []struct {
+		in   string
+		want bool
+	}{
+		{"${EXT_SSH_MAIN_PASSWORD}", true},
+		{"${ext.secret.main.password}", true},
+		{"${a:${b}}", true},
+		{"prefix-${x}", false},
+		{"${a}${b}", false},
+		{"${a} ", false},
+		{"${a", false},
+		{"${}", true},
+		{"$", false},
+		{"", false},
+	}
+	for _, tt := range tests {
+		if got := connstr.IsPlaceholder([]byte(tt.in)); got != tt.want {
+			t.Errorf("IsPlaceholder(%q) = %v, want %v", tt.in, got, tt.want)
+		}
 	}
 }
 
@@ -125,7 +181,8 @@ func FuzzSplit(f *testing.F) {
 	}
 	f.Fuzz(func(t *testing.T, value []byte) {
 		end := 0
-		for _, p := range connstr.Split(value) {
+		parts, _ := connstr.Split(value)
+		for _, p := range parts {
 			s := p.Span
 			if s.Start < end || s.End <= s.Start || s.End > len(value) {
 				t.Fatalf("Split(%q) gave span %+v after %d, want ordered non-empty spans inside the value", value, s, end)

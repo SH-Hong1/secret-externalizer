@@ -7,6 +7,7 @@
 {{if .NoScan}}<span class="grow"></span>
 {{else}}<span class="muted grow">스캔 #{{.ScanID}} 기준 · <span class="mono">{{.ScanAt}}</span>{{if .Commit}} · 커밋 <span class="mono">{{.Commit}}</span>{{end}}</span>
 <span class="triage-total">미판정 {{.Undecided}} <span class="muted">/ 전체 {{.Total}}</span></span>
+<a class="btn btn-secondary" href="{{.ApplyHref}}">적용</a>
 {{end}}</div>
 {{if .NoScan}}<div class="triage-empty-page">
 <div class="empty-state">
@@ -19,7 +20,7 @@
 <div class="chips" role="group" aria-label="상태">
 {{range .Statuses}}<a class="chip" href="{{.Href}}"{{if .Current}} aria-current="true"{{end}}>{{.Label}} {{.N}}</a>
 {{end}}</div>
-<form class="category-filter" method="get" action="/projects/{{.Project.ID}}/triage">
+{{if not .Applied}}<form class="category-filter" method="get" action="/projects/{{.Project.ID}}/triage">
 <input type="hidden" name="status" value="{{.Status}}">
 <label for="category" class="muted">분류</label>
 <select class="input" id="category" name="category">
@@ -27,12 +28,45 @@
 {{end}}</select>
 <button class="btn" type="submit">거르기</button>
 </form>
-</div>
-<div class="triage-split">
+{{end}}</div>
+{{with .Applied}}{{template "applied" .}}{{else}}<div class="triage-split">
 {{template "list" .}}
 {{template "detail" .}}
 </div>
-{{end}}</main>{{end}}
+{{end}}{{end}}</main>{{end}}
+
+{{define "applied"}}<section class="applied" aria-label="적용한 묶음">
+{{if .Rows}}<p class="text-2">값을 비밀 저장소에 저장하고 소스에 placeholder 이름을 넣은 묶음입니다. 판정과 이름은 바꿀 수 없습니다. 적용한 시각이 최근인 것부터 보입니다. "마지막 스캔"의 "확인 전"은 그 적용 뒤에 성공한 스캔이 아직 없다는 뜻입니다.</p>
+<div class="table-wrap">
+<table class="table min-w-[1040px]">
+<thead><tr><th>이름</th><th>분류</th><th>미리보기</th><th>저장 경로</th><th>적용 시각</th><th class="num">위치</th><th>마지막 실행</th><th>마지막 스캔</th></tr></thead>
+<tbody>
+{{range .Rows}}<tr>
+<td class="mono applied-names">{{range $i, $n := .Names}}{{if $i}}<br>{{end}}{{$n}}{{else}}<span class="muted">—</span>{{end}}</td>
+<td>{{.What}}{{if .CodeChange}} <span class="badge badge-hold">코드 수정 필요</span>{{end}}</td>
+<td><code class="tag">{{.Preview}}</code></td>
+<td class="mono applied-store">{{.StorePath}}</td>
+<td class="mono">{{.AppliedAt}}</td>
+<td class="num">{{.Locations}}곳</td>
+<td>{{if .RunHref}}<a href="{{.RunHref}}">{{.Run}}</a>{{else}}<span class="muted">—</span>{{end}}</td>
+<td>{{if .Reappeared}}<a class="badge badge-hold" href="{{.BundleHref}}">다시 발견</a>{{else if .Checked}}<span class="muted">없음</span>{{else}}<span class="muted">확인 전</span>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</div>
+<div class="pager">
+<span>{{.Page}} / {{.Pages}}쪽 · {{.Total}}줄</span>
+<span class="pager-links">
+{{if .PrevHref}}<a class="btn btn-sm" href="{{.PrevHref}}">이전</a>{{else}}<span class="btn btn-sm" aria-disabled="true">이전</span>{{end}}
+{{if .NextHref}}<a class="btn btn-sm" href="{{.NextHref}}">다음</a>{{else}}<span class="btn btn-sm" aria-disabled="true">다음</span>{{end}}
+</span>
+</div>
+{{else}}<div class="empty-state">
+<h2 class="empty-title">적용한 묶음이 없습니다</h2>
+<p class="text-2">외부화로 판정한 묶음을 적용하면 값이 비밀 저장소로 옮겨지고 여기에 보입니다.</p>
+<div><a class="btn" href="{{.ApplyHref}}">적용 화면으로</a></div>
+</div>
+{{end}}</section>{{end}}
 
 {{define "fragment"}}{{template "detail" .}}
 {{template "list" .}}{{end}}
@@ -40,7 +74,7 @@
 {{define "list"}}<nav class="triage-list" id="list" aria-label="묶음 목록" hx-swap-oob="true">
 {{range .Rows}}<a class="list-row" href="{{.Href}}" hx-get="{{.Href}}" hx-target="#detail" hx-swap="outerHTML" hx-push-url="true"{{if .Current}} aria-current="true"{{end}}>
 <span class="list-row-main"><span class="list-row-title">{{.KindLabel}} <span class="muted">· {{.CategoryText}}</span></span><span class="muted">{{.CountText}}</span></span>
-<span class="list-row-foot"><span class="list-row-sub">{{.Sub}}</span>{{if $.ShowState}}<span class="badge badge-{{.Verdict.Class}}">{{.Verdict.Label}}</span>{{end}}</span>
+<span class="list-row-foot"><span class="list-row-sub">{{.Sub}}</span>{{if .Applied}}<span class="badge badge-succeeded">적용됨</span>{{end}}{{if $.ShowState}}<span class="badge badge-{{.Verdict.Class}}">{{.Verdict.Label}}</span>{{end}}</span>
 </a>
 {{else}}<p class="list-empty muted">이 조건에 맞는 항목이 없습니다.</p>
 {{end}}<div class="pager">
@@ -53,7 +87,7 @@
 </nav>{{end}}
 
 {{define "detail"}}<section class="triage-detail" id="detail" aria-label="상세">
-{{with .Error}}<p class="alert-error" role="alert">{{.}}</p>
+{{with .Error}}<p class="alert-error" role="alert">{{.}}{{with $.ErrorLink}} <a href="{{.}}">적용 화면 보기</a>{{end}}</p>
 {{end}}{{with .Empty}}<div class="empty-state">
 <h2 class="empty-title">{{.Title}}</h2>
 <p class="text-2">{{.Text}}</p>
@@ -66,11 +100,13 @@
 <span class="muted">{{.CategoryLabel}}</span>
 <code class="tag tag-lg">{{.Preview}}</code>
 <span class="grow"></span>
-<span class="badge badge-lg badge-{{.Verdict.Class}}">{{.Verdict.Label}}</span>
+{{if .Applied}}<span class="badge badge-lg badge-succeeded">적용됨</span>
+{{end}}<span class="badge badge-lg badge-{{.Verdict.Class}}">{{.Verdict.Label}}</span>
 </div>{{end}}
 
 {{define "bundle"}}{{template "detail-head" .}}
-{{with .Original}}{{template "original" .}}
+{{with .Applied}}<p class="notice-soft text-2">이 묶음의 값은 <span class="mono">{{.At}}</span>에 적용해 비밀 저장소 <span class="mono">{{.StorePath}}</span>에 저장했고, 소스에는 placeholder 이름이 들어가 있습니다. 그래서 판정과 이름은 바꿀 수 없습니다. 메모는 고칠 수 있습니다. 이 스캔이 이 값을 다시 찾은 위치는 다시 점검하고 적용하면 같은 이름으로 바뀝니다.</p>
+{{end}}{{with .Original}}{{template "original" .}}
 {{end}}<div class="detail-block">
 <h3 class="detail-subtitle">같은 값이 나온 위치 {{.Locations}}곳</h3>
 {{range .Members}}{{$m := .}}{{range $i, $l := .Locations}}<div class="code-box">
@@ -107,7 +143,10 @@
 <label class="field-label" for="verdict-name">placeholder 이름{{if .Suggested}} <span class="optional">· 제안</span>{{end}}</label>
 <div class="input-group">
 <span class="input-prefix">{{.Prefix}}</span>
-<input class="input input-mono" id="verdict-name" name="name" value="{{.Value}}" autocomplete="off" spellcheck="false" aria-describedby="verdict-name-help">
+{{if .Fixed}}<input class="input input-mono" id="verdict-name" value="{{.Value}}" disabled aria-describedby="verdict-name-help">
+<input type="hidden" name="name" value="{{.Value}}">
+{{else}}<input class="input input-mono" id="verdict-name" name="name" value="{{.Value}}" autocomplete="off" spellcheck="false" aria-describedby="verdict-name-help">
+{{end}}
 </div>
 <span class="field-help" id="verdict-name-help">{{if and .Config .Shell}}설정 파일에는 <span class="mono name-form">{{.Config}}</span>, shell에는 <span class="mono name-form">{{.Shell}}</span> 로 들어갑니다.{{else if .Shell}}shell에는 <span class="mono name-form">{{.Shell}}</span> 로 들어갑니다.{{else if .Config}}소스에는 <span class="mono name-form">{{.Config}}</span> 로 들어갑니다.{{else}}이름은 점으로 나눈 소문자 낱말 두 개에서 다섯 개입니다.{{end}}</span>
 </div>
@@ -154,13 +193,15 @@ stored only by pressing its button. */}}
 </div>{{end}}
 
 {{define "verdict-buttons"}}<div class="verdict-actions">
-{{range .Buttons}}<button class="btn btn-lg btn-{{.Class}}{{if .Suggested}} btn-suggested{{end}}" type="submit" name="verdict" value="{{.Value}}">{{.Label}}{{if .Suggested}} · 제안{{end}}</button>
+{{range .Buttons}}<button class="btn btn-lg btn-{{.Class}}{{if .Suggested}} btn-suggested{{end}}" type="submit" name="verdict" value="{{.Value}}"{{if $.Fixed}} disabled{{end}}>{{.Label}}{{if .Suggested}} · 제안{{end}}</button>
 {{end}}<span class="verdict-divider" aria-hidden="true"></span>
 <label class="muted" for="verdict-reason">보류 사유</label>
-<select class="input verdict-reason" id="verdict-reason" name="hold_reason">
+<select class="input verdict-reason" id="verdict-reason" name="hold_reason"{{if .Fixed}} disabled{{end}}>
 {{range .Reasons}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
 {{end}}</select>
-{{with .Hold}}<button class="btn btn-lg btn-{{.Class}}{{if .Suggested}} btn-suggested{{end}}" type="submit" name="verdict" value="{{.Value}}">{{.Label}}{{if .Suggested}} · 제안{{end}}</button>
+{{with .Hold}}<button class="btn btn-lg btn-{{.Class}}{{if .Suggested}} btn-suggested{{end}}" type="submit" name="verdict" value="{{.Value}}"{{if $.Fixed}} disabled{{end}}>{{.Label}}{{if .Suggested}} · 제안{{end}}</button>
+{{end}}{{if .Fixed}}<span class="verdict-divider" aria-hidden="true"></span>
+<button class="btn btn-lg" type="submit" name="verdict" value="{{.Keep}}">메모 저장</button>
 {{end}}{{if .Cancel}}<span class="verdict-divider" aria-hidden="true"></span>
 <button class="btn btn-lg" type="submit" name="verdict" value="none">판정 취소</button>
 {{end}}</div>{{end}}

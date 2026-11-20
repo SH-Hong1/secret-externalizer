@@ -28,7 +28,22 @@ const (
 	msgDuplicate      = "이미 쓰는 이름입니다. 다른 이름을 입력해 주세요."
 	msgMoveTarget     = "옮길 묶음을 알 수 없습니다."
 	msgMoveNotAllowed = "이 묶음으로 옮길 수 없습니다."
+	msgApplyActive    = "적용 중에는 판정을 바꿀 수 없습니다. 점검이나 적용이 끝난 뒤 다시 해 주세요."
+	msgAppliedFixed   = "적용한 묶음은 판정과 이름을 바꿀 수 없습니다. 소스에 이 이름의 placeholder가 들어가 있습니다. 메모만 고칠 수 있습니다."
+	msgAppliedMove    = "이 항목은 그 묶음으로 옮길 수 없습니다. 적용한 위치의 항목과 적용한 묶음의 마지막 항목은 옮길 수 없고, 옮겨 갈 묶음은 같은 값이며 그 판정이 이 항목을 받아들여야 합니다."
 )
+
+// refusal is how the triage screen answers a refused verdict or move: the
+// status, the message, the message that replaces it when the selected
+// bundle is applied, and a page that tells more. A move can be refused for
+// the finding's side or the target's, and the store does not say which, so
+// the message for a move out of an applied bundle names both.
+type refusal struct {
+	status  int
+	msg     string
+	applied string
+	link    string
+}
 
 // cancelVerdict is the verdict value the cancel button sends. It clears the
 // verdict.
@@ -132,7 +147,7 @@ func returnQuery(raw string) triageQuery {
 	}
 	v.Del("sel")
 	q, _, err := parseTriageValues(v)
-	if err != nil {
+	if err != nil || q.Status == statusApplied {
 		return def
 	}
 	return q
@@ -154,6 +169,14 @@ func back(w http.ResponseWriter, r *http.Request, pid project.ID, q triageQuery)
 // reject shows the triage screen of q with sel selected, msg above the
 // detail and the submitted input in the form, with status 400.
 func (tw triageWriter) reject(w http.ResponseWriter, r *http.Request, pid project.ID, q triageQuery, sel string, in verdictInput, msg string) {
+	tw.refuse(w, r, pid, q, sel, in, refusal{status: http.StatusBadRequest, msg: msg})
+}
+
+// refuse shows the triage screen of q with sel selected, the message of f
+// above the detail and the submitted input in the form, with the status of
+// f. The submitted name does not replace the name of an applied bundle,
+// which cannot change.
+func (tw triageWriter) refuse(w http.ResponseWriter, r *http.Request, pid project.ID, q triageQuery, sel string, in verdictInput, f refusal) {
 	ctx := r.Context()
 	u, _ := userFrom(ctx) // requireLogin guarantees a user
 	p, err := tw.projects.Project(ctx, pid)
@@ -171,7 +194,7 @@ func (tw triageWriter) reject(w http.ResponseWriter, r *http.Request, pid projec
 		s, _ = parseSel(sel) // the handlers build sel from validated IDs and group keys, so it parses
 	}
 	q.Sel = sel
-	data := triagePage{User: u, Project: p, Status: q.Status, Options: newCategoryOptions(q.Category), Error: msg}
+	data := triagePage{User: u, Project: p, Status: q.Status, Options: newCategoryOptions(q.Category), Error: f.msg, ErrorLink: f.link}
 	if status, err := fillTriagePage(ctx, tw.logger, tw.store, tw.suggester, &data, q, s, sc); err != nil {
 		tw.rd.fail(w, r, tw.logger, status, err)
 		return
@@ -179,22 +202,34 @@ func (tw triageWriter) reject(w http.ResponseWriter, r *http.Request, pid projec
 	switch {
 	case data.Bundle != nil:
 		data.Bundle.Form.keep(in)
-		if data.Bundle.Name != nil {
+		if data.Bundle.Applied != nil && f.applied != "" {
+			data.Error = f.applied
+		}
+		if data.Bundle.Name != nil && !data.Bundle.Name.Fixed {
 			data.Bundle.Name.Suggested = false
 			data.Bundle.Name.setValue(in.Name)
 		}
 	case data.Customer != nil:
 		data.Customer.Form.keep(in)
 	}
-	tw.rd.triage(w, r, tw.logger, http.StatusBadRequest, data)
+	tw.rd.triage(w, r, tw.logger, f.status, data)
+}
+
+// applyActive is the refusal of a change while an apply of project pid is
+// active.
+func applyActive(pid project.ID) refusal {
+	return refusal{status: http.StatusConflict, msg: msgApplyActive, link: applyPath(pid)}
 }
 
 // decideError answers an error from Decide: a refused decision shows the
-// screen again with the reason, and anything else the error page.
+// screen again with the reason, and anything else the error page. A
+// decision refused because an apply is active has status 409.
 func (tw triageWriter) decideError(w http.ResponseWriter, r *http.Request, pid project.ID, q triageQuery, sel string, in verdictInput, err error) {
 	switch {
+	case errors.Is(err, db.ErrApplyActive):
+		tw.refuse(w, r, pid, q, sel, in, applyActive(pid))
 	case errors.Is(err, triage.ErrNotAllowed):
-		tw.reject(w, r, pid, q, sel, in, msgNotAllowed)
+		tw.refuse(w, r, pid, q, sel, in, refusal{status: http.StatusBadRequest, msg: msgNotAllowed, applied: msgAppliedFixed})
 	case errors.Is(err, db.ErrDuplicate):
 		tw.reject(w, r, pid, q, sel, in, msgDuplicate)
 	case errors.Is(err, db.ErrNotFound):
@@ -431,8 +466,11 @@ func handleMove(tw triageWriter) http.Handler {
 		}
 		dest, err := tw.store.MoveFinding(r.Context(), pid, fid, to, actorOf(r))
 		switch {
+		case errors.Is(err, db.ErrApplyActive):
+			tw.refuse(w, r, pid, q, sel, verdictInput{}, applyActive(pid))
+			return
 		case errors.Is(err, triage.ErrNotAllowed):
-			tw.reject(w, r, pid, q, sel, verdictInput{}, msgMoveNotAllowed)
+			tw.refuse(w, r, pid, q, sel, verdictInput{}, refusal{status: http.StatusBadRequest, msg: msgMoveNotAllowed, applied: msgAppliedMove})
 			return
 		case errors.Is(err, db.ErrNotFound):
 			tw.rd.fail(w, r, tw.logger, http.StatusNotFound, err)

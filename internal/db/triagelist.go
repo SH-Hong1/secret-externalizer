@@ -114,7 +114,8 @@ func readMembers(ctx context.Context, tx pgx.Tx, scanID scan.ID, b *triage.Bundl
 // one row per bundle of project $1 with a member that scan $2 found. Its
 // category, kind and preview are those of the member with the lowest ID; its
 // file and first_line are the first file and the first line in it; locations
-// counts the locations of the scan.
+// counts the locations of the scan; shell is true when every member is in a
+// shell script and applied when an apply stored the bundle's value.
 const scanBundles = `
 	WITH member AS (
 		SELECT f.id, f.bundle_id, f.file_path, f.category, f.kind, f.preview,
@@ -129,7 +130,9 @@ const scanBundles = `
 			(array_agg(m.preview ORDER BY m.id))[1] AS preview,
 			(array_agg(m.file_path ORDER BY m.file_path, m.first_line))[1] AS file,
 			(array_agg(m.first_line ORDER BY m.file_path, m.first_line))[1] AS first_line,
-			sum(m.locations)::int AS locations
+			sum(m.locations)::int AS locations,
+			bool_and(lower(m.file_path) LIKE '%.sh') AS shell,
+			b.applied_at IS NOT NULL AS applied
 		FROM bundle b JOIN member m ON m.bundle_id = b.id
 		WHERE b.project_id = $1
 		GROUP BY b.id
@@ -140,11 +143,11 @@ const scanBundles = `
 // line per file, kind and verdict, with bundle zero.
 const scanEntries = scanBundles + `, entry AS (
 		SELECT id AS bundle, category, kind, preview, name, file, first_line, verdict,
-			locations AS count, 1 AS bundles
+			locations AS count, 1 AS bundles, shell, applied
 		FROM scan_bundle WHERE category <> 'customer-data'
 		UNION ALL
 		SELECT 0, 'customer-data', kind, (array_agg(preview ORDER BY id))[1], NULL, file, min(first_line), verdict,
-			sum(locations)::int, count(*)::int
+			sum(locations)::int, count(*)::int, false, false
 		FROM scan_bundle WHERE category = 'customer-data'
 		GROUP BY file, kind, verdict
 	)`
@@ -192,7 +195,7 @@ func (s *Store) Entries(ctx context.Context, projectID project.ID, scanID scan.I
 		}
 		p.Pages = max(1, (p.Total+triage.PageSize-1)/triage.PageSize)
 		p.Page = min(max(f.Page, 1), p.Pages)
-		entries, err := readEntries(ctx, tx, scanEntries+" SELECT bundle, category, kind, preview, name, file, first_line, verdict, count, bundles FROM entry"+
+		entries, err := readEntries(ctx, tx, scanEntries+" SELECT bundle, category, kind, preview, name, file, first_line, verdict, count, bundles, shell, applied FROM entry"+
 			entryFilter+" ORDER BY category, file, first_line, bundle, kind, verdict LIMIT $6 OFFSET $7",
 			projectID, scanID, f.Category, verdict, all, triage.PageSize, (p.Page-1)*triage.PageSize)
 		p.Entries = entries
@@ -241,7 +244,7 @@ func readEntries(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]t
 			name *string
 		)
 		if err := rows.Scan(&e.Bundle, &e.Category, &e.Kind, &e.Preview, &name, &e.File, &e.FirstLine,
-			&e.Verdict, &e.Count, &e.Bundles); err != nil {
+			&e.Verdict, &e.Count, &e.Bundles, &e.Shell, &e.Applied); err != nil {
 			return nil, fmt.Errorf("reading entry row: %w", err)
 		}
 		if name != nil {
@@ -302,7 +305,8 @@ func (s *Store) SameValueBundles(ctx context.Context, projectID project.ID, scan
 	err := s.readOnly(ctx, func(tx pgx.Tx) error {
 		var err error
 		out, err = readEntries(ctx, tx, scanBundles+`
-			SELECT sb.id, sb.category, sb.kind, sb.preview, sb.name, sb.file, sb.first_line, sb.verdict, sb.locations, 1
+			SELECT sb.id, sb.category, sb.kind, sb.preview, sb.name, sb.file, sb.first_line, sb.verdict, sb.locations, 1,
+				sb.shell, sb.applied
 			FROM scan_bundle sb
 				JOIN bundle o ON o.id = sb.id
 				JOIN bundle me ON me.id = $3 AND me.project_id = $1
@@ -314,4 +318,83 @@ func (s *Store) SameValueBundles(ctx context.Context, projectID project.ID, scan
 		return nil, fmt.Errorf("listing bundles of the same value as %d: %w", id, err)
 	}
 	return out, nil
+}
+
+// AppliedCount returns the number of the project's applied bundles.
+func (s *Store) AppliedCount(ctx context.Context, projectID project.ID) (int, error) {
+	var n int
+	if err := s.pool.QueryRow(ctx, "SELECT count(*) FROM bundle WHERE project_id = $1 AND applied_at IS NOT NULL",
+		projectID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("counting applied bundles of project %d: %w", projectID, err)
+	}
+	return n, nil
+}
+
+// AppliedBundles returns one page of the project's applied bundles, newest
+// apply first, triage.AppliedPageSize to a page. A page past the last gives
+// the last and a page before the first the first. A place counts as changed
+// when its apply item is applied, in any run of the project.
+func (s *Store) AppliedBundles(ctx context.Context, projectID project.ID, page int) (triage.AppliedPage, error) {
+	var p triage.AppliedPage
+	err := s.readOnly(ctx, func(tx pgx.Tx) error {
+		if err := tx.QueryRow(ctx, "SELECT count(*) FROM bundle WHERE project_id = $1 AND applied_at IS NOT NULL",
+			projectID).Scan(&p.Total); err != nil {
+			return fmt.Errorf("counting applied bundles of project %d: %w", projectID, err)
+		}
+		p.Pages = max(1, (p.Total+triage.AppliedPageSize-1)/triage.AppliedPageSize)
+		p.Page = min(max(page, 1), p.Pages)
+		rows, err := tx.Query(ctx, `
+			WITH latest AS (
+				SELECT id, requested_at FROM scan WHERE project_id = $1 AND status = 'succeeded'
+				ORDER BY id DESC LIMIT 1
+			)
+			SELECT b.id, b.name, coalesce(f.category, ''), coalesce(f.kind, ''), coalesce(f.preview, ''),
+				b.store_path, b.applied_at, coalesce(i.locations, 0), coalesce(i.shell, false), coalesce(i.config, false),
+				coalesce(i.code_change, false), coalesce(i.last_run, 0),
+				EXISTS (SELECT 1 FROM latest WHERE latest.requested_at > coalesce(i.last_start, b.applied_at)),
+				EXISTS (SELECT 1 FROM latest
+					JOIN location l ON l.scan_id = latest.id
+					JOIN finding m ON m.id = l.finding_id
+					WHERE m.bundle_id = b.id AND latest.requested_at > coalesce(i.last_start, b.applied_at))
+			FROM bundle b
+				LEFT JOIN LATERAL (
+					SELECT category, kind, preview FROM finding WHERE bundle_id = b.id ORDER BY id LIMIT 1
+				) f ON true
+				LEFT JOIN LATERAL (
+					SELECT count(*)::int AS locations,
+						bool_or(lower(i.file_path) LIKE '%.sh') AS shell,
+						bool_or(lower(i.file_path) NOT LIKE '%.sh') AS config,
+						bool_or(i.code_change) AS code_change,
+						max(i.apply_id) AS last_run,
+						max(r.started_at) AS last_start
+					FROM apply_item i JOIN apply_run r ON r.id = i.apply_id
+					WHERE i.bundle_id = b.id AND r.project_id = $1 AND i.status = 'applied'
+				) i ON true
+			WHERE b.project_id = $1 AND b.applied_at IS NOT NULL
+			ORDER BY b.applied_at DESC, b.id DESC
+			LIMIT $2 OFFSET $3`, projectID, triage.AppliedPageSize, (p.Page-1)*triage.AppliedPageSize)
+		if err != nil {
+			return fmt.Errorf("listing applied bundles of project %d: %w", projectID, err)
+		}
+		p.Entries, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (triage.Applied, error) {
+			var (
+				a    triage.Applied
+				name *string
+			)
+			err := row.Scan(&a.Bundle, &name, &a.Category, &a.Kind, &a.Preview, &a.StorePath, &a.AppliedAt, &a.Locations,
+				&a.Shell, &a.Config, &a.CodeChange, &a.LastRun, &a.Checked, &a.Reappeared)
+			if name != nil {
+				a.Name = triage.Name(*name)
+			}
+			return a, err
+		})
+		if err != nil {
+			return fmt.Errorf("listing applied bundles of project %d: %w", projectID, err)
+		}
+		return nil
+	})
+	if err != nil {
+		return triage.AppliedPage{}, err
+	}
+	return p, nil
 }

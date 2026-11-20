@@ -61,7 +61,8 @@ func (h historySuggester) Suggest(ctx context.Context, b triage.Bundle) (triage.
 var errBadQuery = errors.New("bad triage query")
 
 // parseTriageQuery reads the filter, page and selection of a triage screen
-// request. The status defaults to undecided and the page to 1.
+// request. The status defaults to undecided and the page to 1; it may also
+// be statusApplied.
 func parseTriageQuery(r *http.Request) (triageQuery, selection, error) {
 	return parseTriageValues(r.URL.Query())
 }
@@ -75,7 +76,7 @@ func parseTriageValues(v url.Values) (triageQuery, selection, error) {
 	if v.Has("status") {
 		q.Status = v.Get("status")
 	}
-	if !validStatus(q.Status) {
+	if !validStatus(q.Status) && q.Status != statusApplied {
 		return q, selection{}, fmt.Errorf("%w: status %q", errBadQuery, q.Status)
 	}
 	if v.Has("page") {
@@ -98,7 +99,9 @@ func parseTriageValues(v url.Values) (triageQuery, selection, error) {
 // handleTriage shows the triage screen of a project: one page of the
 // bundles of its newest succeeded scan, and the detail of the selected one,
 // or of the first when none is selected. An htmx request that targets the
-// detail gets only the detail and the list, which htmx swaps in place.
+// detail gets only the detail and the list, which htmx swaps in place. The
+// status statusApplied shows one page of the project's applied bundles
+// instead, which take no verdict.
 func handleTriage(logger *slog.Logger, rd *renderer, projects ProjectStore, store TriageStore, suggester Suggester) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
@@ -121,7 +124,7 @@ func handleTriage(logger *slog.Logger, rd *renderer, projects ProjectStore, stor
 			rd.fail(w, r, logger, http.StatusBadRequest, err)
 			return
 		}
-		data := triagePage{User: u, Project: p, Status: q.Status, Options: newCategoryOptions(q.Category)}
+		data := triagePage{User: u, Project: p, Status: q.Status, Options: newCategoryOptions(q.Category), ApplyHref: applyPath(p.ID)}
 		sc, err := store.LatestScan(r.Context(), p.ID)
 		if errors.Is(err, db.ErrNotFound) {
 			data.NoScan = true
@@ -132,6 +135,14 @@ func handleTriage(logger *slog.Logger, rd *renderer, projects ProjectStore, stor
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading latest scan: %w", err))
 			return
 		}
+		if q.Status == statusApplied {
+			if err := fillAppliedPage(r.Context(), store, &data, q, sc); err != nil {
+				rd.fail(w, r, logger, http.StatusInternalServerError, err)
+				return
+			}
+			rd.page(w, r, logger, http.StatusOK, "triage.html", data)
+			return
+		}
 		status, err := fillTriagePage(r.Context(), logger, store, suggester, &data, q, sel, sc)
 		if err != nil {
 			rd.fail(w, r, logger, status, err)
@@ -139,6 +150,36 @@ func handleTriage(logger *slog.Logger, rd *renderer, projects ProjectStore, stor
 		}
 		rd.triage(w, r, logger, http.StatusOK, data)
 	})
+}
+
+// fillAppliedPage reads the page of applied bundles q asks for into data,
+// with the counts of the status filters for scan sc.
+func fillAppliedPage(ctx context.Context, store TriageStore, data *triagePage, q triageQuery, sc scan.Scan) error {
+	pid := data.Project.ID
+	counts, err := store.Entries(ctx, pid, sc.ID, triage.Filter{Status: triage.StatusUndecided, Page: 1})
+	if err != nil {
+		return fmt.Errorf("counting verdicts: %w", err)
+	}
+	applied, err := store.AppliedBundles(ctx, pid, q.Page)
+	if err != nil {
+		return fmt.Errorf("listing applied bundles: %w", err)
+	}
+	setScanHead(data, sc, counts.Counts)
+	data.Statuses = newStatusChips(pid, q, counts.Counts, applied.Total)
+	data.Applied = newAppliedTable(pid, applied)
+	return nil
+}
+
+// setScanHead fills the head of the triage screen: the scan and the
+// numbers of bundles.
+func setScanHead(data *triagePage, sc scan.Scan, counts map[triage.Verdict]int) {
+	data.ScanID, data.ScanAt, data.Commit = sc.ID, formatTime(sc.RequestedAt), shortCommit(sc.CommitHash)
+	for v, n := range counts {
+		data.Total += n
+		if v == "" {
+			data.Undecided = n
+		}
+	}
 }
 
 // fillTriagePage reads the list page and the selected detail of scan sc into
@@ -166,14 +207,13 @@ func fillTriagePage(ctx context.Context, logger *slog.Logger, store TriageStore,
 		}
 	}
 
-	data.ScanID, data.ScanAt, data.Commit = sc.ID, formatTime(sc.RequestedAt), shortCommit(sc.CommitHash)
-	for v, n := range page.Counts {
-		data.Total += n
-		if v == "" {
-			data.Undecided = n
-		}
+	applied, err := store.AppliedCount(ctx, pid)
+	if err != nil {
+		return http.StatusInternalServerError, fmt.Errorf("counting applied bundles: %w", err)
 	}
-	data.Statuses = newStatusChips(pid, q, page.Counts)
+	data.ApplyHref = applyPath(pid)
+	setScanHead(data, sc, page.Counts)
+	data.Statuses = newStatusChips(pid, q, page.Counts, applied)
 	data.Rows = newListRows(pid, q, page.Entries, q.Sel)
 	data.ShowState = q.Status == triage.StatusAll
 	data.Page, data.Pages, data.Entries = page.Page, page.Pages, page.Total
@@ -203,8 +243,14 @@ func fillTriagePage(ctx context.Context, logger *slog.Logger, store TriageStore,
 			return http.StatusInternalServerError, fmt.Errorf("listing bundles of the same value: %w", err)
 		}
 		data.Bundle = newBundleDetail(pid, ret, b, s, same)
-		if data.User.Has(auth.RoleAdmin) && hasOriginal(b) {
+		switch {
+		case !data.User.Has(auth.RoleAdmin):
+		case hasOriginal(b):
 			data.Bundle.Original = newOriginalForm(pid, b.ID, ret)
+		case b.Decision.Verdict == "":
+			// The value's other bundles are all false positives, so the
+			// scan did not keep its original; the next scan keeps it.
+			data.Bundle.Original = &originalView{Shown: true, Notice: msgNoOriginal}
 		}
 	default:
 		return fillCustomerDetail(ctx, store, data, sc.ID, sel.Group, ret)

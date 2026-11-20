@@ -598,3 +598,64 @@ func TestVerdictFormGuard(t *testing.T) {
 		wantNotIn(t, "first submit button of sel="+sel, guard, `name="verdict"`)
 	}
 }
+
+func TestVerdict_WhileApplying(t *testing.T) {
+	active := fmt.Errorf("deciding: %w", db.ErrApplyActive)
+	t.Run("verdict", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.decideErr = active
+		res := e.post(t, verdictPath, verdictForm("false-positive", "", "", "", "status=undecided"), nil)
+		if res.status != http.StatusConflict {
+			t.Fatalf("POST verdict while applying status = %d, want 409", res.status)
+		}
+		wantIn(t, "refused verdict detail", section(res.body, "section", "detail"), "적용 중에는 판정을 바꿀 수 없습니다", `href="/projects/1/apply"`)
+	})
+	t.Run("customer data", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.decideErr = active
+		form := url.Values{"verdict": {"redact"}, "kind": {"phone"}, "file": {"logs/sample.log"}, "from": {""}, "return": {"status=undecided"}}
+		res := e.post(t, "/projects/1/customer-data/verdict", form, nil)
+		if res.status != http.StatusConflict {
+			t.Fatalf("POST customer data verdict while applying status = %d, want 409", res.status)
+		}
+		wantIn(t, "refused verdict detail", section(res.body, "section", "detail"), "적용 중에는 판정을 바꿀 수 없습니다")
+	})
+	t.Run("move", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.moveErr = active
+		res := e.post(t, "/projects/1/findings/1002/move", url.Values{"to": {"new"}, "from": {"101"}, "return": {"status=undecided"}}, nil)
+		if res.status != http.StatusConflict {
+			t.Fatalf("POST move while applying status = %d, want 409", res.status)
+		}
+		wantIn(t, "refused move detail", section(res.body, "section", "detail"), "적용 중에는 판정을 바꿀 수 없습니다")
+	})
+}
+
+func TestVerdict_AppliedBundleRefused(t *testing.T) {
+	refused := fmt.Errorf("deciding: %w", triage.ErrNotAllowed)
+	t.Run("verdict", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.putBundle(appliedPassword(e))
+		e.triage.decideErr = refused
+		res := e.post(t, verdictPath, verdictForm("false-positive", "", "", "", "status=undecided"), nil)
+		if res.status != http.StatusBadRequest {
+			t.Fatalf("POST verdict on an applied bundle status = %d, want 400", res.status)
+		}
+		wantIn(t, "refused verdict detail", section(res.body, "section", "detail"), "적용한 묶음은 판정과 이름을 바꿀 수 없습니다")
+		wantNotIn(t, "refused verdict detail", section(res.body, "section", "detail"), msgNotAllowedText)
+	})
+	t.Run("move", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.putBundle(appliedPassword(e))
+		e.triage.moveErr = refused
+		res := e.post(t, "/projects/1/findings/1002/move", url.Values{"to": {"new"}, "from": {"101"}, "return": {"status=undecided"}}, nil)
+		if res.status != http.StatusBadRequest {
+			t.Fatalf("POST move out of an applied bundle status = %d, want 400", res.status)
+		}
+		wantIn(t, "refused move detail", section(res.body, "section", "detail"),
+			"적용한 위치의 항목과 적용한 묶음의 마지막 항목은 옮길 수 없고, 옮겨 갈 묶음은 같은 값이며 그 판정이 이 항목을 받아들여야 합니다")
+	})
+}
+
+// msgNotAllowedText is the refusal of a verdict a bundle does not allow.
+const msgNotAllowedText = "이 항목에는 고를 수 없는 판정입니다."

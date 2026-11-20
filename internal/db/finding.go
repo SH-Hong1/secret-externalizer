@@ -210,3 +210,25 @@ func (s *Store) CategoryCounts(ctx context.Context, id scan.ID) ([]scan.Category
 	}
 	return out, nil
 }
+
+// Reappeared returns the number of findings the scan found that are in a
+// bundle an apply had stored the value of before the scan was requested:
+// values of applied bundles that the scan still finds in the source,
+// whether at a place an apply replaced or at one it never replaced (a
+// member the apply skipped or that was found after it). A bundle applied
+// after the scan was requested does not count, so the number of a scan
+// never changes. A bundle's apply time is set once, by its first apply.
+func (s *Store) Reappeared(ctx context.Context, id scan.ID) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, `
+		SELECT count(DISTINCT f.id)
+		FROM scan s
+			JOIN location l ON l.scan_id = s.id
+			JOIN finding f ON f.id = l.finding_id
+			JOIN bundle b ON b.id = f.bundle_id
+		WHERE s.id = $1 AND b.applied_at < s.requested_at`, id).Scan(&n)
+	if err != nil {
+		return 0, fmt.Errorf("counting reappeared values of scan %d: %w", id, err)
+	}
+	return n, nil
+}

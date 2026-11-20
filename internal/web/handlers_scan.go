@@ -7,15 +7,21 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
+// msgScanWhileApplying is the refusal of a scan requested while an apply of
+// the project is being checked, queued or run.
+const msgScanWhileApplying = "이 프로젝트의 적용이 진행 중이라 스캔을 시작할 수 없습니다. 적용이 끝난 뒤 프로젝트 화면에서 다시 시작해 주세요."
+
 // handleScanCreate requests a scan of a project for the signed-in user and
 // sends the browser to the scan page. When the project already has an active
-// scan, it sends the browser to that scan instead.
+// scan, it sends the browser to that scan instead. An active apply of the
+// project refuses the scan with status 409.
 func handleScanCreate(logger *slog.Logger, rd *renderer, scans ScanStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -27,6 +33,8 @@ func handleScanCreate(logger *slog.Logger, rd *renderer, scans ScanStore) http.H
 		switch {
 		case err == nil, errors.Is(err, db.ErrScanActive):
 			http.Redirect(w, r, "/scans/"+strconv.FormatInt(int64(id), 10), http.StatusSeeOther)
+		case errors.Is(err, db.ErrApplyActive):
+			rd.errorPage(w, r, logger, http.StatusConflict, msgScanWhileApplying, false, err)
 		case errors.Is(err, db.ErrNotFound):
 			rd.fail(w, r, logger, http.StatusNotFound, err)
 		default:
@@ -39,8 +47,10 @@ func handleScanCreate(logger *slog.Logger, rd *renderer, scans ScanStore) http.H
 // page refreshes itself while the scan is queued or running. A succeeded
 // scan shows its counts per category and what it could not look at; the
 // findings themselves are on the triage screen, which works on the project's
-// latest succeeded scan, so the page links there only from that scan.
-func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore, store TriageStore) http.Handler {
+// latest succeeded scan, so the page links there only from that scan. A
+// scan that confirms an apply names its run and says whether the values the
+// apply replaced are gone.
+func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans ScanStore, store TriageStore, applies ApplyStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		u, _ := userFrom(r.Context()) // requireLogin guarantees a user
 		n, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
@@ -64,6 +74,16 @@ func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans 
 		}
 		page := newScanPage(sc)
 		page.User, page.ProjectName = u, p.Name
+		if sc.ApplyID != 0 {
+			n := 0
+			if sc.Status == scan.StatusSucceeded {
+				if n, err = applies.Reappeared(r.Context(), sc.ID); err != nil {
+					rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("counting reappeared values: %w", err))
+					return
+				}
+			}
+			page.Confirmation = newConfirmation(sc, apply.ID(sc.ApplyID), p.ID, n)
+		}
 		if sc.Status == scan.StatusFailed {
 			rd.page(w, r, logger, http.StatusOK, "scan.html", page)
 			return

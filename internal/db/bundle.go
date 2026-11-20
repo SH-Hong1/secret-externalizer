@@ -270,15 +270,17 @@ func decisionDetail(d triage.Decision) map[string]string {
 // fingerprint, holds customer data while the finding does not, or has a
 // decision it would no longer allow with the finding in it.
 // The decision is checked against the finding and the bundle's members that
-// the project's latest succeeded scan found. A finding moves out of a
-// bundle externalized by an apply only when that scan found it and it is not
-// the bundle's last finding (otherwise triage.ErrNotAllowed): a location the
-// apply replaced no longer holds the value, so the latest scan does not find
-// it, and it holds the placeholder of the bundle's name, which the manifest
-// and the apply's records name; deleting the bundle would free a name the
-// source and the store still use. A location the scan still finds holds the
-// value, and the next apply would replace it under the bundle's name unless
-// it moves.
+// the project's latest succeeded scan found. A finding with a place an apply
+// changed or is changing (an apply item that is applied or writing) never
+// moves (triage.ErrNotAllowed). Otherwise a finding moves out of a bundle
+// externalized by an apply only when that scan found it and it is not the
+// bundle's last finding (otherwise triage.ErrNotAllowed): a location the
+// apply replaced holds the placeholder of the bundle's name, which the
+// manifest and the apply's records name, and a scan after the apply no
+// longer finds it there; deleting the bundle would free a name the source
+// and the store still use. A location the scan still finds and no apply
+// changed holds the value, and the next apply would replace it under the
+// bundle's name unless it moves.
 // Nothing moves while the project has an apply that is being checked, is
 // queued or runs (ErrApplyActive).
 func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (_ triage.BundleID, err error) {
@@ -319,6 +321,19 @@ func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id findin
 	}
 	if to == from {
 		return from, nil
+	}
+	// Until a scan after the apply looks at it, the latest scan still lists
+	// a place an apply changed, so its apply record is what tells it apart.
+	var changed bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM apply_item i JOIN apply_run r ON r.id = i.apply_id
+			WHERE i.finding_id = $1 AND r.project_id = $2 AND i.status IN ('applied', 'writing'))`,
+		id, projectID).Scan(&changed); err != nil {
+		return 0, fmt.Errorf("reading apply records of finding %d: %w", id, err)
+	}
+	if changed {
+		return 0, fmt.Errorf("moving finding %d out of applied bundle %d: %w", id, from, triage.ErrNotAllowed)
 	}
 
 	// Locking in ID order keeps two calls from waiting on each other; a new

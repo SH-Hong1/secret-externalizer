@@ -3,6 +3,7 @@ package web
 import (
 	"strconv"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
@@ -16,7 +17,9 @@ const auditTimeLayout = "2006-01-02 15:04:05"
 // auditRow is one event of the audit trail as the page shows it. Move rows
 // show the finding and the bundles it left and joined; verdict rows show the
 // bundle with its kind, the file of customer data, and the name, hold reason
-// and note of a decision; reveal rows show the bundle.
+// and note of a decision; reveal rows show the bundle; apply rows link the
+// run the user confirmed and say whether the user agreed to redact files
+// that cannot be restored.
 type auditRow struct {
 	At          string
 	User        string
@@ -33,6 +36,9 @@ type auditRow struct {
 	Name        string
 	Reason      string
 	Note        string
+	Run         string
+	RunHref     string
+	Consent     string
 }
 
 // newAuditRows shapes events for the audit page.
@@ -52,7 +58,16 @@ func newAuditRows(events []audit.Event) []auditRow {
 		case audit.ActionReveal:
 			row.ActionLabel, row.ActionClass = "원본 보기", "dark"
 		case audit.ActionApply:
-			row.ActionLabel, row.ActionClass = "적용 요청", "queued"
+			row.ActionLabel, row.ActionClass = "적용", "queued"
+			if n, err := strconv.ParseInt(e.Detail[audit.DetailApply], 10, 64); err == nil && n > 0 {
+				row.Run, row.RunHref = "적용 #"+strconv.FormatInt(n, 10), runPath(apply.ID(n))
+			}
+			switch e.Detail[audit.DetailIrreversible] {
+			case "yes":
+				row.Consent = "복구 불가 동의함"
+			case "no":
+				row.Consent = "복구 불가 동의 안 함"
+			}
 		case audit.ActionMove:
 			row.ActionLabel, row.ActionClass, row.Move = "묶음 옮기기", "queued", true
 			row.Finding = "항목 #" + strconv.FormatInt(int64(e.FindingID), 10)

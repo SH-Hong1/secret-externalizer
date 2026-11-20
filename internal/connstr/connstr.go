@@ -21,8 +21,11 @@ type Part struct {
 // placeholder starts a ${...} property placeholder, which is not a value.
 const placeholder = "${"
 
-// Split returns the components of value, in order of position. It returns
-// nil when value is not a connection string it knows or has no component.
+// Split returns the components of value, in order of position, and whether
+// it knows value as a connection string. It returns nil and false when it
+// does not know value. It returns no components and true when it knows value
+// and every component in it is a ${...} placeholder, so nothing in it is a
+// value.
 //
 // It knows three forms:
 //
@@ -46,10 +49,10 @@ const placeholder = "${"
 // A component that is a ${...} placeholder is left out, and every span
 // starts and ends at an ASCII delimiter or an end of value, so it falls on
 // character boundaries. A value that is not valid UTF-8, or whose host or
-// port is malformed, gives nil.
-func Split(value []byte) []Part {
+// port is malformed, is not known.
+func Split(value []byte) ([]Part, bool) {
 	if !utf8.Valid(value) {
-		return nil
+		return nil, false
 	}
 	s := string(value)
 	sp := &splitter{s: s}
@@ -62,23 +65,42 @@ func Split(value []byte) []Part {
 	default:
 		ok = sp.target()
 	}
-	if !ok || len(sp.parts) == 0 {
-		return nil
+	if !ok {
+		return nil, false
+	}
+	if len(sp.parts) == 0 {
+		// Nothing is a component unless a placeholder stood where one would
+		// be, as in a TNS descriptor, whose hosts are not split.
+		return nil, sp.placeholders > 0
 	}
 	slices.SortFunc(sp.parts, func(a, b Part) int { return a.Span.Start - b.Span.Start })
-	return sp.parts
+	return sp.parts, true
+}
+
+// IsPlaceholder reports whether value is one ${...} placeholder: it starts
+// with ${ and ends with the } that closes it.
+func IsPlaceholder(value []byte) bool {
+	s := string(value)
+	return strings.HasPrefix(s, placeholder) && closeBrace(s, len(placeholder)) == len(s)-1
 }
 
 // splitter collects the parts of s.
 type splitter struct {
 	s     string
 	parts []Part
+	// placeholders counts the components left out because they are
+	// placeholders.
+	placeholders int
 }
 
 // add records s[start:end] as a part of kind k, unless it is empty or a
 // placeholder.
 func (sp *splitter) add(k finding.Kind, start, end int) {
-	if end <= start || strings.HasPrefix(sp.s[start:end], placeholder) {
+	if end <= start {
+		return
+	}
+	if strings.HasPrefix(sp.s[start:end], placeholder) {
+		sp.placeholders++
 		return
 	}
 	sp.parts = append(sp.parts, Part{Kind: k, Span: finding.Span{Start: start, End: end}})

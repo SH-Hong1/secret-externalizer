@@ -15,6 +15,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
@@ -676,6 +677,12 @@ func TestFailApply(t *testing.T) {
 	if diff := cmp.Diff(map[string][]apply.Written{"conf/a.yml": {{AfterHash: hashOf("1")}}}, writtenFiles(t, s, pid)); diff != "" {
 		t.Errorf("WrittenFiles(%d) after failing (-want +got):\n%s", pid, diff)
 	}
+	// The run changed a.yml, so it requested a confirmation scan; it is
+	// finished here so that the subtests claim their own jobs.
+	rescan := assertRescan(t, s, pid, id)
+	if err := s.FailScan(ctx, claimRescan(t, s, rescan).ID, "worker-a", rescan, "fake reason"); err != nil {
+		t.Fatalf("FailScan(%d) error = %v", rescan, err)
+	}
 
 	t.Run("unknown reason", func(t *testing.T) {
 		pid, _, _, _ := decidedProject(t, s, "reason")
@@ -907,5 +914,342 @@ func TestBeginFile_RewriteWritten(t *testing.T) {
 				t.Errorf("WrittenFiles(%d) after a second rewrite did not happen (-want +got):\n%s", pid, diff)
 			}
 		})
+	}
+}
+
+// claimRescan claims the job of the confirmation scan id and starts it.
+func claimRescan(t *testing.T, s *db.Store, id scan.ID) job.Job {
+	t.Helper()
+	j, err := s.ClaimJob(t.Context(), "worker-a", time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimJob() error = %v", err)
+	}
+	if j.Kind != job.KindScan || j.ScanID != int64(id) {
+		t.Fatalf("ClaimJob() = %+v, want the job of scan %d", j, id)
+	}
+	if err := s.StartScan(t.Context(), id); err != nil {
+		t.Fatalf("StartScan(%d) error = %v", id, err)
+	}
+	return j
+}
+
+// assertRescan fails the test unless run id points at a queued scan of the
+// project requested by tester for the run, with one queued scan job.
+func assertRescan(t *testing.T, s *db.Store, pid project.ID, id apply.ID) scan.ID {
+	t.Helper()
+	r := readRun(t, s, id)
+	if r.RescanID == 0 {
+		t.Fatalf("ApplyRun(%d).RescanID = 0, want a confirmation scan", id)
+	}
+	sc, err := s.Scan(t.Context(), r.RescanID)
+	if err != nil {
+		t.Fatalf("Scan(%d) error = %v", r.RescanID, err)
+	}
+	if sc.ProjectID != pid || sc.Status != scan.StatusQueued || sc.ApplyID != int64(id) ||
+		sc.RequestedBy != tester.Subject || sc.RequesterName != tester.Name {
+		t.Errorf("Scan(%d) = %+v, want queued for project %d and run %d, requested by %+v", r.RescanID, sc, pid, id, tester)
+	}
+	if jr, err := s.Job(t.Context(), int64(r.RescanID)); err != nil || jr.State != "queued" {
+		t.Errorf("Job(scan %d) = %+v, %v, want queued", r.RescanID, jr, err)
+	}
+	return r.RescanID
+}
+
+func TestFinishApply_RequestsRescan(t *testing.T) {
+	t.Run("applied", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, pw, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
+		id, j := claimApply(t, s, pid)
+		writeFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+		if err := s.FinishApply(t.Context(), j.ID, "worker-a", id, nil); err != nil {
+			t.Fatalf("FinishApply(%d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateSucceeded || r.Applied != 1 {
+			t.Errorf("ApplyRun(%d) = %+v, want succeeded with 1 applied", id, r)
+		}
+		assertRescan(t, s, pid, id)
+		if n := jobsOfKind(t, s, "scan"); n != scans+1 {
+			t.Errorf("scan jobs after finishing = %d, want %d", n, scans+1)
+		}
+	})
+	t.Run("all skipped", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, pw, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
+		id, j := claimApply(t, s, pid)
+		skipped := replaceItem(t, s, pid, pw, "conf/a.yml")
+		skipped.Status, skipped.Reason = apply.StatusSkipped, apply.ReasonFileChanged
+		if err := s.FinishApply(t.Context(), j.ID, "worker-a", id, []apply.Item{skipped}); err != nil {
+			t.Fatalf("FinishApply(%d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateSucceeded || r.RescanID != 0 {
+			t.Errorf("ApplyRun(%d) = %+v, want succeeded with no confirmation scan", id, r)
+		}
+		if n := jobsOfKind(t, s, "scan"); n != scans {
+			t.Errorf("scan jobs after finishing = %d, want %d", n, scans)
+		}
+	})
+	t.Run("scan cannot be added", func(t *testing.T) {
+		s := newMigratedStore(t)
+		ctx := t.Context()
+		pid, _, pw, _ := decidedProject(t, s, "shop")
+		id, j := claimApply(t, s, pid)
+		writeFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+		// The exclusion keeps a scan from being requested while the run is
+		// running; a scan put in directly makes the confirmation scan fail
+		// the one-active-scan index.
+		blocking, err := s.InsertRawScanJob(ctx, pid, "queued", "queued")
+		if err != nil {
+			t.Fatalf("InsertRawScanJob(%d) error = %v", pid, err)
+		}
+		if err := s.FinishApply(ctx, j.ID, "worker-a", id, nil); !errors.Is(err, db.ErrScanActive) {
+			t.Fatalf("FinishApply(%d) with a scan in the way error = %v, want ErrScanActive", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateRunning || r.RescanID != 0 || !r.FinishedAt.IsZero() {
+			t.Errorf("ApplyRun(%d) after a failed finish = %+v, want running, no confirmation scan", id, r)
+		}
+		if jr, err := s.ApplyJob(ctx, int64(id), "apply"); err != nil || jr.State != "running" {
+			t.Errorf("ApplyJob(%d, apply) = %+v, %v, want running", id, jr, err)
+		}
+		if n, err := s.Count(ctx, "scan"); err != nil || n != 2 {
+			t.Errorf("rows in scan = %d, %v, want 2 (the decided scan and scan %d)", n, err, blocking)
+		}
+	})
+}
+
+func TestFailApply_RequestsRescan(t *testing.T) {
+	t.Run("files changed", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, pw, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
+		id, j := claimApply(t, s, pid)
+		writeFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+		if err := s.FailApply(t.Context(), j.ID, "worker-a", id, apply.FailureManifestWrite, nil, nil); err != nil {
+			t.Fatalf("FailApply(%d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateFailed || r.Applied != 1 {
+			t.Errorf("ApplyRun(%d) = %+v, want failed with 1 applied", id, r)
+		}
+		assertRescan(t, s, pid, id)
+		if n := jobsOfKind(t, s, "scan"); n != scans+1 {
+			t.Errorf("scan jobs after failing = %d, want %d", n, scans+1)
+		}
+	})
+	// A file announced and not confirmed may have been renamed although its
+	// record failed; the run is rescanned as if it had changed the file.
+	t.Run("file being written", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, pw, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
+		id, j := claimApply(t, s, pid)
+		beginFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+		if err := s.FailApply(t.Context(), j.ID, "worker-a", id, apply.FailureOther, nil, nil); err != nil {
+			t.Fatalf("FailApply(%d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateFailed || r.Applied != 0 {
+			t.Errorf("ApplyRun(%d) = %+v, want failed with nothing applied", id, r)
+		}
+		assertRescan(t, s, pid, id)
+		if n := jobsOfKind(t, s, "scan"); n != scans+1 {
+			t.Errorf("scan jobs after failing = %d, want %d", n, scans+1)
+		}
+	})
+	t.Run("check", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, _, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
+		id := requestCheck(t, s, pid)
+		j, err := s.ClaimJob(t.Context(), "worker-a", time.Minute)
+		if err != nil {
+			t.Fatalf("ClaimJob() error = %v", err)
+		}
+		if err := s.FailApply(t.Context(), j.ID, "worker-a", id, apply.FailureNotRepository, nil, nil); err != nil {
+			t.Fatalf("FailApply(check %d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateFailed || r.RescanID != 0 {
+			t.Errorf("ApplyRun(%d) = %+v, want failed with no confirmation scan", id, r)
+		}
+		if n := jobsOfKind(t, s, "scan"); n != scans {
+			t.Errorf("scan jobs after failing the check = %d, want %d", n, scans)
+		}
+	})
+	t.Run("nothing changed", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, _, _ := decidedProject(t, s, "shop")
+		scans := jobsOfKind(t, s, "scan")
+		id, j := claimApply(t, s, pid)
+		if err := s.FailApply(t.Context(), j.ID, "worker-a", id, apply.FailureDirty, []apply.Blocker{apply.BlockerDirty}, nil); err != nil {
+			t.Fatalf("FailApply(%d) error = %v", id, err)
+		}
+		if r := readRun(t, s, id); r.State != apply.StateFailed || r.RescanID != 0 {
+			t.Errorf("ApplyRun(%d) = %+v, want failed with no confirmation scan", id, r)
+		}
+		if n := jobsOfKind(t, s, "scan"); n != scans {
+			t.Errorf("scan jobs after failing = %d, want %d", n, scans)
+		}
+	})
+}
+
+func TestReappeared(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, _, pw, _ := decidedProject(t, s, "shop")
+	id, j := claimApply(t, s, pid)
+	writeFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+	writeFile(t, s, id, "conf/b.xml", hashOf("2"), replaceItem(t, s, pid, pw, "conf/b.xml"))
+	if err := s.FinishApply(ctx, j.ID, "worker-a", id, nil); err != nil {
+		t.Fatalf("FinishApply(%d) error = %v", id, err)
+	}
+	rescan := assertRescan(t, s, pid, id)
+
+	// The confirmation scan finds the password again in b.xml, and the host
+	// and phone numbers no apply touched.
+	rj := claimRescan(t, s, rescan)
+	again := []finding.Finding{
+		password("conf/b.xml"), password("web/c.jsp"),
+		host("conf/a.yml"), host("conf/b.xml"), phone("logs/x.log"), phone("logs/y.log"),
+	}
+	if err := s.SaveResult(ctx, rj.ID, "worker-a", rescan, result(again...)); err != nil {
+		t.Fatalf("SaveResult(scan %d) error = %v", rescan, err)
+	}
+	if n, err := s.Reappeared(ctx, rescan); err != nil || n != 1 {
+		t.Errorf("Reappeared(%d) = %d, %v, want 1", rescan, n, err)
+	}
+	// The host in a.yml is applied after the confirmation scan; that scan
+	// still counts only what had been applied when it was requested.
+	if err := s.MarkApplied(ctx, bundleOf(t, s, pid, fpB, "conf/a.yml"), "secret/data/projects/1/ext.db.main.host"); err != nil {
+		t.Fatalf("MarkApplied(host) error = %v", err)
+	}
+	if n, err := s.Reappeared(ctx, rescan); err != nil || n != 1 {
+		t.Errorf("Reappeared(%d) after a later apply = %d, %v, want 1", rescan, n, err)
+	}
+
+	clean := save(t, s, pid, password("web/c.jsp"), host("conf/b.xml"))
+	if n, err := s.Reappeared(ctx, clean); err != nil || n != 0 {
+		t.Errorf("Reappeared(%d) = %d, %v, want 0", clean, n, err)
+	}
+}
+
+func TestAppliedBundles(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, _, pw, _ := decidedProject(t, s, "shop")
+	if p, err := s.AppliedBundles(ctx, pid, 1); err != nil || p.Total != 0 || p.Page != 1 || p.Pages != 1 || len(p.Entries) != 0 {
+		t.Fatalf("AppliedBundles(%d, 1) before an apply = %+v, %v, want an empty first page", pid, p, err)
+	}
+	id, j := claimApply(t, s, pid)
+	java := replaceItem(t, s, pid, pw, "conf/a.yml")
+	java.CodeChange = true
+	writeFile(t, s, id, "conf/a.yml", hashOf("1"), java)
+	writeFile(t, s, id, "conf/b.xml", hashOf("2"), replaceItem(t, s, pid, pw, "conf/b.xml"))
+	if err := s.FinishApply(ctx, j.ID, "worker-a", id, nil); err != nil {
+		t.Fatalf("FinishApply(%d) error = %v", id, err)
+	}
+
+	got, err := s.AppliedBundles(ctx, pid, 9)
+	if err != nil {
+		t.Fatalf("AppliedBundles(%d, 9) error = %v", pid, err)
+	}
+	if got.Total != 1 || got.Page != 1 || got.Pages != 1 || len(got.Entries) != 1 {
+		t.Fatalf("AppliedBundles(%d, 9) = %+v, want the one applied bundle on page 1", pid, got)
+	}
+	a := got.Entries[0]
+	if a.AppliedAt.IsZero() {
+		t.Errorf("AppliedBundles(%d)[0].AppliedAt is zero, want the apply time", pid)
+	}
+	a.AppliedAt = time.Time{}
+	want := triage.Applied{
+		Bundle: pw, Name: "db.main.password", Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "****",
+		StorePath: java.StorePath, Locations: 2, Config: true, CodeChange: true, LastRun: int64(id),
+	}
+	if n, err := s.AppliedCount(ctx, pid); err != nil || n != 1 {
+		t.Errorf("AppliedCount(%d) = %d, %v, want 1", pid, n, err)
+	}
+	if diff := cmp.Diff(want, a); diff != "" {
+		t.Errorf("AppliedBundles(%d)[0] before the confirmation scan (-want +got):\n%s", pid, diff)
+	}
+
+	// The confirmation scan finds the password again in b.xml.
+	rescan := assertRescan(t, s, pid, id)
+	if err := s.SaveResult(ctx, claimRescan(t, s, rescan).ID, "worker-a", rescan, result(password("conf/b.xml"))); err != nil {
+		t.Fatalf("SaveResult(scan %d) error = %v", rescan, err)
+	}
+	if got, err := s.AppliedBundles(ctx, pid, 1); err != nil || len(got.Entries) != 1 || !got.Entries[0].Reappeared || !got.Entries[0].Checked {
+		t.Errorf("AppliedBundles(%d, 1) after the value reappeared = %+v, %v, want it checked and reappeared", pid, got, err)
+	}
+	page, err := s.Entries(ctx, pid, rescan, triage.Filter{Status: triage.StatusAll, Page: 1})
+	if err != nil {
+		t.Fatalf("Entries(%d) error = %v", rescan, err)
+	}
+	if len(page.Entries) != 1 || !page.Entries[0].Applied || page.Entries[0].Shell {
+		t.Errorf("Entries(%d) = %+v, want the applied bundle, not in a shell script", rescan, page.Entries)
+	}
+
+	clean := save(t, s, pid, host("conf/a.yml"))
+	if got, err := s.AppliedBundles(ctx, pid, 1); err != nil || len(got.Entries) != 1 || got.Entries[0].Reappeared || !got.Entries[0].Checked {
+		t.Errorf("AppliedBundles(%d, 1) after scan %d = %+v, %v, want it checked and gone", pid, clean, got, err)
+	}
+}
+
+func TestEntries_Shell(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	sid := save(t, s, pid, password("bin/run.sh"), password("deploy/start.SH"), host("bin/run.sh"), host("conf/a.yml"))
+	page, err := s.Entries(t.Context(), pid, sid, triage.Filter{Status: triage.StatusAll, Page: 1})
+	if err != nil {
+		t.Fatalf("Entries(%d) error = %v", sid, err)
+	}
+	shell := map[string]bool{}
+	for _, e := range page.Entries {
+		shell[string(e.Kind)+" "+e.File] = e.Shell
+	}
+	want := map[string]bool{"password bin/run.sh": true, "host bin/run.sh": true, "host conf/a.yml": false}
+	if diff := cmp.Diff(want, shell); diff != "" {
+		t.Errorf("Entries(%d) shell by line (-want +got):\n%s", sid, diff)
+	}
+}
+
+func TestApplyHistory(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, sid, pw, _ := decidedProject(t, s, "shop")
+	applyRunIn(t, s, pid, sid, apply.StateSuperseded) // a replaced check is not listed
+	applyRunIn(t, s, pid, sid, apply.StateFailed)     // a failed check is not listed
+	// The queue gave up on this run after it changed a.yml: its stored
+	// counts were never filled.
+	gaveUp, _ := claimApply(t, s, pid)
+	writeFile(t, s, gaveUp, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+	skipped := replaceItem(t, s, pid, pw, "conf/b.xml")
+	skipped.Status, skipped.Reason = apply.StatusSkipped, apply.ReasonFileChanged
+	if err := s.InsertApplyItem(ctx, gaveUp, skipped); err != nil {
+		t.Fatalf("InsertApplyItem(%d) error = %v", gaveUp, err)
+	}
+	r := readRun(t, s, gaveUp)
+	r.State, r.FailureReason, r.FinishedAt = apply.StateFailed, db.ApplyGaveUpReason, time.Now()
+	r.IrreversibleFiles, r.DirtyFiles = []string{}, []string{}
+	if err := s.SetApplyRun(ctx, r); err != nil {
+		t.Fatalf("SetApplyRun(%d) error = %v", gaveUp, err)
+	}
+	checking := requestCheck(t, s, pid)
+
+	runs, err := s.ApplyHistory(ctx, pid, 10)
+	if err != nil {
+		t.Fatalf("ApplyHistory(%d, 10) error = %v", pid, err)
+	}
+	type line struct {
+		ID                       apply.ID
+		Applied, Skipped, Failed int
+	}
+	var got []line
+	for _, r := range runs {
+		got = append(got, line{r.ID, r.Applied, r.Skipped, r.Failed})
+	}
+	want := []line{{ID: checking}, {ID: gaveUp, Applied: 1, Skipped: 1}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("ApplyHistory(%d, 10) (-want +got):\n%s", pid, diff)
+	}
+	if runs, err := s.ApplyHistory(ctx, pid, 1); err != nil || len(runs) != 1 || runs[0].ID != checking {
+		t.Errorf("ApplyHistory(%d, 1) = %+v, %v, want the check only", pid, runs, err)
 	}
 }

@@ -482,3 +482,138 @@ func TestTriageRequiresLogin(t *testing.T) {
 		t.Errorf("GET triage without a session Location = %q, want %q", res.location(), want)
 	}
 }
+
+// appliedPassword is the password bundle of triageEnv after an apply stored
+// its value.
+func appliedPassword(e *testEnv) triage.Bundle {
+	b := e.triage.stored(passwordBundle)
+	b.Decision = triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}
+	b.AppliedAt = time.Date(2026, 11, 20, 10, 7, 0, 0, time.UTC)
+	b.StorePath = "secret/data/projects/1/db.main.password"
+	return b
+}
+
+func TestTriage_AppliedTab(t *testing.T) {
+	e := triageEnv(t)
+	e.triage.putApplied(1,
+		triage.Applied{
+			Bundle: passwordBundle, Name: "db.main.password", Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "Sh0p****",
+			StorePath: "secret/data/projects/1/db.main.password", AppliedAt: time.Date(2026, 11, 20, 10, 7, 0, 0, time.UTC),
+			Locations: 3, Config: true, Shell: true, CodeChange: true, LastRun: 5, Checked: true, Reappeared: true,
+		},
+		triage.Applied{
+			Bundle: 140, Name: "partner.api.token", Category: finding.CategoryPartnerSession, Kind: finding.KindToken, Preview: "eyJh****",
+			StorePath: "secret/data/projects/1/partner.api.token", AppliedAt: time.Date(2026, 11, 19, 10, 7, 0, 0, time.UTC),
+			Locations: 1, Config: true, LastRun: 4, Checked: true,
+		},
+		triage.Applied{
+			Bundle: 141, Name: "mail.smtp.password", Category: finding.CategoryOther, Kind: finding.KindPassword, Preview: "mai1****",
+			StorePath: "secret/data/projects/1/mail.smtp.password", AppliedAt: time.Date(2026, 11, 19, 9, 7, 0, 0, time.UTC),
+			Locations: 1, Config: true, LastRun: 6,
+		},
+	)
+	res := e.getTriage(t, url.Values{"status": {"applied"}}, nil)
+	if res.status != http.StatusOK {
+		t.Fatalf("GET triage?status=applied status = %d, want 200; body:\n%s", res.status, res.body)
+	}
+	wantIn(t, "applied tab", res.body,
+		`aria-current="true">적용됨 3</a>`,
+		"<th>이름</th>", "<th>분류</th>", "<th>미리보기</th>", "<th>저장 경로</th>", "<th>적용 시각</th>", "<th class=\"num\">위치</th>", "<th>마지막 실행</th>", "<th>마지막 스캔</th>",
+		"ext.db.main.password", "EXT_DB_MAIN_PASSWORD", "ext.partner.api.token", "저장소 접속 정보 · 비밀번호", "Sh0p****",
+		"secret/data/projects/1/db.main.password", "2026-11-20 10:07:00 UTC", ">3곳<", "코드 수정 필요",
+		`<a href="/applies/5">#5</a>`, `<a href="/applies/4">#4</a>`,
+		`<a class="badge badge-hold" href="/projects/1/triage?sel=b101&amp;status=all">다시 발견</a>`,
+		"1 / 1쪽 · 3줄",
+	)
+	for _, tt := range []struct {
+		mark string
+		n    int
+	}{{"다시 발견</a>", 1}, {`<span class="muted">없음</span>`, 1}, {`<span class="muted">확인 전</span>`, 1}} {
+		if got := strings.Count(res.body, tt.mark); got != tt.n {
+			t.Errorf("applied tab has %q %d times, want %d", tt.mark, got, tt.n)
+		}
+	}
+	wantNotIn(t, "applied tab", res.body, `class="verdict-form"`, "원본 보기", `name="verdict"`, `id="detail"`, "EXT_PARTNER_API_TOKEN")
+
+	res = e.getTriage(t, nil, nil)
+	wantIn(t, "undecided tab", res.body, `href="/projects/1/triage?status=applied">적용됨 3</a>`)
+
+	empty := triageEnv(t)
+	res = empty.getTriage(t, url.Values{"status": {"applied"}}, nil)
+	wantIn(t, "empty applied tab", res.body, "적용한 묶음이 없습니다", `href="/projects/1/apply"`)
+}
+
+func TestTriage_AppliedBundleDetail(t *testing.T) {
+	e := triageEnv(t)
+	e.triage.putBundle(appliedPassword(e))
+	res := e.getTriage(t, url.Values{"sel": {"b101"}, "status": {"all"}}, nil)
+	if res.status != http.StatusOK {
+		t.Fatalf("GET triage sel=b101 status = %d, want 200", res.status)
+	}
+	detail := section(res.body, "section", "detail")
+	wantIn(t, "applied detail", detail,
+		`<span class="badge badge-lg badge-succeeded">적용됨</span>`,
+		"secret/data/projects/1/db.main.password", "판정과 이름은 바꿀 수 없습니다",
+		`id="verdict-name" value="db.main.password" disabled`,
+		`<input type="hidden" name="name" value="db.main.password">`,
+		`name="verdict" value="externalize" disabled>`, `name="verdict" value="false-positive" disabled>`, `name="verdict" value="hold" disabled>`,
+		`<select class="input verdict-reason" id="verdict-reason" name="hold_reason" disabled>`,
+		`<button class="btn btn-lg" type="submit" name="verdict" value="externalize">메모 저장</button>`,
+	)
+	wantNotIn(t, "applied detail", detail, `value="none"`, `id="verdict-name" name="name"`)
+}
+
+func TestTriage_ShellName(t *testing.T) {
+	e := triageEnv(t)
+	e.triage.setScan(scan.Scan{ID: 12, ProjectID: 1, Status: scan.StatusSucceeded}, map[triage.Verdict]int{triage.VerdictExternalize: 2},
+		triage.Entry{
+			Bundle: shellBundle, Name: "ssh.main.password", Category: finding.CategorySSH, Kind: finding.KindPassword,
+			File: "deploy/release.sh", FirstLine: 8, Count: 1, Bundles: 1, Verdict: triage.VerdictExternalize, Shell: true,
+		},
+		triage.Entry{
+			Bundle: passwordBundle, Name: "db.main.password", Category: finding.CategoryStorage, Kind: finding.KindPassword,
+			File: "conf/a.yml", FirstLine: 3, Count: 2, Bundles: 1, Verdict: triage.VerdictExternalize, Applied: true,
+		},
+	)
+	e.triage.putBundle(triage.Bundle{
+		ID: shellBundle, ProjectID: 1, Fingerprint: strings.Repeat("e", 64),
+		Category: finding.CategorySSH, Kind: finding.KindPassword, Preview: "dp!2****",
+		Decision: triage.Decision{Verdict: triage.VerdictExternalize, Name: "ssh.main.password"},
+		Members:  []triage.Member{{FindingID: 1005, File: "deploy/release.sh", Locations: []finding.Location{{StartLine: 8, EndLine: 8}}}},
+	})
+	res := e.getTriage(t, url.Values{"status": {"externalize"}}, nil)
+	if res.status != http.StatusOK {
+		t.Fatalf("GET triage?status=externalize status = %d, want 200", res.status)
+	}
+	list := section(res.body, "nav", "list")
+	wantIn(t, "triage list", list, `<span class="list-row-sub">EXT_SSH_MAIN_PASSWORD</span>`, `<span class="list-row-sub">ext.db.main.password</span>`,
+		`<span class="badge badge-succeeded">적용됨</span>`)
+	wantNotIn(t, "triage list", list, "ext.ssh.main.password")
+	if n := strings.Count(list, "적용됨"); n != 1 {
+		t.Errorf("triage list marks %d lines applied, want 1", n)
+	}
+}
+
+func TestTriage_LinksToApply(t *testing.T) {
+	e := triageEnv(t)
+	res := e.getTriage(t, nil, nil)
+	wantIn(t, "triage head", res.body, `<a class="btn btn-secondary" href="/projects/1/apply">적용</a>`)
+}
+
+func TestTriage_NoOriginalNotice(t *testing.T) {
+	e := triageEnv(t)
+	b := e.triage.stored(passwordBundle)
+	for i := range b.Members {
+		b.Members[i].HasOriginal = false
+	}
+	e.triage.putBundle(b)
+	res := e.do(t, http.MethodGet, "/projects/1/triage?sel=b101", nil, e.admin(t))
+	detail := section(res.body, "section", "detail")
+	wantIn(t, "undecided detail without an original", detail, "보관된 원본이 없습니다. 다시 스캔하면 보관됩니다.")
+	wantNotIn(t, "undecided detail without an original", detail, "원본 보기", "alert-error")
+
+	b.Decision = triage.Decision{Verdict: triage.VerdictFalsePositive}
+	e.triage.putBundle(b)
+	res = e.do(t, http.MethodGet, "/projects/1/triage?sel=b101&status=all", nil, e.admin(t))
+	wantNotIn(t, "false-positive detail", section(res.body, "section", "detail"), "보관된 원본이 없습니다", "원본 보기")
+}

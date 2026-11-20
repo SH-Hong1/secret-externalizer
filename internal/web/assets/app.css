@@ -489,6 +489,61 @@
     font-size: var(--text-sm);
   }
 
+  /* Conditions of an apply: one per row, the condition and its outcome on
+     one line, and below them what failed and what to do. */
+  .facts-list {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .check-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 12px;
+  }
+  .check-row > dt {
+    flex: 1 1 0;
+    min-width: 0;
+    color: var(--color-ink);
+    font-size: inherit;
+  }
+  .check-row > dd.check-detail {
+    flex-basis: 100%;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    color: var(--color-danger-ink);
+  }
+  .check-detail p {
+    margin: 0;
+  }
+
+  /* A warning that asks for consent, in the hold colours. */
+  .notice-warn {
+    margin: 0;
+    padding: 16px;
+    border: 1px solid var(--color-hold-line);
+    border-radius: var(--radius-lg);
+    background: var(--color-hold-soft);
+    color: var(--color-hold-ink);
+  }
+  .notice-warn p {
+    margin: 0;
+  }
+  .consent {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .consent input {
+    width: 18px;
+    height: 18px;
+    margin: 2px 0 0;
+    flex: 0 0 auto;
+    accent-color: var(--color-hold);
+  }
+
   /* The files a scan skipped: a disclosure in the hold colours with a
      scrolling list of paths. */
   .skips {
@@ -1211,6 +1266,80 @@
   }
   .tile-hold .tile-label {
     color: var(--color-hold);
+  }
+
+  /* The outcome of an apply run: the counts, with failures drawn as an
+     alert when there are any, and the places it changed by bundle. */
+  .tile-applied .tile-label {
+    color: var(--color-success-ink);
+  }
+  .tile-skipped .tile-label {
+    color: var(--color-hold);
+  }
+  .tile-failed .tile-label {
+    color: var(--color-ink-muted);
+  }
+  .tile-alert {
+    border-color: var(--color-danger-line);
+    background: var(--color-danger-soft);
+  }
+  .tile-alert .tile-label,
+  .tile-alert .tile-figure {
+    color: var(--color-danger-ink);
+  }
+  .notice-ok {
+    margin: 0;
+    padding: 12px 16px;
+    border-radius: var(--radius-lg);
+    background: var(--color-success-soft);
+    color: var(--color-success-ink);
+  }
+  .run-bundle {
+    overflow: hidden;
+  }
+  .run-bundle-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 4px 16px;
+    padding: 12px 16px;
+    background: var(--color-surface-soft);
+    border-bottom: 1px solid var(--color-line);
+  }
+  .run-bundle-name {
+    font-weight: 700;
+  }
+  .run-bundle-store {
+    font-size: var(--text-sm);
+    overflow-wrap: anywhere;
+  }
+  .run-bundle-table {
+    border: 0;
+    border-radius: 0;
+  }
+
+  /* The applied bundles of a project, in place of the triage list. */
+  .applied {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 0 24px 24px;
+  }
+  .applied .pager {
+    background: var(--color-surface);
+    border: 1px solid var(--color-line);
+    border-radius: var(--radius-lg);
+  }
+  .applied-names,
+  .applied-store {
+    font-size: var(--text-sm);
+    overflow-wrap: anywhere;
+  }
+  a.badge {
+    text-decoration: none;
+  }
+  a.badge:hover {
+    text-decoration: underline;
   }
 }
 

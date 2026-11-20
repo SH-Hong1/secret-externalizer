@@ -38,7 +38,9 @@ func (s Status) Active() bool { return s == StatusQueued || s == StatusRunning }
 // requested before names were kept. FailureReason is fixed wording chosen by
 // the code that fails the scan, never text from an error. Dropped counts
 // scanner results whose value was not where the scanner reported it.
-// SkippedFiles and ScannerErrors are as in Result.
+// SkippedFiles and ScannerErrors are as in Result. ApplyID is the apply run
+// whose changes the scan was requested to confirm, zero for a scan a user
+// requested.
 type Scan struct {
 	ID            ID
 	ProjectID     project.ID
@@ -58,6 +60,7 @@ type Scan struct {
 	ScannerErrors map[string]int
 	Dropped       int
 	Findings      int
+	ApplyID       int64
 }
 
 // Result is what a scan found, ready to be stored. It holds no value a

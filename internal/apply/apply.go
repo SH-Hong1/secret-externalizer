@@ -234,6 +234,35 @@ func compareLocations(x, y finding.Location) int {
 	)
 }
 
+// Count is the number of bundles with one verdict in one category that a
+// scan found, and the number of their locations in that scan. The zero
+// Verdict means undecided.
+type Count struct {
+	Verdict   triage.Verdict
+	Category  finding.Category
+	Bundles   int
+	Locations int
+}
+
+// Summary is what the database tells about applying a project before any
+// check reads its source. Scan is the project's latest succeeded scan, zero
+// when it has none. Digest is the Digest of the current plan of that scan.
+// Counts holds a Count for each verdict and category the scan found, ordered
+// by verdict and category. Blockers holds the conditions the database shows:
+// BlockerScanNotLatest when a scan of any state is newer than Scan, then
+// BlockerNothingToApply when no bundle is to be externalized or redacted and
+// no applied value waits for the manifest. ScanActive reports a queued or
+// running scan. Check is the project's newest run that is not superseded, or
+// nil.
+type Summary struct {
+	Scan       scan.Scan
+	Digest     string
+	Counts     []Count
+	Blockers   []Blocker
+	ScanActive bool
+	Check      *Run
+}
+
 // Input is what the worker needs to plan a run.
 type Input struct {
 	Run        Run

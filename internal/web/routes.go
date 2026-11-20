@@ -10,10 +10,11 @@ import (
 
 // addRoutes registers every route of the server. Only the routes that need a
 // signed-in user read the session, so /healthz answers and logout works even
-// when the session store is down. The routes that call projects, scans,
-// triage, the audit trail or the originals get a deadline of storeLimit. The
+// when the session store is down. The routes that call the stores or the
+// originals get a deadline of storeLimit. The
 // static files need no session.
-func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, triage TriageStore, suggester Suggester, audits AuditStore, originals Originals, storeLimit time.Duration) {
+func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets, authn Authenticator, sessions SessionStore, attempts AttemptStore, stores Stores, suggester Suggester, originals Originals, storeLimit time.Duration) {
+	projects, scans, triage, audits := stores.Projects, stores.Scans, stores.Triage, stores.Audits
 	signedIn := func(h http.Handler) http.Handler {
 		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd))
 	}
@@ -39,7 +40,7 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	mux.Handle("GET /projects", usesStore(handleProjectList(logger, rd, projects)))
 	mux.Handle("GET /projects/new", signedIn(handleProjectNew(logger, rd)))
 	mux.Handle("POST /projects", usesStore(handleProjectCreate(logger, rd, projects)))
-	mux.Handle("GET /projects/{id}", usesStore(handleProject(logger, rd, projects, scans, triage)))
+	mux.Handle("GET /projects/{id}", usesStore(handleProject(logger, rd, projects, scans, triage, stores.Applies)))
 	mux.Handle("GET /projects/{id}/triage", usesStore(handleTriage(logger, rd, projects, triage, suggester)))
 	tw := triageWriter{logger: logger, rd: rd, projects: projects, store: triage, suggester: suggester}
 	mux.Handle("POST /projects/{id}/bundles/{bundle}/verdict", usesStore(handleBundleVerdict(tw)))
@@ -48,9 +49,16 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	mux.Handle("/projects/{id}/customer-data/verdict", handlePostOnly(logger, rd))
 	mux.Handle("POST /projects/{id}/findings/{finding}/move", usesStore(handleMove(tw)))
 	mux.Handle("/projects/{id}/findings/{finding}/move", handlePostOnly(logger, rd))
+	aw := applyWriter{logger: logger, rd: rd, projects: projects, store: stores.Applies}
+	mux.Handle("GET /projects/{id}/apply", usesStore(handleApplyPage(aw)))
+	mux.Handle("POST /projects/{id}/apply", usesStore(handleApplyConfirm(aw)))
+	mux.Handle("/projects/{id}/apply", handleNotAllowed(logger, rd, http.MethodGet, http.MethodPost))
+	mux.Handle("POST /projects/{id}/apply/check", usesStore(handleApplyCheck(aw)))
+	mux.Handle("/projects/{id}/apply/check", handlePostOnly(logger, rd))
+	mux.Handle("GET /applies/{id}", usesStore(handleApplyRun(logger, rd, projects, scans, stores.Applies)))
 	mux.Handle("POST /projects/{id}/bundles/{bundle}/original", adminStore(handleOriginal(tw, audits, originals)))
 	mux.Handle("/projects/{id}/bundles/{bundle}/original", handlePostOnly(logger, rd))
 	mux.Handle("POST /projects/{id}/scans", usesStore(handleScanCreate(logger, rd, scans)))
-	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, projects, scans, triage)))
+	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, projects, scans, triage, stores.Applies)))
 	mux.Handle("/", handleNotFound(logger, rd))
 }

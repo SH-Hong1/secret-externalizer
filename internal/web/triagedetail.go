@@ -22,6 +22,8 @@ type reasonOption struct {
 
 // verdictForm is the form that records a verdict. The hold button submits
 // the reason select with it. Cancel offers to clear the current verdict.
+// Fixed disables every verdict and offers only to save the note with the
+// verdict and name the bundle has, which is all an applied bundle allows.
 type verdictForm struct {
 	Action  string
 	Return  string
@@ -31,6 +33,8 @@ type verdictForm struct {
 	Note    string
 	Text    string
 	Cancel  bool
+	Fixed   bool
+	Keep    triage.Verdict
 }
 
 // keep shows the note and hold reason a rejected form submitted again. A
@@ -47,13 +51,15 @@ func (f *verdictForm) keep(in verdictInput) {
 
 // nameField is the placeholder name input of a secret bundle. Config and
 // Shell are the rendered forms of Value in the files of the bundle, set
-// only when Value is a valid name.
+// only when Value is a valid name. Fixed shows the name without letting it
+// change.
 type nameField struct {
 	Value     string
 	Prefix    string
 	Config    string
 	Shell     string
 	Suggested bool
+	Fixed     bool
 
 	inConfig bool
 	inShell  bool
@@ -79,8 +85,10 @@ func (f *nameField) setValue(value string) {
 // move forms send so the screen can return to it; Targets are the other
 // bundles of the same value a member can move to. Original is the slot of
 // the original value, set only for an admin when a scan kept the value.
+// Applied is set for a bundle whose value an apply stored.
 type bundleDetail struct {
 	Original      *originalView
+	Applied       *appliedInfo
 	From          string
 	Targets       []moveTarget
 	KindLabel     string
@@ -92,6 +100,12 @@ type bundleDetail struct {
 	Members       []memberView
 	Name          *nameField
 	Form          verdictForm
+}
+
+// appliedInfo tells when an apply stored a bundle's value and where.
+type appliedInfo struct {
+	At        string
+	StorePath string
 }
 
 // memberView is one member of a bundle. MoveAction is where its move forms
@@ -260,6 +274,14 @@ func newBundleDetail(id project.ID, ret string, b triage.Bundle, s triage.Sugges
 	}
 	action := "/projects/" + pid + "/bundles/" + strconv.FormatInt(int64(b.ID), 10) + "/verdict"
 	d.Form = newVerdictForm(action, ret, allowed, b.Decision, s)
+	if !b.AppliedAt.IsZero() {
+		// The source holds the bundle's name, so only the note may change.
+		d.Applied = &appliedInfo{At: formatTime(b.AppliedAt), StorePath: b.StorePath}
+		d.Form.Fixed, d.Form.Cancel, d.Form.Keep, d.Form.Text = true, false, b.Decision.Verdict, ""
+		if d.Name != nil {
+			d.Name.Fixed, d.Name.Suggested = true, false
+		}
+	}
 	return d
 }
 
@@ -270,7 +292,7 @@ func newMoveTargets(same []triage.Entry) []moveTarget {
 	for _, e := range same {
 		where := e.File + ":" + strconv.Itoa(e.FirstLine)
 		if e.Name != "" {
-			where = e.Name.Config()
+			where = entryName(e)
 		}
 		id := strconv.FormatInt(int64(e.Bundle), 10)
 		out = append(out, moveTarget{Value: id, Label: "묶음 #" + id + " · " + verdictOf(e.Verdict).Label + " · " + where})
