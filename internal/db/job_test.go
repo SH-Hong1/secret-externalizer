@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/go-cmp/cmp"
+	"github.com/jackc/pgx/v5"
+
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
@@ -317,5 +320,252 @@ func TestReleaseJob_AfterDone(t *testing.T) {
 	}
 	if sc.Status != scan.StatusSucceeded {
 		t.Errorf("Scan(%d) after a refused ReleaseJob = %+v, want succeeded", id, sc)
+	}
+}
+
+func TestMigration0007(t *testing.T) {
+	s := db.NewTestStore(t)
+	ctx := t.Context()
+	if err := s.MigrateThrough(ctx, 6); err != nil {
+		t.Fatalf("MigrateThrough(6) error = %v", err)
+	}
+	var ids []scan.ID
+	for _, c := range []struct{ project, status, jobState string }{
+		{"done", "succeeded", "done"},
+		{"running", "running", "running"},
+		{"queued", "queued", "queued"},
+	} {
+		id, err := s.InsertRawScanJob(ctx, newProject(t, s, c.project), c.status, c.jobState)
+		if err != nil {
+			t.Fatalf("InsertRawScanJob(%s) error = %v", c.project, err)
+		}
+		ids = append(ids, id)
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() over 0006 error = %v", err)
+	}
+
+	for _, id := range ids {
+		if got, err := s.JobKind(ctx, int64(id)); err != nil || got != "scan" {
+			t.Errorf("JobKind(%d) after 0007 = %q, %v, want scan", id, got, err)
+		}
+	}
+	got, err := s.ClaimJob(ctx, "worker-a", time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimJob() after 0007 error = %v", err)
+	}
+	if got.Kind != job.KindScan || got.ScanID != int64(ids[2]) || got.ApplyID != 0 || got.Attempts != 1 {
+		t.Errorf("ClaimJob() after 0007 = %+v, want the queued scan job of scan %d", got, ids[2])
+	}
+	if _, err := s.ClaimJob(ctx, "worker-a", time.Minute); !errors.Is(err, job.ErrNoJob) {
+		t.Errorf("ClaimJob() of the leased and done jobs error = %v, want ErrNoJob", err)
+	}
+}
+
+// newApplyRun registers a project with a scan and stores an apply run of it
+// in state, with a job of kind for the run. It returns the run's ID.
+func newApplyRun(t *testing.T, s *db.Store, name, state string, kind job.Kind) int64 {
+	t.Helper()
+	ctx := t.Context()
+	projectID := newProject(t, s, name)
+	scanID, err := s.InsertRawScan(ctx, projectID)
+	if err != nil {
+		t.Fatalf("InsertRawScan(%s) error = %v", name, err)
+	}
+	applyID, err := s.InsertApplyRun(ctx, projectID, scanID, state)
+	if err != nil {
+		t.Fatalf("InsertApplyRun(%s) error = %v", name, err)
+	}
+	if _, err := s.InsertApplyJob(ctx, applyID, string(kind)); err != nil {
+		t.Fatalf("InsertApplyJob(%d, %s) error = %v", applyID, kind, err)
+	}
+	return applyID
+}
+
+func TestClaimJob_Kinds(t *testing.T) {
+	t.Run("in order", func(t *testing.T) {
+		s := newMigratedStore(t)
+		ctx := t.Context()
+		scanID := requestScan(t, s)
+		checkID := newApplyRun(t, s, "check", "checking", job.KindApplyCheck)
+		applyID := newApplyRun(t, s, "apply", "queued", job.KindApply)
+
+		want := []job.Job{
+			{Kind: job.KindScan, ScanID: int64(scanID), Attempts: 1},
+			{Kind: job.KindApplyCheck, ApplyID: checkID, Attempts: 1},
+			{Kind: job.KindApply, ApplyID: applyID, Attempts: 1},
+		}
+		var prev int64
+		for i, w := range want {
+			got, err := s.ClaimJob(ctx, "worker-a", time.Minute)
+			if err != nil {
+				t.Fatalf("ClaimJob() call %d error = %v", i+1, err)
+			}
+			if got.ID <= prev {
+				t.Errorf("ClaimJob() call %d job ID = %d, want after %d", i+1, got.ID, prev)
+			}
+			prev = got.ID
+			w.ID = got.ID
+			if got != w {
+				t.Errorf("ClaimJob() call %d = %+v, want %+v", i+1, got, w)
+			}
+		}
+	})
+
+	for _, c := range []struct {
+		kind   job.Kind
+		state  string
+		reason string
+	}{
+		{job.KindApply, "running", "worker stopped during the apply three times"},
+		{job.KindApplyCheck, "checking", "worker stopped during the check three times"},
+	} {
+		t.Run(string(c.kind)+" gives up after three", func(t *testing.T) {
+			s := newMigratedStore(t)
+			ctx := t.Context()
+			applyID := newApplyRun(t, s, "shop", c.state, c.kind)
+			if err := s.InsertApplyRecords(ctx, applyID, "conf/db.properties"); err != nil {
+				t.Fatalf("InsertApplyRecords(%d) error = %v", applyID, err)
+			}
+
+			for i := 1; i <= 3; i++ {
+				if _, err := s.ClaimJob(ctx, "worker", 0); err != nil {
+					t.Fatalf("ClaimJob() call %d error = %v", i, err)
+				}
+			}
+			if _, err := s.ClaimJob(ctx, "worker", time.Minute); !errors.Is(err, job.ErrNoJob) {
+				t.Fatalf("ClaimJob() call 4 error = %v, want ErrNoJob", err)
+			}
+
+			run, err := s.ApplyRun(ctx, applyID)
+			if err != nil {
+				t.Fatalf("ApplyRun(%d) error = %v", applyID, err)
+			}
+			if run.State != "failed" || run.FailureReason != c.reason || run.FinishedAt == nil {
+				t.Errorf("ApplyRun(%d) = %+v, want failed with %q and a finish time", applyID, run, c.reason)
+			}
+			jr, err := s.ApplyJob(ctx, applyID, string(c.kind))
+			if err != nil {
+				t.Fatalf("ApplyJob(%d) error = %v", applyID, err)
+			}
+			if jr.State != "failed" {
+				t.Errorf("ApplyJob(%d) state = %q, want failed", applyID, jr.State)
+			}
+			statuses, written, err := s.ApplyRecords(ctx, applyID)
+			if err != nil {
+				t.Fatalf("ApplyRecords(%d) error = %v", applyID, err)
+			}
+			if diff := cmp.Diff([]string{"writing"}, statuses); diff != "" {
+				t.Errorf("ApplyRecords(%d) item statuses after giving up (-want +got):\n%s", applyID, diff)
+			}
+			if diff := cmp.Diff([]bool{false}, written); diff != "" {
+				t.Errorf("ApplyRecords(%d) file written flags after giving up (-want +got):\n%s", applyID, diff)
+			}
+		})
+	}
+}
+
+func TestReleaseJob_Apply(t *testing.T) {
+	for _, c := range []struct {
+		kind  job.Kind
+		state string
+		want  string
+	}{
+		{job.KindApplyCheck, "checking", "checking"},
+		{job.KindApply, "running", "queued"},
+	} {
+		t.Run(string(c.kind), func(t *testing.T) {
+			s := newMigratedStore(t)
+			ctx := t.Context()
+			applyID := newApplyRun(t, s, "shop", c.state, c.kind)
+
+			a, err := s.ClaimJob(ctx, "worker-a", time.Minute)
+			if err != nil {
+				t.Fatalf("ClaimJob(worker-a) error = %v", err)
+			}
+			if err := s.ReleaseJob(ctx, a.ID, "worker-a"); err != nil {
+				t.Fatalf("ReleaseJob(worker-a, holder) error = %v", err)
+			}
+			jr, err := s.ApplyJob(ctx, applyID, string(c.kind))
+			if err != nil {
+				t.Fatalf("ApplyJob(%d) error = %v", applyID, err)
+			}
+			if jr.State != "queued" || jr.Attempts != 0 || jr.LockedBy != nil || jr.LockedUntil != nil {
+				t.Errorf("ApplyJob(%d) after release = %+v, want queued with 0 attempts and no lease", applyID, jr)
+			}
+			run, err := s.ApplyRun(ctx, applyID)
+			if err != nil {
+				t.Fatalf("ApplyRun(%d) error = %v", applyID, err)
+			}
+			if run.State != c.want || run.StartedAt != nil {
+				t.Errorf("ApplyRun(%d) after release = %+v, want %s with no start time", applyID, run, c.want)
+			}
+
+			b, err := s.ClaimJob(ctx, "worker-b", time.Minute)
+			if err != nil {
+				t.Fatalf("ClaimJob(worker-b) after release error = %v", err)
+			}
+			if b.ID != a.ID || b.Kind != c.kind || b.ApplyID != applyID || b.Attempts != 1 {
+				t.Errorf("ClaimJob(worker-b) after release = %+v, want job %d of run %d with 1 attempt", b, a.ID, applyID)
+			}
+		})
+	}
+}
+
+func TestCloseApplyJob(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	applyID := newApplyRun(t, s, "shop", "running", job.KindApply)
+
+	a, err := s.ClaimJob(ctx, "worker-a", 0)
+	if err != nil {
+		t.Fatalf("ClaimJob(worker-a) error = %v", err)
+	}
+	if _, err := s.ClaimJob(ctx, "worker-b", time.Minute); err != nil {
+		t.Fatalf("ClaimJob(worker-b) error = %v", err)
+	}
+
+	called := false
+	write := func(pgx.Tx) error {
+		called = true
+		return nil
+	}
+	if err := s.CloseApplyJob(ctx, a.ID, "worker-a", applyID, "done", write); !errors.Is(err, job.ErrLeaseLost) {
+		t.Fatalf("CloseApplyJob(worker-a, taken over) error = %v, want ErrLeaseLost", err)
+	}
+	if called {
+		t.Errorf("CloseApplyJob(worker-a, taken over) called write, want it not called")
+	}
+	if err := s.CloseApplyJob(ctx, a.ID, "worker-b", applyID+1, "done", write); !errors.Is(err, job.ErrLeaseLost) {
+		t.Fatalf("CloseApplyJob(worker-b, other run) error = %v, want ErrLeaseLost", err)
+	}
+	if called {
+		t.Errorf("CloseApplyJob(worker-b, other run) called write, want it not called")
+	}
+	if jr, err := s.ApplyJob(ctx, applyID, "apply"); err != nil || jr.State != "running" {
+		t.Errorf("ApplyJob(%d) after refused closes = %+v, %v, want running", applyID, jr, err)
+	}
+
+	if err := s.CloseApplyJob(ctx, a.ID, "worker-b", applyID, "done", write); err != nil {
+		t.Fatalf("CloseApplyJob(worker-b, holder) error = %v", err)
+	}
+	if !called {
+		t.Errorf("CloseApplyJob(worker-b, holder) did not call write")
+	}
+	if jr, err := s.ApplyJob(ctx, applyID, "apply"); err != nil || jr.State != "done" {
+		t.Errorf("ApplyJob(%d) after close = %+v, %v, want done", applyID, jr, err)
+	}
+
+	fail := errors.New("fake write failure")
+	applyID2 := newApplyRun(t, s, "shop2", "running", job.KindApply)
+	c, err := s.ClaimJob(ctx, "worker-c", time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimJob(worker-c) error = %v", err)
+	}
+	if err := s.CloseApplyJob(ctx, c.ID, "worker-c", applyID2, "done", func(pgx.Tx) error { return fail }); !errors.Is(err, fail) {
+		t.Fatalf("CloseApplyJob(failing write) error = %v, want the write's error", err)
+	}
+	if jr, err := s.ApplyJob(ctx, applyID2, "apply"); err != nil || jr.State != "running" {
+		t.Errorf("ApplyJob(%d) after a failing write = %+v, %v, want still running", applyID2, jr, err)
 	}
 }

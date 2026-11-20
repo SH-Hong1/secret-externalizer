@@ -11,6 +11,7 @@ import (
 	"testing/fstest"
 	"time"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
@@ -208,4 +209,117 @@ func (s *Store) LastAuditEvent(ctx context.Context) (audit.Event, error) {
 		e.FindingID = finding.ID(*findingID)
 	}
 	return e, err
+}
+
+// InsertRawScanJob stores a scan of the project with the given status and a
+// job for it in jobState, with SQL that needs only the schema of migration
+// 0002. A running job has a lease that runs for another hour.
+func (s *Store) InsertRawScanJob(ctx context.Context, projectID project.ID, status, jobState string) (scan.ID, error) {
+	var id scan.ID
+	err := s.pool.QueryRow(ctx,
+		"INSERT INTO scan (project_id, requested_by, status) VALUES ($1, 'fake-subject', $2) RETURNING id",
+		projectID, status).Scan(&id)
+	if err != nil {
+		return 0, err
+	}
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO job (scan_id, state, attempts, locked_by, locked_until)
+		SELECT $1, $2::text, CASE WHEN $2::text = 'queued' THEN 0 ELSE 1 END,
+			CASE WHEN $2::text = 'running' THEN 'fake-worker' END,
+			CASE WHEN $2::text = 'running' THEN now() + interval '1 hour' END`,
+		id, jobState)
+	return id, err
+}
+
+// JobKind returns the kind of the job that runs the scan with the given ID.
+func (s *Store) JobKind(ctx context.Context, scanID int64) (string, error) {
+	var kind string
+	err := s.pool.QueryRow(ctx, "SELECT kind FROM job WHERE scan_id = $1", scanID).Scan(&kind)
+	return kind, err
+}
+
+// InsertApplyRun stores an apply run of the project for the scan, in state,
+// with a fake plan digest. A run in state running has a start time.
+func (s *Store) InsertApplyRun(ctx context.Context, projectID project.ID, scanID scan.ID, state string) (int64, error) {
+	var id int64
+	err := s.pool.QueryRow(ctx, `
+		INSERT INTO apply_run (project_id, scan_id, state, plan_digest, requested_by, requester_name, started_at)
+		VALUES ($1, $2, $3, $4, 'fake-subject', 'fake-user', CASE WHEN $3::text = 'running' THEN now() END)
+		RETURNING id`,
+		projectID, scanID, state, strings.Repeat("a", 64)).Scan(&id)
+	return id, err
+}
+
+// InsertApplyJob queues a job of the given kind for the apply run.
+func (s *Store) InsertApplyJob(ctx context.Context, applyID int64, kind string) (int64, error) {
+	var id int64
+	err := s.pool.QueryRow(ctx,
+		"INSERT INTO job (kind, apply_id) VALUES ($1, $2) RETURNING id", kind, applyID).Scan(&id)
+	return id, err
+}
+
+// ApplyRunRow is the state columns of an apply_run row.
+type ApplyRunRow struct {
+	State         string
+	FailureReason string
+	StartedAt     *time.Time
+	FinishedAt    *time.Time
+}
+
+// ApplyRun returns the state columns of the apply run with the given ID.
+func (s *Store) ApplyRun(ctx context.Context, id int64) (ApplyRunRow, error) {
+	var r ApplyRunRow
+	err := s.pool.QueryRow(ctx,
+		"SELECT state, failure_reason, started_at, finished_at FROM apply_run WHERE id = $1", id).
+		Scan(&r.State, &r.FailureReason, &r.StartedAt, &r.FinishedAt)
+	return r, err
+}
+
+// ApplyJob returns the lease columns of the job of the given kind for the
+// apply run.
+func (s *Store) ApplyJob(ctx context.Context, applyID int64, kind string) (JobRow, error) {
+	var j JobRow
+	err := s.pool.QueryRow(ctx,
+		"SELECT state, attempts, locked_by, locked_until FROM job WHERE apply_id = $1 AND kind = $2", applyID, kind).
+		Scan(&j.State, &j.Attempts, &j.LockedBy, &j.LockedUntil)
+	return j, err
+}
+
+// InsertApplyRecords stores, for the apply run, one apply_item in status
+// writing and one apply_file that is not written yet, both for file.
+func (s *Store) InsertApplyRecords(ctx context.Context, applyID int64, file string) error {
+	if _, err := s.pool.Exec(ctx, `
+		INSERT INTO apply_item (apply_id, bundle_id, finding_id, file_path, start_line, start_col, action, category, kind, status)
+		VALUES ($1, 1, 1, $2, 1, 1, 'replace', 'other-secret', 'password', 'writing')`, applyID, file); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO apply_file (apply_id, file_path, before_hash, after_hash, temp_name)
+		VALUES ($1, $2, $3, $4, $2 || '.se-apply-0000000000000000.tmp')`,
+		applyID, file, strings.Repeat("b", 64), strings.Repeat("c", 64))
+	return err
+}
+
+// ApplyRecords returns the status of the apply_item rows and the written
+// flag of the apply_file rows of the apply run, in file order.
+func (s *Store) ApplyRecords(ctx context.Context, applyID int64) (statuses []string, written []bool, err error) {
+	rows, err := s.pool.Query(ctx, "SELECT status FROM apply_item WHERE apply_id = $1 ORDER BY file_path", applyID)
+	if err != nil {
+		return nil, nil, err
+	}
+	statuses, err = pgx.CollectRows(rows, pgx.RowTo[string])
+	if err != nil {
+		return nil, nil, err
+	}
+	rows, err = s.pool.Query(ctx, "SELECT written FROM apply_file WHERE apply_id = $1 ORDER BY file_path", applyID)
+	if err != nil {
+		return nil, nil, err
+	}
+	written, err = pgx.CollectRows(rows, pgx.RowTo[bool])
+	return statuses, written, err
+}
+
+// CloseApplyJob runs closeApplyJob.
+func (s *Store) CloseApplyJob(ctx context.Context, jobID int64, workerID string, applyID int64, state string, write func(pgx.Tx) error) error {
+	return s.closeApplyJob(ctx, jobID, workerID, applyID, state, write)
 }

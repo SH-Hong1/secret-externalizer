@@ -85,6 +85,8 @@
 - 결정 기록 0035 (OpenBao의 외부화 값)
 - `bao.ErrForbidden`: 다시 로그인한 뒤에도 OpenBao가 403으로 거절한 요청의 오류가 이것과 맞는다.
 - `finding.Kind.CustomerData`: 고객정보 종류(`phone`, `rrn`, `email`, `card`, `address`)인지 알려 준다.
+- 마이그레이션 `0007`: 적용 실행(`apply_run`), 위치별 결과(`apply_item`), 바꾸기 전에 적는 파일 기록(`apply_file`) 표를 만들고, 묶음에 `applied_at`, `store_path`, 스캔에 `apply_id`, 감사 기록의 동작에 `apply`를 더한다. 작업(`job`)에 종류(`scan`, `apply-check`, `apply`)와 `apply_id`가 생기고, 이미 있던 작업은 모두 `scan`이다.
+- 작업 큐가 스캔 작업과 적용 작업을 만든 순서대로 내준다. `job.Dispatch`가 작업의 종류에 맞는 handler를 부르고 모르는 종류는 오류로 둔다. worker의 작업 로그에 `kind`, `apply_id`가 남는다. 세 번 멈춘 적용 작업은 실행을 `worker stopped during the apply three times`, 점검 작업은 `worker stopped during the check three times`로 실패시키고, 정상 종료로 돌려준 적용 작업은 실행을 `queued`로, 점검 작업은 `checking`으로 둔다. 스캔 작업의 동작은 그대로다.
 
 ### 변경
 

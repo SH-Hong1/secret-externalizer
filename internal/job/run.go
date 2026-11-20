@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"time"
 
 	"golang.org/x/sync/errgroup"
@@ -122,10 +123,10 @@ func runJob(ctx context.Context, logger *slog.Logger, q Queue, h Handler, opts O
 		stopped = err != nil && ctx.Err() != nil
 		if err != nil {
 			if jobCtx.Err() != nil {
-				logger.InfoContext(ctx, "job stopped before it finished", "job_id", j.ID, "scan_id", j.ScanID)
+				logger.InfoContext(ctx, "job stopped before it finished", attrs(j)...)
 				return nil
 			}
-			logger.ErrorContext(ctx, "job failed", "job_id", j.ID, "scan_id", j.ScanID, "error", err.Error())
+			logger.ErrorContext(ctx, "job failed", attrs(j, "error", err.Error())...)
 		}
 		return nil
 	})
@@ -152,11 +153,11 @@ func releaseJob(ctx context.Context, logger *slog.Logger, q Queue, opts Options,
 	err := q.ReleaseJob(releaseCtx, j.ID, opts.WorkerID)
 	switch {
 	case err == nil:
-		logger.InfoContext(releaseCtx, "job released", "job_id", j.ID, "scan_id", j.ScanID)
+		logger.InfoContext(releaseCtx, "job released", attrs(j)...)
 	case errors.Is(err, ErrLeaseLost):
 		// The job was closed or taken over meanwhile: nothing to give back.
 	default:
-		logger.ErrorContext(releaseCtx, "releasing the job failed", "job_id", j.ID, "scan_id", j.ScanID, "error", err.Error())
+		logger.ErrorContext(releaseCtx, "releasing the job failed", attrs(j, "error", err.Error())...)
 	}
 }
 
@@ -180,7 +181,7 @@ func renewLease(ctx context.Context, logger *slog.Logger, lost func(), q Queue, 
 		case <-ctx.Done():
 			return
 		case <-expiry.C:
-			logger.WarnContext(ctx, "job lease ran out without a renewal", "job_id", j.ID, "scan_id", j.ScanID)
+			logger.WarnContext(ctx, "job lease ran out without a renewal", attrs(j)...)
 			lost()
 			return
 		case <-beat.C:
@@ -194,17 +195,17 @@ func renewLease(ctx context.Context, logger *slog.Logger, lost func(), q Queue, 
 		case ctx.Err() != nil:
 			return
 		case errors.Is(err, ErrLeaseLost):
-			logger.WarnContext(ctx, "job lease lost", "job_id", j.ID, "scan_id", j.ScanID)
+			logger.WarnContext(ctx, "job lease lost", attrs(j)...)
 			lost()
 			return
 		case !time.Now().Before(deadline):
-			logger.WarnContext(ctx, "job lease ran out without a renewal", "job_id", j.ID, "scan_id", j.ScanID, "error", err.Error())
+			logger.WarnContext(ctx, "job lease ran out without a renewal", attrs(j, "error", err.Error())...)
 			lost()
 			return
 		default:
 			// A renewal that fails for another reason is tried again at the
 			// next beat, until the lease runs out.
-			logger.WarnContext(ctx, "extending the job lease failed", "job_id", j.ID, "error", err.Error())
+			logger.WarnContext(ctx, "extending the job lease failed", attrs(j, "error", err.Error())...)
 		}
 		beat.Reset(opts.Heartbeat)
 	}
@@ -216,4 +217,24 @@ func extend(ctx context.Context, q Queue, opts Options, j Job, deadline time.Tim
 	ctx, cancel := context.WithDeadline(ctx, deadline)
 	defer cancel()
 	return q.ExtendJob(ctx, j.ID, opts.WorkerID, opts.Lease)
+}
+
+// Dispatch returns a Handler that passes each job to the handler for its
+// kind and returns what that handler returns. A job of a kind with no
+// handler is an error, which leaves the job to its lease like any other
+// handler error.
+func Dispatch(handlers map[Kind]Handler) Handler {
+	handlers = maps.Clone(handlers)
+	return func(ctx context.Context, j Job) error {
+		h, ok := handlers[j.Kind]
+		if !ok {
+			return fmt.Errorf("running job %d: no handler for kind %q", j.ID, j.Kind)
+		}
+		return h(ctx, j)
+	}
+}
+
+// attrs returns the log attributes that name j.
+func attrs(j Job, more ...any) []any {
+	return append([]any{"job_id", j.ID, "kind", string(j.Kind), "scan_id", j.ScanID, "apply_id", j.ApplyID}, more...)
 }

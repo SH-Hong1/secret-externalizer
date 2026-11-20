@@ -3,8 +3,10 @@ package job_test
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"log/slog"
+	"maps"
 	"slices"
 	"strings"
 	"sync"
@@ -12,6 +14,8 @@ import (
 	"testing"
 	"testing/synctest"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
 )
@@ -131,6 +135,77 @@ func runInBackground(t *testing.T, q job.Queue, h job.Handler, logger *slog.Logg
 }
 
 func discardLogger() *slog.Logger { return slog.New(slog.DiscardHandler) }
+
+// assertJobAttrs fails the test unless the JSON log holds a record with
+// message msg whose attributes include want.
+func assertJobAttrs(t *testing.T, log, msg string, want map[string]any) {
+	t.Helper()
+	for line := range strings.Lines(log) {
+		var rec map[string]any
+		if err := json.Unmarshal([]byte(line), &rec); err != nil {
+			t.Fatalf("json.Unmarshal(%q) error = %v", line, err)
+		}
+		if rec["msg"] != msg {
+			continue
+		}
+		got := map[string]any{}
+		for k := range want {
+			got[k] = rec[k]
+		}
+		if diff := cmp.Diff(want, got); diff != "" {
+			t.Errorf("Run() logged %q with job attributes (-want +got):\n%s", msg, diff)
+		}
+		return
+	}
+	t.Errorf("Run() did not log %q; log:\n%s", msg, log)
+}
+
+func TestDispatch(t *testing.T) {
+	kinds := []job.Kind{job.KindScan, job.KindApplyCheck, job.KindApply}
+	for _, kind := range kinds {
+		t.Run(string(kind), func(t *testing.T) {
+			calls := map[job.Kind]int{}
+			handlers := map[job.Kind]job.Handler{}
+			for _, k := range kinds {
+				handlers[k] = func(_ context.Context, j job.Job) error {
+					if j.ID != 5 {
+						t.Errorf("Dispatch() passed job %d to the %s handler, want 5", j.ID, k)
+					}
+					calls[k]++
+					return nil
+				}
+			}
+			if err := job.Dispatch(handlers)(t.Context(), job.Job{ID: 5, Kind: kind}); err != nil {
+				t.Fatalf("Dispatch()(%s job) error = %v, want nil", kind, err)
+			}
+			if want := map[job.Kind]int{kind: 1}; !maps.Equal(calls, want) {
+				t.Errorf("Dispatch()(%s job) handler calls = %v, want %v", kind, calls, want)
+			}
+		})
+	}
+	t.Run("unknown kind", func(t *testing.T) {
+		called := false
+		h := job.Dispatch(map[job.Kind]job.Handler{job.KindScan: func(context.Context, job.Job) error {
+			called = true
+			return nil
+		}})
+		for _, kind := range []job.Kind{"", job.KindApply, "fake-kind"} {
+			if err := h(t.Context(), job.Job{ID: 5, Kind: kind}); err == nil {
+				t.Errorf("Dispatch()(%q job) error = nil, want an error", kind)
+			}
+		}
+		if called {
+			t.Errorf("Dispatch() ran the scan handler for a job of another kind")
+		}
+	})
+	t.Run("handler error", func(t *testing.T) {
+		fail := errors.New("fake handler failure")
+		h := job.Dispatch(map[job.Kind]job.Handler{job.KindScan: func(context.Context, job.Job) error { return fail }})
+		if err := h(t.Context(), job.Job{ID: 5, Kind: job.KindScan}); !errors.Is(err, fail) {
+			t.Errorf("Dispatch()(scan job) error = %v, want the handler's error", err)
+		}
+	})
+}
 
 func TestRun_HandlesJob(t *testing.T) {
 	q := newFakeQueue(job.Job{ID: 7, ScanID: 9, Attempts: 1})
@@ -284,7 +359,7 @@ func TestRun_SurvivesClaimError(t *testing.T) {
 }
 
 func TestRun_LogsHandlerErrorOnce(t *testing.T) {
-	q := newFakeQueue(job.Job{ID: 3, ScanID: 3, Attempts: 1})
+	q := newFakeQueue(job.Job{ID: 3, Kind: job.KindApply, ApplyID: 11, Attempts: 1})
 	var logs syncBuffer
 	handled := make(chan struct{})
 	stop := runInBackground(t, q, func(context.Context, job.Job) error {
@@ -299,6 +374,9 @@ func TestRun_LogsHandlerErrorOnce(t *testing.T) {
 	if n := strings.Count(logs.String(), "fake handler failure"); n != 1 {
 		t.Errorf("Run() logged the handler error %d times, want 1; log:\n%s", n, logs.String())
 	}
+	assertJobAttrs(t, logs.String(), "job failed", map[string]any{
+		"job_id": float64(3), "kind": "apply", "scan_id": float64(0), "apply_id": float64(11),
+	})
 }
 
 func TestRun_RejectsBadOptions(t *testing.T) {
@@ -415,7 +493,7 @@ func TestRun_NoReleaseWhenHandlerFinished(t *testing.T) {
 }
 
 func TestRun_ReleaseErrorIsLoggedOnce(t *testing.T) {
-	q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+	q := newFakeQueue(job.Job{ID: 1, Kind: job.KindScan, ScanID: 1, Attempts: 1})
 	q.releaseErr = errors.New("fake release failure")
 	var logs syncBuffer
 	started := make(chan struct{})
@@ -432,6 +510,9 @@ func TestRun_ReleaseErrorIsLoggedOnce(t *testing.T) {
 	if n := strings.Count(logs.String(), "fake release failure"); n != 1 {
 		t.Errorf("Run() logged the release error %d times, want 1; log:\n%s", n, logs.String())
 	}
+	assertJobAttrs(t, logs.String(), "releasing the job failed", map[string]any{
+		"job_id": float64(1), "kind": "scan", "scan_id": float64(1), "apply_id": float64(0),
+	})
 }
 
 // leaseExpiry runs one job in a synctest bubble with a lease of one minute

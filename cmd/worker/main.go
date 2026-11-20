@@ -166,7 +166,8 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 		TimeLimit:    scan.DefaultTimeLimit,
 	})
 	opts := job.Options{WorkerID: workerID, Poll: cfg.poll, Lease: cfg.lease, Heartbeat: cfg.heartbeat}
-	if err := job.Run(ctx, logger, database, runner.Handle, opts); err != nil {
+	handle := job.Dispatch(map[job.Kind]job.Handler{job.KindScan: runner.Handle})
+	if err := job.Run(ctx, logger, database, handle, opts); err != nil {
 		return fmt.Errorf("running jobs: %w", err)
 	}
 	logger.InfoContext(ctx, "worker stopped", "worker_id", workerID)
