@@ -551,3 +551,112 @@ func releaseWhenBlocked(t *testing.T, s *db.Store, held *db.HeldLock, done <-cha
 		t.Fatalf("Commit() error = %v", err)
 	}
 }
+
+func TestApplySummary(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, sid, _, _ := decidedProject(t, s, "shop")
+
+	sum, err := s.ApplySummary(ctx, pid)
+	if err != nil {
+		t.Fatalf("ApplySummary(%d) error = %v", pid, err)
+	}
+	if sum.Scan.ID != sid || sum.Blockers != nil || sum.ScanActive || sum.Check != nil {
+		t.Errorf("ApplySummary(%d) = scan %d, blockers %v, scan active %t, check %v, want scan %d and nothing else",
+			pid, sum.Scan.ID, sum.Blockers, sum.ScanActive, sum.Check, sid)
+	}
+
+	page, err := s.Entries(ctx, pid, sid, triage.Filter{Status: triage.StatusAll, Page: 1})
+	if err != nil {
+		t.Fatalf("Entries(%d, %d) error = %v", pid, sid, err)
+	}
+	bundles := map[triage.Verdict]int{}
+	locations := map[finding.Category]int{}
+	for _, c := range sum.Counts {
+		bundles[c.Verdict] += c.Bundles
+		locations[c.Category] += c.Locations
+	}
+	wantLocations := map[finding.Category]int{}
+	for _, e := range page.Entries {
+		wantLocations[e.Category] += e.Count
+	}
+	for v, n := range page.Counts {
+		if bundles[v] != n {
+			t.Errorf("ApplySummary(%d) bundles with verdict %q = %d, want %d as Entries counts", pid, v, bundles[v], n)
+		}
+	}
+	if diff := cmp.Diff(wantLocations, locations); diff != "" {
+		t.Errorf("ApplySummary(%d) locations per category, against Entries (-want +got):\n%s", pid, diff)
+	}
+	want := []apply.Count{
+		{Verdict: "", Category: finding.CategoryCustomerData, Bundles: 1, Locations: 1},
+		{Verdict: "", Category: finding.CategoryStorage, Bundles: 3, Locations: 3},
+		{Verdict: triage.VerdictExternalize, Category: finding.CategoryStorage, Bundles: 1, Locations: 2},
+		{Verdict: triage.VerdictRedact, Category: finding.CategoryCustomerData, Bundles: 1, Locations: 1},
+	}
+	if diff := cmp.Diff(want, sum.Counts); diff != "" {
+		t.Errorf("ApplySummary(%d) counts (-want +got):\n%s", pid, diff)
+	}
+
+	id := requestCheck(t, s, pid)
+	sum, err = s.ApplySummary(ctx, pid)
+	if err != nil {
+		t.Fatalf("ApplySummary(%d) error = %v", pid, err)
+	}
+	if run := readRun(t, s, id); sum.Digest != run.PlanDigest || sum.Check == nil || sum.Check.ID != id ||
+		sum.Check.State != apply.StateChecking {
+		t.Errorf("ApplySummary(%d) after check %d = digest %s, check %+v, want digest %s and the checking run",
+			pid, id, sum.Digest, sum.Check, run.PlanDigest)
+	}
+
+	t.Run("check skips superseded runs", func(t *testing.T) {
+		if err := s.SetApplyState(ctx, id, apply.StateReady); err != nil {
+			t.Fatalf("SetApplyState(%d, ready) error = %v", id, err)
+		}
+		applyRunIn(t, s, pid, sid, apply.StateSuperseded)
+		sum, err := s.ApplySummary(ctx, pid)
+		if err != nil {
+			t.Fatalf("ApplySummary(%d) error = %v", pid, err)
+		}
+		if sum.Check == nil || sum.Check.ID != id || sum.Check.State != apply.StateReady {
+			t.Errorf("ApplySummary(%d).Check = %+v, want the ready run %d", pid, sum.Check, id)
+		}
+	})
+	t.Run("nothing to apply", func(t *testing.T) {
+		other := newProject(t, s, "undecided")
+		save(t, s, other, mixed()...)
+		sum, err := s.ApplySummary(ctx, other)
+		if err != nil {
+			t.Fatalf("ApplySummary(%d) error = %v", other, err)
+		}
+		if !cmp.Equal(sum.Blockers, []apply.Blocker{apply.BlockerNothingToApply}) || sum.Digest == "" {
+			t.Errorf("ApplySummary(undecided project) = blockers %v, digest %q, want [nothing-to-apply] and a digest", sum.Blockers, sum.Digest)
+		}
+	})
+	t.Run("scan active", func(t *testing.T) {
+		if _, err := s.RequestScan(ctx, pid, tester); err != nil {
+			t.Fatalf("RequestScan(%d) error = %v", pid, err)
+		}
+		sum, err := s.ApplySummary(ctx, pid)
+		if err != nil {
+			t.Fatalf("ApplySummary(%d) error = %v", pid, err)
+		}
+		if !sum.ScanActive || sum.Scan.ID != sid ||
+			!cmp.Equal(sum.Blockers, []apply.Blocker{apply.BlockerScanNotLatest}) {
+			t.Errorf("ApplySummary(%d) with a queued scan = scan %d, active %t, blockers %v, want scan %d, active, [scan-not-latest]",
+				pid, sum.Scan.ID, sum.ScanActive, sum.Blockers, sid)
+		}
+	})
+	t.Run("no succeeded scan", func(t *testing.T) {
+		bare := newProject(t, s, "bare")
+		sum, err := s.ApplySummary(ctx, bare)
+		if err != nil || sum.Scan.ID != 0 || sum.Counts != nil || sum.Digest != "" {
+			t.Errorf("ApplySummary(project without scan) = %+v, %v, want an empty summary", sum, err)
+		}
+	})
+	t.Run("no project", func(t *testing.T) {
+		if _, err := s.ApplySummary(ctx, 424242); !errors.Is(err, db.ErrNotFound) {
+			t.Errorf("ApplySummary(424242) error = %v, want ErrNotFound", err)
+		}
+	})
+}

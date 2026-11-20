@@ -8,6 +8,7 @@ import (
 	"slices"
 	"sync"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
@@ -829,4 +830,162 @@ func (b *blockingStore) AuditEvents(ctx context.Context, _ int64, _ int) ([]audi
 
 func (b *blockingStore) ReadPending(ctx context.Context, _ int64, _ string) (bao.Value, error) {
 	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) ApplySummary(ctx context.Context, _ project.ID) (apply.Summary, error) {
+	return apply.Summary{}, b.wait(ctx)
+}
+
+func (b *blockingStore) RequestApplyCheck(ctx context.Context, _ project.ID, _ audit.Actor) (apply.ID, error) {
+	return 0, b.wait(ctx)
+}
+
+func (b *blockingStore) ConfirmApply(ctx context.Context, _ apply.ID, _ string, _ bool, _ audit.Actor) error {
+	return b.wait(ctx)
+}
+
+func (b *blockingStore) ApplyRun(ctx context.Context, _ apply.ID) (apply.Run, error) {
+	return apply.Run{}, b.wait(ctx)
+}
+
+func (b *blockingStore) ApplyRunsByProject(ctx context.Context, _ project.ID) ([]apply.Run, error) {
+	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) ApplyItems(ctx context.Context, _ apply.ID) ([]apply.Item, error) {
+	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) Reappeared(ctx context.Context, _ scan.ID) (int, error) {
+	return 0, b.wait(ctx)
+}
+
+// fakeApplies keeps the apply state of projects in memory: one summary per
+// project, runs and their items by ID. A non-nil error field makes the
+// matching method return that error. It records the checks and
+// confirmations it is asked for.
+type fakeApplies struct {
+	requestErr error
+	confirmErr error
+
+	mu        sync.Mutex
+	summaries map[project.ID]apply.Summary
+	runs      map[apply.ID]apply.Run
+	items     map[apply.ID][]apply.Item
+	checks    []checkCall
+	confirms  []confirmCall
+}
+
+type checkCall struct {
+	Project project.ID
+	By      audit.Actor
+}
+
+type confirmCall struct {
+	Run               apply.ID
+	Digest            string
+	AllowIrreversible bool
+	By                audit.Actor
+}
+
+func newFakeApplies() *fakeApplies {
+	return &fakeApplies{
+		summaries: make(map[project.ID]apply.Summary),
+		runs:      make(map[apply.ID]apply.Run),
+		items:     make(map[apply.ID][]apply.Item),
+	}
+}
+
+// put stores the summary of project 1, the project of the apply tests. When
+// it names a check, the run and items are stored too.
+func (f *fakeApplies) put(s apply.Summary, items ...apply.Item) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.summaries[1] = s
+	if s.Check != nil {
+		f.runs[s.Check.ID] = *s.Check
+		f.items[s.Check.ID] = items
+	}
+}
+
+func (f *fakeApplies) putRun(r apply.Run) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.runs[r.ID] = r
+}
+
+func (f *fakeApplies) ApplySummary(_ context.Context, pid project.ID) (apply.Summary, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	s, ok := f.summaries[pid]
+	if !ok {
+		return apply.Summary{}, db.ErrNotFound
+	}
+	return s, nil
+}
+
+func (f *fakeApplies) RequestApplyCheck(_ context.Context, pid project.ID, by audit.Actor) (apply.ID, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.checks = append(f.checks, checkCall{pid, by})
+	if f.requestErr != nil {
+		return 0, f.requestErr
+	}
+	if _, ok := f.summaries[pid]; !ok {
+		return 0, db.ErrNotFound
+	}
+	return 99, nil
+}
+
+func (f *fakeApplies) ConfirmApply(_ context.Context, id apply.ID, digest string, allow bool, by audit.Actor) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.confirms = append(f.confirms, confirmCall{id, digest, allow, by})
+	return f.confirmErr
+}
+
+func (f *fakeApplies) ApplyRun(_ context.Context, id apply.ID) (apply.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r, ok := f.runs[id]
+	if !ok {
+		return apply.Run{}, db.ErrNotFound
+	}
+	return r, nil
+}
+
+func (f *fakeApplies) ApplyRunsByProject(_ context.Context, pid project.ID) ([]apply.Run, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []apply.Run
+	for _, r := range f.runs {
+		if r.ProjectID == pid {
+			out = append(out, r)
+		}
+	}
+	slices.SortFunc(out, func(a, b apply.Run) int { return cmp.Compare(b.ID, a.ID) })
+	return out, nil
+}
+
+func (f *fakeApplies) ApplyItems(_ context.Context, id apply.ID) ([]apply.Item, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if _, ok := f.runs[id]; !ok {
+		return nil, db.ErrNotFound
+	}
+	return f.items[id], nil
+}
+
+func (f *fakeApplies) Reappeared(context.Context, scan.ID) (int, error) { return 0, nil }
+
+func (f *fakeApplies) checkCalls() []checkCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.checks)
+}
+
+func (f *fakeApplies) confirmCalls() []confirmCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.confirms)
 }

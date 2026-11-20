@@ -463,3 +463,96 @@ func (s *Store) ApplyItems(ctx context.Context, id apply.ID) ([]apply.Item, erro
 	}
 	return out, nil
 }
+
+// ApplySummary returns what the database tells about applying the project:
+// its latest succeeded scan, the digest and counts of that scan's plan, the
+// conditions the database shows, whether a scan is active, and the newest
+// run that is not superseded. A project without a succeeded scan gives a
+// Summary with only ScanActive and Check set. It returns ErrNotFound when
+// there is no project.
+func (s *Store) ApplySummary(ctx context.Context, projectID project.ID) (apply.Summary, error) {
+	var sum apply.Summary
+	err := s.readOnly(ctx, func(tx pgx.Tx) error {
+		var exists bool
+		if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM project WHERE id = $1)", projectID).Scan(&exists); err != nil {
+			return fmt.Errorf("reading project %d: %w", projectID, err)
+		}
+		if !exists {
+			return fmt.Errorf("summarizing apply of project %d: %w", projectID, ErrNotFound)
+		}
+		if err := tx.QueryRow(ctx,
+			"SELECT EXISTS (SELECT 1 FROM scan WHERE project_id = $1 AND status IN ('queued', 'running'))",
+			projectID).Scan(&sum.ScanActive); err != nil {
+			return fmt.Errorf("reading active scan of project %d: %w", projectID, err)
+		}
+		r, err := scanApplyRun(tx.QueryRow(ctx, "SELECT "+applyRunColumns+` FROM apply_run
+			WHERE project_id = $1 AND state <> 'superseded' ORDER BY id DESC LIMIT 1`, projectID))
+		switch {
+		case err == nil:
+			sum.Check = &r
+		case !errors.Is(err, pgx.ErrNoRows):
+			return fmt.Errorf("reading newest apply run of project %d: %w", projectID, err)
+		}
+		scanID, err := latestScanID(ctx, tx, projectID)
+		if errors.Is(err, ErrNotFound) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if sum.Scan, err = scanScan(tx.QueryRow(ctx, "SELECT "+scanColumns+" FROM scan WHERE id = $1", scanID)); err != nil {
+			return fmt.Errorf("reading scan %d: %w", scanID, err)
+		}
+		return summarizePlan(ctx, tx, projectID, &sum)
+	})
+	if err != nil {
+		return apply.Summary{}, err
+	}
+	return sum, nil
+}
+
+// summarizePlan fills the digest, counts and blockers of sum, whose Scan is
+// the project's latest succeeded scan.
+func summarizePlan(ctx context.Context, tx pgx.Tx, projectID project.ID, sum *apply.Summary) error {
+	scanID := sum.Scan.ID
+	bundles, err := applyBundles(ctx, tx, projectID, scanID)
+	if err != nil {
+		return err
+	}
+	spans, err := customerSpans(ctx, tx, projectID, scanID)
+	if err != nil {
+		return err
+	}
+	sum.Digest = apply.Digest(scanID, bundles, spans)
+
+	rows, err := tx.Query(ctx, scanBundles+`
+		SELECT verdict, category, count(*)::int, sum(locations)::int FROM scan_bundle
+		GROUP BY verdict, category ORDER BY verdict, category`, projectID, scanID)
+	if err != nil {
+		return fmt.Errorf("counting bundles of scan %d: %w", scanID, err)
+	}
+	if sum.Counts, err = pgx.CollectRows(rows, func(row pgx.CollectableRow) (apply.Count, error) {
+		var c apply.Count
+		err := row.Scan(&c.Verdict, &c.Category, &c.Bundles, &c.Locations)
+		return c, err
+	}); err != nil {
+		return fmt.Errorf("counting bundles of scan %d: %w", scanID, err)
+	}
+
+	var newer, unlisted bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM scan WHERE project_id = $1 AND id > $2),
+			EXISTS (SELECT 1 FROM apply_item i JOIN apply_run r ON r.id = i.apply_id
+				WHERE r.project_id = $1 AND i.status = 'applied' AND NOT i.in_manifest
+					AND i.action IN ('replace', 'remove-file') AND i.category <> 'customer-data')`,
+		projectID, scanID).Scan(&newer, &unlisted); err != nil {
+		return fmt.Errorf("reading the conditions of project %d: %w", projectID, err)
+	}
+	if newer {
+		sum.Blockers = append(sum.Blockers, apply.BlockerScanNotLatest)
+	}
+	if len(bundles) == 0 && !unlisted {
+		sum.Blockers = append(sum.Blockers, apply.BlockerNothingToApply)
+	}
+	return nil
+}

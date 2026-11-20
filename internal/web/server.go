@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
@@ -109,12 +110,33 @@ type Originals interface {
 	ReadPending(ctx context.Context, projectID int64, fingerprint string) (bao.Value, error)
 }
 
+// ApplyStore keeps the applies of projects. ApplySummary returns what the
+// database tells about applying a project, or an error matching
+// db.ErrNotFound when the project is unknown. RequestApplyCheck asks the
+// worker to check a project, and ConfirmApply queues the apply of a ready
+// run; both fail with errors matching db.ErrScanActive or db.ErrApplyActive
+// when a scan or another apply of the project is active and db.ErrNotFound
+// when what they name is unknown, ConfirmApply also with one matching
+// db.ErrPlanChanged when the plan is not the one the check showed. ApplyRun,
+// ApplyRunsByProject and ApplyItems read runs and their outcomes, and
+// Reappeared counts the findings of applied bundles a scan found again.
+type ApplyStore interface {
+	ApplySummary(ctx context.Context, projectID project.ID) (apply.Summary, error)
+	RequestApplyCheck(ctx context.Context, projectID project.ID, by audit.Actor) (apply.ID, error)
+	ConfirmApply(ctx context.Context, id apply.ID, digest string, allowIrreversible bool, by audit.Actor) error
+	ApplyRun(ctx context.Context, id apply.ID) (apply.Run, error)
+	ApplyRunsByProject(ctx context.Context, projectID project.ID) ([]apply.Run, error)
+	ApplyItems(ctx context.Context, id apply.ID) ([]apply.Item, error)
+	Reappeared(ctx context.Context, id scan.ID) (int, error)
+}
+
 // Stores holds the stores the server reads and writes.
 type Stores struct {
 	Projects ProjectStore
 	Scans    ScanStore
 	Triage   TriageStore
 	Audits   AuditStore
+	Applies  ApplyStore
 }
 
 // NewServer returns the complete handler, including middleware. From the

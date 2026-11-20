@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 )
@@ -26,8 +27,15 @@ func handleNotFound(logger *slog.Logger, rd *renderer) http.Handler {
 // handlePostOnly answers a request with any other method to a path that
 // takes only POST.
 func handlePostOnly(logger *slog.Logger, rd *renderer) http.Handler {
+	return handleNotAllowed(logger, rd, http.MethodPost)
+}
+
+// handleNotAllowed answers a request whose method is not one of allowed,
+// which it names in the Allow header, with the 405 page.
+func handleNotAllowed(logger *slog.Logger, rd *renderer, allowed ...string) http.Handler {
+	allow := strings.Join(allowed, ", ")
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Allow", http.MethodPost)
+		w.Header().Set("Allow", allow)
 		rd.fail(w, r, logger, http.StatusMethodNotAllowed, errors.New("method not allowed"))
 	})
 }
