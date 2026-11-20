@@ -237,6 +237,12 @@ func appliedExternalization(b triage.Bundle) bool {
 	return !b.AppliedAt.IsZero() && b.Decision.Verdict == triage.VerdictExternalize
 }
 
+// current reports whether the finding with the given ID is among b's
+// members, which lockBundle reads as those the latest succeeded scan found.
+func current(b triage.Bundle, id finding.ID) bool {
+	return slices.ContainsFunc(b.Members, func(m triage.Member) bool { return m.FindingID == id })
+}
+
 // decisionDetail returns the audit detail of d: the verdict, and the reason,
 // name and note when they are set.
 func decisionDetail(d triage.Decision) map[string]string {
@@ -264,11 +270,15 @@ func decisionDetail(d triage.Decision) map[string]string {
 // fingerprint, holds customer data while the finding does not, or has a
 // decision it would no longer allow with the finding in it.
 // The decision is checked against the finding and the bundle's members that
-// the project's latest succeeded scan found. No finding moves out of a
-// bundle externalized by an apply (triage.ErrNotAllowed): its locations
-// already hold the placeholder of that bundle's name, which the manifest and
-// the apply's records name, and deleting the bundle would free a name the
-// source and the store still use.
+// the project's latest succeeded scan found. A finding moves out of a
+// bundle externalized by an apply only when that scan found it and it is not
+// the bundle's last finding (otherwise triage.ErrNotAllowed): a location the
+// apply replaced no longer holds the value, so the latest scan does not find
+// it, and it holds the placeholder of the bundle's name, which the manifest
+// and the apply's records name; deleting the bundle would free a name the
+// source and the store still use. A location the scan still finds holds the
+// value, and the next apply would replace it under the bundle's name unless
+// it moves.
 // Nothing moves while the project has an apply that is being checked, is
 // queued or runs (ErrApplyActive).
 func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (_ triage.BundleID, err error) {
@@ -338,7 +348,7 @@ func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id findin
 			return 0, err
 		}
 	}
-	if appliedExternalization(locked[from].bundle) {
+	if src := locked[from]; appliedExternalization(src.bundle) && (src.findings == 1 || !current(src.bundle, id)) {
 		return 0, fmt.Errorf("moving finding %d out of applied bundle %d: %w", id, from, triage.ErrNotAllowed)
 	}
 	dest := locked[to].bundle

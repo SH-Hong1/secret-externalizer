@@ -655,6 +655,7 @@ func TestNested(t *testing.T) {
 		{"only the folder's own git", nil, ".git/HEAD", "sub/a/b.yml", false},
 		{"file at the top", nil, "sub/.git", "b.yml", false},
 		{"sibling repository", nil, "other/.git", "sub/a/b.yml", false},
+		{"missing folder", nil, "sub/.git", "gone/a/b.yml", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -671,6 +672,26 @@ func TestNested(t *testing.T) {
 	}
 	if _, err := worktree.Nested(t.TempDir(), "../x.yml"); err == nil {
 		t.Errorf("Nested(%q) error = nil, want an error", "../x.yml")
+	}
+}
+
+func TestNested_SymlinkedFolder(t *testing.T) {
+	outside := t.TempDir()
+	write(t, outside, map[string]string{".git/HEAD": "x\n", "a/b.yml": "b\n"})
+	dir := t.TempDir()
+	write(t, dir, map[string]string{"real/.git/HEAD": "x\n", "real/a/b.yml": "b\n"})
+	for link, target := range map[string]string{"inside": filepath.Join(dir, "real"), "outside": outside} {
+		if err := os.Symlink(target, filepath.Join(dir, link)); err != nil {
+			t.Fatalf("Symlink(%s) error = %v", link, err)
+		}
+		rel := link + "/a/b.yml"
+		got, err := worktree.Nested(dir, rel)
+		if err != nil {
+			t.Fatalf("Nested(%q) error = %v", rel, err)
+		}
+		if got {
+			t.Errorf("Nested(%q) through a symbolic link = true, want false: the link is not followed", rel)
+		}
 	}
 }
 

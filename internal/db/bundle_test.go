@@ -854,14 +854,55 @@ func TestMoveFinding_KeepsAppliedBundle(t *testing.T) {
 	if err := s.MarkApplied(ctx, pw, "secret/data/projects/1/ext.db.main.password"); err != nil {
 		t.Fatalf("MarkApplied(%d) error = %v", pw, err)
 	}
-	if _, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/b.xml"), 0, tester); !errors.Is(err, triage.ErrNotAllowed) {
-		t.Errorf("MoveFinding(b.xml, new bundle) out of an applied bundle error = %v, want ErrNotAllowed", err)
+	// The apply replaced the value in a.yml and b.xml; a later scan finds it
+	// again in a new file, which joins the applied shared bundle.
+	save(t, s, pid, password("conf/d.properties"), password("web/c.jsp"))
+	if got := bundleOf(t, s, pid, fpA, "conf/d.properties"); got != pw {
+		t.Fatalf("bundle of the new d.properties = %d, want the applied bundle %d", got, pw)
 	}
-	other := bundleOf(t, s, pid, fpA, "web/c.jsp")
-	if _, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/a.yml"), other, tester); !errors.Is(err, triage.ErrNotAllowed) {
-		t.Errorf("MoveFinding(a.yml, bundle %d) out of an applied bundle error = %v, want ErrNotAllowed", other, err)
+	jsp := bundleOf(t, s, pid, fpA, "web/c.jsp")
+
+	if _, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/a.yml"), 0, tester); !errors.Is(err, triage.ErrNotAllowed) {
+		t.Errorf("MoveFinding(a.yml, new bundle) of an applied location error = %v, want ErrNotAllowed", err)
 	}
-	if b := readBundle(t, s, pid, sid, pw); b.Decision != externalizeDB || len(b.Members) != 2 {
-		t.Errorf("Bundle(%d) after the refused moves = %+v with %d members, want %+v with 2", pw, b.Decision, len(b.Members), externalizeDB)
+	if _, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/b.xml"), jsp, tester); !errors.Is(err, triage.ErrNotAllowed) {
+		t.Errorf("MoveFinding(b.xml, bundle %d) of an applied location error = %v, want ErrNotAllowed", jsp, err)
+	}
+
+	moved, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/d.properties"), 0, tester)
+	if err != nil {
+		t.Fatalf("MoveFinding(d.properties, new bundle) found by the latest scan error = %v, want nil", err)
+	}
+	if moved == pw || bundleOf(t, s, pid, fpA, "conf/d.properties") != moved {
+		t.Errorf("MoveFinding(d.properties, new bundle) = %d, want a new bundle holding it", moved)
+	}
+	b := readBundle(t, s, pid, sid, pw)
+	if b.Decision != externalizeDB || b.AppliedAt.IsZero() || b.StorePath != "secret/data/projects/1/ext.db.main.password" {
+		t.Errorf("Bundle(%d) after the move = %+v applied %v at %q, want %+v, applied, the same store path",
+			pw, b.Decision, b.AppliedAt, b.StorePath, externalizeDB)
+	}
+	for _, file := range []string{"conf/a.yml", "conf/b.xml"} {
+		if got := bundleOf(t, s, pid, fpA, file); got != pw {
+			t.Errorf("bundle of %s after the move = %d, want %d", file, got, pw)
+		}
+	}
+}
+
+func TestMoveFinding_KeepsLastFindingOfAppliedBundle(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	sid := save(t, s, pid, password("conf/a.yml"), password("web/c.jsp"))
+	pw := bundleOf(t, s, pid, fpA, "conf/a.yml")
+	decide(t, s, pid, externalizeDB, pw)
+	if err := s.MarkApplied(ctx, pw, "secret/data/projects/1/ext.db.main.password"); err != nil {
+		t.Fatalf("MarkApplied(%d) error = %v", pw, err)
+	}
+	jsp := bundleOf(t, s, pid, fpA, "web/c.jsp")
+	if _, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/a.yml"), jsp, tester); !errors.Is(err, triage.ErrNotAllowed) {
+		t.Errorf("MoveFinding(a.yml, bundle %d) of the last finding of an applied bundle error = %v, want ErrNotAllowed", jsp, err)
+	}
+	if b := readBundle(t, s, pid, sid, pw); b.Decision != externalizeDB || len(b.Members) != 1 {
+		t.Errorf("Bundle(%d) after the refused move = %+v with %d members, want %+v with 1", pw, b.Decision, len(b.Members), externalizeDB)
 	}
 }

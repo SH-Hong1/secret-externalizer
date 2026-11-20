@@ -39,46 +39,56 @@ const (
 func (r *Runner) Apply(ctx context.Context, j job.Job) error {
 	limited, cancel := context.WithTimeoutCause(ctx, r.opts.ApplyLimit, errTimeLimit)
 	defer cancel()
-	return r.end(ctx, limited, j, r.apply(limited, j))
+	outcome, err := r.apply(limited, j)
+	return r.end(ctx, limited, j, err, outcome)
 }
 
-// apply carries out the apply of j.
-func (r *Runner) apply(ctx context.Context, j job.Job) error {
+// apply carries out the apply of j. When it returns an error after the plan
+// was prepared, outcome holds the locations this attempt skipped or failed,
+// for the run's failure to record.
+func (r *Runner) apply(ctx context.Context, j job.Job) (outcome []Item, err error) {
 	p, err := r.prepare(ctx, j, job.KindApply)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	defer p.close()
+	// Runs before p.close, while the plan's outcomes are still there. A
+	// location the attempt did not reach stays planned and is left out.
+	defer func() {
+		if err != nil {
+			outcome = slices.DeleteFunc(finalItems(p), func(it Item) bool { return it.Status == StatusPlanned })
+		}
+	}()
 	id := ID(j.ApplyID)
 	if len(p.blockers) > 0 {
 		r.logger.WarnContext(ctx, "apply refused", "apply_id", id, "job_id", j.ID, "blockers", p.blockers,
 			"dirty", len(p.dirty))
 		if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, refusal(p.blockers), p.blockers, nil); err != nil {
-			return fmt.Errorf("refusing the run: %w", err)
+			return nil, fmt.Errorf("refusing the run: %w", err)
 		}
-		return nil
+		return nil, nil
 	}
 
 	storeFailures, err := r.storeValues(ctx, j, p)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	settleRemovals(p)
 	for _, f := range p.files {
 		if err := ctx.Err(); err != nil {
-			return err
+			return nil, err
 		}
 		if err := r.changeFile(ctx, j, p, f); err != nil {
-			return err
+			return nil, err
 		}
 	}
 	if err := ctx.Err(); err != nil {
-		return err
+		return nil, err
 	}
 	if err := r.writeManifest(ctx, j, p); err != nil {
-		return err
+		return nil, err
 	}
-	return r.close(ctx, j, p, storeFailures)
+	return nil, r.close(ctx, j, p, storeFailures)
 }
 
 // close ends the run. A run that stored nothing it was asked to store and
@@ -469,12 +479,13 @@ func (r *Runner) commitChange(ctx context.Context, j job.Job, dir projectDir, c 
 	case errors.Is(err, rewrite.ErrAfterCommit):
 		// The change is on disk; only a step after it failed. A temporary
 		// file left beside it is removed now, while a record still names it.
+		// If it cannot be, the record stays open and the next start removes
+		// the file and settles the record.
 		r.logger.WarnContext(ctx, "apply file changed but not flushed", "apply_id", id, "job_id", j.ID,
 			"file", c.file, "error", err.Error())
 		if c.temp != "" {
 			if err := dir.RemoveTemp(c.temp); err != nil {
-				r.logger.WarnContext(ctx, "apply temporary file left in place", "apply_id", id, "job_id", j.ID,
-					"error", err.Error())
+				return true, fmt.Errorf("removing the temporary file of %s: %w", c.file, err)
 			}
 		}
 	default:

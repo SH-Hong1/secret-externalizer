@@ -59,6 +59,18 @@
 - [ ] 볼륨을 지우지 않고 OpenBao 정책을 바꾸는 방법을 둔다. self-init은 빈 저장소에서 한 번만 실행되므로 지금은 `config.hcl`의 정책을 고치면 `openbao-data`, `openbao-secrets`를 지워야 하는데, 적용을 한 번이라도 한 환경에서는 그 볼륨에 추적되지 않는 파일에서 빼낸 값의 유일한 사본이 있다(`docs/local-run.md`의 "정책을 바꾼 뒤").
 - [ ] 스캔을 적용과 다른 컨테이너나 다른 사용자로 나눈다. 지금은 betterleaks와 opengrep이 worker 컨테이너에서 worker와 같은 사용자로 돌고, 그 컨테이너에 `/workspace-rw`가 읽기-쓰기로 마운트되어 있어, 잘못 만들어졌거나 바뀐 스캐너가 절대 경로로 소스를 바꿀 수 있다. 지금 이를 줄이는 것은 `deploy/worker/scanners.lock`의 체크섬과 "스캔이 작업 공간에 아무것도 쓰지 않는다"는 확인뿐이다(`docs/decisions/0032-apply-order-and-resuming.md`).
 - [ ] OpenBao에 저장되는 외부화 값은 소스에 적힌 글자 그대로다. XML의 `&amp;`, properties와 Java의 `\` 이스케이프, YAML의 따옴표 안 이스케이프를 풀지 않는다. 값을 쓰는 쪽(배포 스크립트, 설정 주입)이 파일 종류를 보고 풀어야 한다. 풀어 저장할지 정한다(`docs/decisions/0035-externalized-values-in-openbao.md`).
+- [ ] git은 `objects/info/alternates`가 작업 공간 밖을 가리켜도 그 객체를 읽는다. 읽기만 하고 도구가 받는 것은 경로와 표시뿐이지만, git 폴더가 작업 공간 안에 있어야 한다는 규칙의 예외다(`docs/decisions/0033-git-work-tree-inspection.md`).
+- [ ] macOS의 git은 파일 이름을 NFC로 보고하므로 디스크에 NFD로 저장된 이름이 다른 바이트로 돌아올 수 있다. 결과는 "커밋되지 않은 변경"이나 "추적되지 않음" 쪽으로 기울고, Linux의 worker에는 해당하지 않는다(`docs/decisions/0033-git-work-tree-inspection.md`).
+- [ ] `apply_run.project_id`에는 걸린 상태(`checking`, `queued`, `running`)의 부분 유일 인덱스 말고 인덱스가 없다. "프로젝트의 마지막 실행"을 읽는 쿼리가 실행이 쌓이면 느려지므로 새 마이그레이션으로 인덱스를 더한다.
+- [ ] git이 추적하지 않고 사람이 손으로 만든 `secrets-manifest.yml`은 적용이 다시 쓴다(항목은 남고 모양은 쓰는 모양으로 바뀐다). git에 사본이 없으므로 원래 모양으로 되돌릴 수 없다(`docs/decisions/0034-manifest-format.md`).
+- [ ] 죽은 뒤 다음 맞추기 전에 사람이 파일을 고치면, 그 파일의 항목은 `interrupted`로 닫히는데 디스크에는 placeholder가 남는다. 그 파일을 커밋하기 전까지 다음 적용은 "커밋되지 않은 변경"으로 막힌다(`docs/decisions/0032-apply-order-and-resuming.md`).
+- [ ] 임시 파일을 지우지 못한 뒤 manifest가 하드 링크된 상태로 남으면, 이후의 manifest 쓰기가 모두 `ErrHardLinked`로 실패한다. 사람이 링크를 풀어야 한다(`docs/decisions/0037-file-rewrite-on-os-root.md`).
+- [ ] `BeginFile`이나 `EndFile`에서 데이터베이스가 잠깐 오류를 내도 실행은 그대로 실패로 끝난다. 다시 시도하지 않으므로 사람이 적용을 다시 요청해야 한다(`docs/decisions/0032-apply-order-and-resuming.md`).
+- [ ] 확장자가 `.sh`가 아닌 셸 스크립트(`bin/start`, `.bash`, `.ksh`)는 `${ext.…}` 표기로 바뀌어 셸에서 쓸 수 없다. 작은따옴표 안의 셸 문자열에 들어간 placeholder는 펼쳐지지 않는데 이를 알리지 않는다(`docs/decisions/0039-apply-plan-rules.md`).
+- [ ] 16MiB 값 하나를 다룰 때 worker의 최대 메모리는 대략 100~150MB이고, compose의 worker 컨테이너에는 메모리 한도가 없다. `prepared`는 모든 대상 파일의 바이트를 한꺼번에 들고 있다(`docs/decisions/0035-externalized-values-in-openbao.md`).
+- [ ] OpenBao HTTP 클라이언트의 전체 제한 시간이 10초라서, 느린 호스트에서는 큰 키 파일이 `store-failed`가 된다. 거부일 뿐 값이 사라지지는 않는다(`docs/decisions/0035-externalized-values-in-openbao.md`).
+- [ ] 실제 스캐너의 결과를 적용에 넣어 보는 테스트가 없다. 계획 5 PR 2의 실제 스택 확인(계획 Task 15)이 처음으로 끝까지 확인하는 자리이므로 빼지 않는다.
+- [ ] manifest가 계획의 대상 파일이고 그 값이 따옴표 없는 문자열이면, 치환한 placeholder를 manifest 읽기가 받지 않아 manifest 쓰기가 실패한다. 사람이 manifest를 고쳐야 다음 적용이 이어 쓴다(`docs/decisions/0032-apply-order-and-resuming.md`).
 
 ## 계획 4에서 남은 일
 
@@ -83,7 +95,7 @@
 
 - [ ] 규칙의 알려진 누락: `.properties`의 `jdbc.pass=`와 공백으로 구분한 형태, YAML 블록 스칼라(`password: >`), `sshpass -e`와 `SSHPASS=`, `setRequestProperty("Cookie", …)`, `settings.xml`의 `<username>`, `<constructor-arg name="password">`, `dbPassword` 같은 속성 이름, 외국인등록번호(7번째 자리 5~8), 하이픈 없는 전화번호.
 - [ ] 규칙의 알려진 오탐: `TOKEN_HEADER = "X-Auth-Token"` 같은 상수, `MSG_PWD` 같은 메시지 상수, SpEL `#{…}` 값, DB가 아닌 pool bean의 `url`/`user`, 원격 명령의 `sed -i`.
-- [ ] worker가 둘 이상일 때: 오래된 임시 원본 정리가 다음 스캔의 `PutPending`과 겹치면 `has_original = true`인데 원본이 없는 항목이 생길 수 있다. worker를 늘리기 전에 삭제 직전에 최신 스캔을 다시 확인하게 한다.
+- [ ] worker가 둘 이상일 때: 오래된 임시 원본 정리가 다음 스캔의 `PutPending`과 겹치면 `has_original = true`인데 원본이 없는 항목이 생길 수 있다. worker를 늘리기 전에 삭제 직전에 최신 스캔을 다시 확인하게 한다. 적용도 worker 하나를 전제로 한다. 임대를 잃은 뒤 한 실행을 두 worker가 함께 잡으면 기록이 틀릴 수 있다(파일은 바뀌었는데 항목이 `interrupted`). 값은 사라지지 않는다(`docs/decisions/0038-apply-file-records.md`).
 - [x] compose의 worker에 `restart:` 정책이 없다. 하나뿐인 worker가 죽으면 스캔이 "실행 중"으로 남고 그 프로젝트의 새 스캔을 막는다. 2026-11-20에 계획 5 Task 11에서 `restart: unless-stopped`를 두었다. 다시 뜬 worker가 임대가 끝난 작업을 이어 간다.
 - [ ] compose의 모든 서비스가 한 네트워크를 쓴다. web이 `openbao:8200`에 닿을 수 있고(자격 증명은 없다) worker와 스캔 도구가 바깥으로 나갈 수 있다. 네트워크를 나눈다.
 - [x] 큰 값: 지문 요청은 건수(500)로만 나누고 크기로 나누지 않는다. 20MiB에 가까운 키 파일은 OpenBao의 요청 한도를 넘을 수 있고, 그때 실패 사유가 "secret store could not be reached"로 나온다. 빈 키 파일(빈 HMAC 입력)도 확인하지 않았다. 2026-11-20에 계획 5 Task 4에서 지문 요청을 값의 바이트 합 8MiB로도 나누게 했다. 요청 한도는 32MiB이고 20MiB 값 하나(본문 약 26.7MiB)는 혼자 한 요청으로 통과하며, 빈 입력도 HMAC을 돌려주는 것을 `openbao-test`에서 확인했다(`docs/decisions/0035-externalized-values-in-openbao.md`).

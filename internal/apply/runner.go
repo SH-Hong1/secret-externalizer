@@ -167,7 +167,7 @@ func NewRunner(logger *slog.Logger, store Store, vault Vault, opts Options) *Run
 func (r *Runner) Check(ctx context.Context, j job.Job) error {
 	limited, cancel := context.WithTimeoutCause(ctx, r.opts.CheckLimit, errTimeLimit)
 	defer cancel()
-	return r.end(ctx, limited, j, r.check(limited, j))
+	return r.end(ctx, limited, j, r.check(limited, j), nil)
 }
 
 // check carries out the check of j.
@@ -195,8 +195,9 @@ func (r *Runner) check(ctx context.Context, j job.Job) error {
 
 // end returns what a handler of j returns once its work ended with err
 // under limited, a context derived from ctx. A run that could not be carried
-// out is failed with a fixed reason, and its cause logged once.
-func (r *Runner) end(ctx, limited context.Context, j job.Job, err error) error {
+// out is failed with a fixed reason and outcome, the outcomes an apply
+// found before it stopped, and its cause logged once.
+func (r *Runner) end(ctx, limited context.Context, j job.Job, err error, outcome []Item) error {
 	id := ID(j.ApplyID)
 	switch {
 	case err == nil:
@@ -212,7 +213,7 @@ func (r *Runner) end(ctx, limited context.Context, j job.Job, err error) error {
 	}
 	r.logger.ErrorContext(ctx, "apply run failed", "apply_id", id, "job_id", j.ID, "kind", string(j.Kind),
 		"error", err.Error())
-	if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, reason, nil, nil); err != nil {
+	if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, reason, nil, outcome); err != nil {
 		return fmt.Errorf("failing apply %d: %w", id, err)
 	}
 	return nil

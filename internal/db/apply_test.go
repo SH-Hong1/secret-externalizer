@@ -268,6 +268,16 @@ func TestConfirmApply_PlanChanged(t *testing.T) {
 		save(t, s, pid, mixed()...)
 		assertRefused(t, s, r.ID, r.PlanDigest, db.ErrPlanChanged)
 	})
+	t.Run("newer failed scan", func(t *testing.T) {
+		s := newMigratedStore(t)
+		pid, _, _, _ := decidedProject(t, s, "shop")
+		r := readyRun(t, s, pid)
+		failed, j := claimedScan(t, s, pid)
+		if err := s.FailScan(t.Context(), j.ID, "worker-a", failed, "fake failure"); err != nil {
+			t.Fatalf("FailScan(%d) error = %v", failed, err)
+		}
+		assertRefused(t, s, r.ID, r.PlanDigest, db.ErrPlanChanged)
+	})
 	for _, state := range []apply.State{apply.StateBlocked, apply.StateChecking, apply.StateSuperseded, apply.StateQueued} {
 		t.Run("run "+string(state), func(t *testing.T) {
 			s := newMigratedStore(t)

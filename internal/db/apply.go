@@ -160,7 +160,8 @@ func (s *Store) RequestApplyCheck(ctx context.Context, projectID project.ID, by 
 // records the audit event, in one transaction. allowIrreversible is the
 // user's consent to redact customer data in the untracked files the check
 // listed. It returns ErrPlanChanged when digest is not the run's or not the
-// current plan's; ErrNotFound when the run is not ready; ErrScanActive when
+// current plan's, or when any scan of the project, in any state, is newer
+// than the checked one; ErrNotFound when the run is not ready; ErrScanActive when
 // the project has a queued or running scan.
 func (s *Store) ConfirmApply(ctx context.Context, id apply.ID, digest string, allowIrreversible bool, by audit.Actor) (err error) {
 	tx, err := s.pool.Begin(ctx)
@@ -197,6 +198,16 @@ func (s *Store) ConfirmApply(ctx context.Context, id apply.ID, digest string, al
 	}
 	if digest != planDigest {
 		return fmt.Errorf("confirming apply %d: %w", id, ErrPlanChanged)
+	}
+	// Any scan after the checked one, whatever its state, means the check
+	// no longer describes what the worker will meet.
+	var newer bool
+	if err := tx.QueryRow(ctx, "SELECT EXISTS (SELECT 1 FROM scan WHERE project_id = $1 AND id > $2)",
+		projectID, scanID).Scan(&newer); err != nil {
+		return fmt.Errorf("reading scans after scan %d: %w", scanID, err)
+	}
+	if newer {
+		return fmt.Errorf("confirming apply %d: a scan followed the check: %w", id, ErrPlanChanged)
 	}
 	latest, err := latestScanID(ctx, tx, projectID)
 	if err != nil {

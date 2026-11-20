@@ -20,6 +20,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -383,16 +384,37 @@ func confined(rel string) bool {
 // Nested reports whether rel, a file under dir, lies in a repository of
 // its own: some folder between dir and the file holds a .git entry. The .git
 // entry of dir itself does not count. rel uses forward slashes and must not
-// leave dir.
+// leave dir. dir is read through an os.Root, and a symbolic link on the way
+// to the file is not followed: the search stops there, or at a folder that
+// is missing, and reports false, as the file is then not one the apply
+// changes.
 func Nested(dir, rel string) (bool, error) {
 	if !filepath.IsLocal(filepath.FromSlash(rel)) {
 		return false, fmt.Errorf("checking for a nested repository: path %q is not under the folder", rel)
 	}
-	parts := strings.Split(filepath.ToSlash(filepath.Clean(filepath.FromSlash(rel))), "/")
-	folder := dir
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return false, fmt.Errorf("checking for a nested repository: %w", err)
+	}
+	defer func() {
+		// The folder was only read, so a close failure loses nothing.
+		_ = root.Close()
+	}()
+	parts := strings.Split(path.Clean(filepath.ToSlash(rel)), "/")
+	folder := "."
 	for _, part := range parts[:len(parts)-1] {
-		folder = filepath.Join(folder, part)
-		_, err := os.Lstat(filepath.Join(folder, ".git"))
+		folder = path.Join(folder, part)
+		info, err := root.Lstat(filepath.FromSlash(folder))
+		if errors.Is(err, fs.ErrNotExist) {
+			return false, nil
+		}
+		if err != nil {
+			return false, fmt.Errorf("checking for a nested repository: %w", err)
+		}
+		if !info.IsDir() {
+			return false, nil
+		}
+		_, err = root.Lstat(filepath.FromSlash(path.Join(folder, ".git")))
 		if err == nil {
 			return true, nil
 		}

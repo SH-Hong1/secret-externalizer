@@ -1527,6 +1527,33 @@ func TestApply_ChangedButNotFlushed(t *testing.T) {
 	}
 }
 
+// unflushedNoTemp is an unflushed project folder that cannot remove a
+// temporary file.
+type unflushedNoTemp struct {
+	unflushed
+}
+
+func (unflushedNoTemp) RemoveTemp(string) error { return errRefused }
+
+func TestApply_ChangedButTempNotRemoved(t *testing.T) {
+	f := newShop(t, inRepository)
+	_, want := f.twoFiles()
+	f.wrap = func(d apply.ProjectDir) apply.ProjectDir { return unflushedNoTemp{unflushed{d, t}} }
+
+	f.mustEnd(apply.FailureOther)
+
+	if len(f.store.open) != 1 {
+		t.Fatalf("open records = %+v, want the first changed file's left for the next start", f.store.open)
+	}
+	file := f.store.open[0].File
+	if got := string(read(t, f.dir, file)); got != want[file] {
+		t.Errorf("%s after the run (-want +got):\n%s", file, cmp.Diff(want[file], got))
+	}
+	if got := f.store.begins(); got != 1 {
+		t.Errorf("BeginFile was called %d times, want 1: the run stops at the first file", got)
+	}
+}
+
 func TestApply_RecordFailures(t *testing.T) {
 	tests := []struct {
 		name string
@@ -1822,6 +1849,27 @@ func TestApply_ManifestWriteFails(t *testing.T) {
 		if strings.Contains(e.Name(), ".se-apply-") {
 			t.Errorf("temporary file %s left in the project folder", e.Name())
 		}
+	}
+}
+
+func TestApply_FailedRunKeepsOutcomes(t *testing.T) {
+	f := newShop(t, inRepository)
+	ky := f.secret("db.yaml.password", ymlValue, ymlFile)[0]
+	kx := f.secret("db.xml.password", xmlValue, xmlFile)[0]
+	f.replaceIn(ymlFile, "spring:", "spring: # changed")
+	f.commit()
+	f.store.after["BeginFile"] = func(context.Context) error {
+		if f.store.open[len(f.store.open)-1].File == manifest.FileName {
+			write(f.t, f.dir, manifest.FileName, "version: 1\nentries: []\n")
+		}
+		return nil
+	}
+
+	f.mustEnd(apply.FailureManifestWrite)
+
+	want := map[string]string{ky: skippedFor(apply.ReasonFileChanged), kx: applied}
+	if diff := cmp.Diff(want, f.items()); diff != "" {
+		t.Errorf("items of the failed run (-want +got):\n%s", diff)
 	}
 }
 
