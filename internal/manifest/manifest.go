@@ -5,7 +5,8 @@
 // The file is a small fixed subset of YAML. Encode writes only that subset
 // and Parse accepts only that subset, so that extending a manifest a person
 // edited by hand never drops or reinterprets what they wrote: anything else
-// is ErrUnsupported.
+// is ErrUnsupported. Encode refuses, with ErrInvalid, any manifest that Parse
+// would not read back as the same manifest.
 package manifest
 
 import (
@@ -13,7 +14,6 @@ import (
 	"cmp"
 	"errors"
 	"fmt"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -27,11 +27,18 @@ import (
 // FileName is the manifest's name in the project folder.
 const FileName = "secrets-manifest.yml"
 
-// MaxSize is the largest manifest Parse reads, in bytes.
+// MaxSize is the largest manifest Parse reads and Encode writes, in bytes.
 const MaxSize = 1 << 20
+
+// MaxLine is the largest line number a location can have.
+const MaxLine = 999_999_999
 
 // ErrUnsupported means the file is not a manifest this package wrote.
 var ErrUnsupported = errors.New("manifest is not in the supported form")
+
+// ErrInvalid means a manifest holds something Encode cannot write in a form
+// Parse reads back as the same manifest.
+var ErrInvalid = errors.New("manifest cannot be written")
 
 // Action says what was done to the source where a placeholder is listed.
 type Action string
@@ -78,16 +85,7 @@ const (
 	lineNoLocations = "    locations: []"
 	prefixFile      = "      - file: "
 	prefixLine      = "        line: "
-	maxLineDigits   = 9
 )
-
-// plainScalar is the set of strings Encode writes without quotes, before the
-// checks in plain.
-var plainScalar = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
-
-// yamlWords are the plain scalars a YAML 1.1 or 1.2 reader resolves to a
-// boolean or null rather than a string, compared case-insensitively.
-var yamlWords = []string{"null", "true", "false", "yes", "no", "on", "off", "y", "n"}
 
 // Parse reads a manifest. An empty file is a manifest with no entries. Any
 // input that is not exactly the form Encode writes, apart from the final line
@@ -198,9 +196,9 @@ func (p *parser) field(prefix, reason string) (string, error) {
 	if !ok || !strings.HasPrefix(l, prefix) {
 		return "", p.fail(reason)
 	}
-	s, err := scalar(l[len(prefix):])
-	if err != nil {
-		return "", p.fail(err.Error())
+	s, ok := scalar(l[len(prefix):])
+	if !ok {
+		return "", p.fail("value is not in the supported form")
 	}
 	p.next++
 	return s, nil
@@ -252,14 +250,16 @@ func (p *parser) entry() (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	if e.Category, err = parseCategory(category); err != nil {
+	e.Category = finding.Category(category)
+	if !knownCategory(e.Category) {
 		return Entry{}, unsupported(p.lineNo()-1, "unknown category")
 	}
 	action, err := p.field(prefixAction, "expected action")
 	if err != nil {
 		return Entry{}, err
 	}
-	if e.Action, err = parseAction(action); err != nil {
+	e.Action = Action(action)
+	if !knownAction(e.Action) {
 		return Entry{}, unsupported(p.lineNo()-1, "unknown action")
 	}
 	if e.Store, err = p.nonEmpty(prefixStore, "expected store"); err != nil {
@@ -307,9 +307,11 @@ func (p *parser) location() (Location, error) {
 	if !ok || !strings.HasPrefix(l, prefixLine) {
 		return loc, nil
 	}
-	if loc.Line, err = parseLine(l[len(prefixLine):]); err != nil {
+	n, ok := parseLine(l[len(prefixLine):])
+	if !ok {
 		return Location{}, p.fail("line is not a positive number")
 	}
+	loc.Line = n
 	p.next++
 	return loc, nil
 }
@@ -326,160 +328,162 @@ func (p *parser) nonEmpty(prefix, reason string) (string, error) {
 	return s, nil
 }
 
-// parseCategory accepts the categories of a secret. Customer data never
-// enters a manifest.
-func parseCategory(s string) (finding.Category, error) {
-	c, err := finding.ParseCategory(s)
-	if err != nil {
-		return "", err
+// knownCategory reports whether c is the category of a secret. Customer data
+// never enters a manifest.
+func knownCategory(c finding.Category) bool {
+	switch c {
+	case finding.CategoryPartnerSession, finding.CategoryStorage, finding.CategorySSH, finding.CategoryOther:
+		return true
+	case finding.CategoryCustomerData:
+		return false
 	}
-	if c == finding.CategoryCustomerData {
-		return "", finding.ErrUnknown
-	}
-	return c, nil
+	return false
 }
 
-func parseAction(s string) (Action, error) {
-	switch a := Action(s); a {
-	case ActionExternalized, ActionFileRemoved:
-		return a, nil
-	}
-	return "", ErrUnsupported
+// knownAction reports whether a is one of the actions an entry can have.
+func knownAction(a Action) bool {
+	return a == ActionExternalized || a == ActionFileRemoved
 }
 
-// parseLine accepts a positive decimal number without leading zeros, the only
-// form Encode writes.
-func parseLine(s string) (int, error) {
-	if s == "" || len(s) > maxLineDigits || s[0] == '0' {
-		return 0, ErrUnsupported
+// parseLine reads a number from 1 to MaxLine written without leading zeros,
+// the only form Encode writes.
+func parseLine(s string) (int, bool) {
+	if s == "" || len(s) > len(strconv.Itoa(MaxLine)) || s[0] == '0' {
+		return 0, false
 	}
+	n := 0
 	for _, c := range []byte(s) {
 		if c < '0' || c > '9' {
-			return 0, ErrUnsupported
+			return 0, false
 		}
+		n = n*10 + int(c-'0')
 	}
-	n, err := strconv.Atoi(s)
-	if err != nil {
-		return 0, ErrUnsupported
-	}
-	return n, nil
+	return n, true
 }
 
 // scalar reads a value written by quote: a plain scalar or a double-quoted
 // one that ends the line.
-func scalar(s string) (string, error) {
+func scalar(s string) (string, bool) {
 	if !strings.HasPrefix(s, `"`) {
-		if !plain(s) {
-			return "", errors.New("value is not a plain scalar")
-		}
-		return s, nil
+		return s, plain(s)
 	}
 	return unquote(s)
 }
 
-// plain reports whether Encode writes s without quotes. Such a string reads
-// as the same string in any YAML reader: it holds no indicator, space or
-// comment, does not start with "-", and is not a word or number that YAML
-// resolves to another type.
+// plain reports whether Encode writes s without quotes: s is made only of
+// ASCII letters, digits and "_./-", does not start with "-", "." or a digit,
+// and is not a word YAML resolves to a boolean or null. Such a string reads as
+// the same string in any YAML reader.
 func plain(s string) bool {
-	if !plainScalar.MatchString(s) || strings.HasPrefix(s, "-") {
+	if s == "" {
 		return false
 	}
-	if c := s[0]; c == '.' || ('0' <= c && c <= '9') {
+	for _, c := range []byte(s) {
+		ok := ('a' <= c && c <= 'z') || ('A' <= c && c <= 'Z') || ('0' <= c && c <= '9') ||
+			c == '_' || c == '.' || c == '/' || c == '-'
+		if !ok {
+			return false
+		}
+	}
+	if c := s[0]; c == '-' || c == '.' || ('0' <= c && c <= '9') {
 		return false
 	}
-	return !slices.ContainsFunc(yamlWords, func(w string) bool { return strings.EqualFold(w, s) })
+	switch strings.ToLower(s) {
+	case "null", "true", "false", "yes", "no", "on", "off", "y", "n":
+		return false
+	}
+	return true
 }
 
 // unquote decodes a double-quoted scalar that takes up the rest of the line.
-// It accepts the JSON escapes and, unescaped, only the characters quote
-// writes unescaped.
-func unquote(s string) (string, error) {
+// It accepts the escapes quote writes and, unescaped, only the characters
+// quote writes unescaped.
+func unquote(s string) (string, bool) {
 	var b strings.Builder
 	i := 1
 	for i < len(s) {
 		r, size := utf8.DecodeRuneInString(s[i:])
 		switch {
 		case r == '"':
-			if i+size != len(s) {
-				return "", errors.New("text after the closing quote")
-			}
-			return b.String(), nil
+			return b.String(), i+size == len(s)
 		case r == '\\':
-			r, n, err := unescape(s[i:])
-			if err != nil {
-				return "", err
+			r, n, ok := unescape(s[i:])
+			if !ok {
+				return "", false
 			}
 			b.WriteRune(r)
 			i += n
 			continue
 		case escaped(r):
-			return "", errors.New("unescaped control character")
+			return "", false
 		}
 		b.WriteRune(r)
 		i += size
 	}
-	return "", errors.New("missing closing quote")
+	return "", false
 }
 
 // unescape decodes the escape at the start of s, which begins with a
-// backslash, and returns the rune and the number of bytes it took.
-func unescape(s string) (rune, int, error) {
+// backslash, and returns the rune and the number of bytes it took. It accepts
+// the escapes quote writes: \" \\ \n \r \t, \uXXXX for a character in the
+// basic plane that is not a surrogate, and \UXXXXXXXX for a character above
+// it.
+func unescape(s string) (rune, int, bool) {
 	if len(s) < 2 {
-		return 0, 0, errors.New("unknown escape")
+		return 0, 0, false
 	}
 	switch s[1] {
 	case '"':
-		return '"', 2, nil
+		return '"', 2, true
 	case '\\':
-		return '\\', 2, nil
-	case '/':
-		return '/', 2, nil
-	case 'b':
-		return '\b', 2, nil
-	case 'f':
-		return '\f', 2, nil
+		return '\\', 2, true
 	case 'n':
-		return '\n', 2, nil
+		return '\n', 2, true
 	case 'r':
-		return '\r', 2, nil
+		return '\r', 2, true
 	case 't':
-		return '\t', 2, nil
+		return '\t', 2, true
 	case 'u':
-	default:
-		return 0, 0, errors.New("unknown escape")
+		r, ok := hexRune(s[2:], 4)
+		if !ok || utf16.IsSurrogate(r) {
+			return 0, 0, false
+		}
+		return r, 6, true
+	case 'U':
+		r, ok := hexRune(s[2:], 8)
+		if !ok || r <= 0xFFFF || !utf8.ValidRune(r) {
+			return 0, 0, false
+		}
+		return r, 10, true
 	}
-	r, ok := hex4(s[2:])
-	if !ok {
-		return 0, 0, errors.New("unknown escape")
-	}
-	if !utf16.IsSurrogate(r) {
-		return r, 6, nil
-	}
-	if len(s) < 12 || s[6:8] != `\u` {
-		return 0, 0, errors.New("unpaired surrogate")
-	}
-	low, ok := hex4(s[8:])
-	if !ok {
-		return 0, 0, errors.New("unpaired surrogate")
-	}
-	pair := utf16.DecodeRune(r, low)
-	if pair == unicode.ReplacementChar {
-		return 0, 0, errors.New("unpaired surrogate")
-	}
-	return pair, 12, nil
+	return 0, 0, false
 }
 
-// hex4 decodes four hexadecimal digits at the start of s.
-func hex4(s string) (rune, bool) {
-	if len(s) < 4 {
+// hexRune decodes n hexadecimal digits at the start of s. It fails for a
+// value above unicode.MaxRune.
+func hexRune(s string, n int) (rune, bool) {
+	if len(s) < n {
 		return 0, false
 	}
-	n, err := strconv.ParseUint(s[:4], 16, 16)
-	if err != nil {
-		return 0, false
+	var r rune
+	for _, c := range []byte(s[:n]) {
+		var d rune
+		switch {
+		case '0' <= c && c <= '9':
+			d = rune(c - '0')
+		case 'a' <= c && c <= 'f':
+			d = rune(c-'a') + 10
+		case 'A' <= c && c <= 'F':
+			d = rune(c-'A') + 10
+		default:
+			return 0, false
+		}
+		r = r<<4 | d
+		if r > unicode.MaxRune {
+			return 0, false
+		}
 	}
-	return rune(n), true
+	return r, true
 }
 
 // escaped reports whether quote writes r as an escape: every character YAML
@@ -490,8 +494,8 @@ func escaped(r rune) bool {
 }
 
 // quote returns s as Encode writes it: plain when plain allows it, and
-// otherwise double-quoted with JSON escapes. Bytes that are not UTF-8 are
-// written as U+FFFD, so the result is always one line of valid UTF-8.
+// otherwise double-quoted with YAML escapes. s must be valid UTF-8, which
+// Encode checks.
 func quote(s string) string {
 	if plain(s) {
 		return s
@@ -503,22 +507,20 @@ func quote(s string) string {
 			b.WriteRune(r)
 			continue
 		}
-		switch r {
-		case '"':
+		switch {
+		case r == '"':
 			b.WriteString(`\"`)
-		case '\\':
+		case r == '\\':
 			b.WriteString(`\\`)
-		case '\n':
+		case r == '\n':
 			b.WriteString(`\n`)
-		case '\r':
+		case r == '\r':
 			b.WriteString(`\r`)
-		case '\t':
+		case r == '\t':
 			b.WriteString(`\t`)
+		case r > 0xFFFF:
+			fmt.Fprintf(&b, `\U%08x`, r)
 		default:
-			if r1, r2 := utf16.EncodeRune(r); r1 != unicode.ReplacementChar {
-				fmt.Fprintf(&b, `\u%04x\u%04x`, r1, r2)
-				continue
-			}
 			fmt.Fprintf(&b, `\u%04x`, r)
 		}
 	}
@@ -529,7 +531,17 @@ func quote(s string) string {
 // Encode writes m in the manifest format, with the line ending m.CRLF names
 // and one line ending at the end. It writes entries and locations in the
 // order m holds them.
-func (m Manifest) Encode() []byte {
+//
+// Encode fails with an error wrapping ErrInvalid, naming the entry and field
+// but not the value, when Parse would not read the result back as m: an
+// empty name, store or file; a string that is not UTF-8; an unknown action or
+// category, or customer data; a line below 0 or above MaxLine; a name listed
+// twice; or a result larger than MaxSize. Empty and nil slices read back
+// as nil.
+func (m Manifest) Encode() ([]byte, error) {
+	if err := m.validate(); err != nil {
+		return nil, err
+	}
 	eol := "\n"
 	if m.CRLF {
 		eol = "\r\n"
@@ -544,7 +556,7 @@ func (m Manifest) Encode() []byte {
 	line(lineVersion)
 	if len(m.Entries) == 0 {
 		line(lineNoEntries)
-		return []byte(b.String())
+		return []byte(b.String()), nil
 	}
 	line(lineEntries)
 	for _, e := range m.Entries {
@@ -564,7 +576,59 @@ func (m Manifest) Encode() []byte {
 			}
 		}
 	}
-	return []byte(b.String())
+	if b.Len() > MaxSize {
+		return nil, fmt.Errorf("manifest is larger than %d bytes: %w", MaxSize, ErrInvalid)
+	}
+	return []byte(b.String()), nil
+}
+
+// validate checks every field Parse checks, so that Encode never writes a
+// file Parse rejects.
+func (m Manifest) validate() error {
+	seen := make(map[string]bool, len(m.Entries))
+	for i, e := range m.Entries {
+		if err := text(e.Name); err != "" {
+			return invalid(i, "name", err)
+		}
+		if seen[e.Name] {
+			return invalid(i, "name", "listed twice")
+		}
+		seen[e.Name] = true
+		if !knownCategory(e.Category) {
+			return invalid(i, "category", "unknown")
+		}
+		if !knownAction(e.Action) {
+			return invalid(i, "action", "unknown")
+		}
+		if err := text(e.Store); err != "" {
+			return invalid(i, "store", err)
+		}
+		for j, loc := range e.Locations {
+			if err := text(loc.File); err != "" {
+				return fmt.Errorf("entry %d location %d file: %s: %w", i, j, err, ErrInvalid)
+			}
+			if loc.Line < 0 || loc.Line > MaxLine {
+				return fmt.Errorf("entry %d location %d line: out of range: %w", i, j, ErrInvalid)
+			}
+		}
+	}
+	return nil
+}
+
+// text returns why s cannot be written as a name, store or file, or "".
+func text(s string) string {
+	switch {
+	case s == "":
+		return "empty"
+	case !utf8.ValidString(s):
+		return "not UTF-8"
+	}
+	return ""
+}
+
+// invalid returns an error naming the entry and field but not the value.
+func invalid(entry int, field, reason string) error {
+	return fmt.Errorf("entry %d %s: %s: %w", entry, field, reason, ErrInvalid)
 }
 
 // Merge returns m with entries added: a new name is inserted in name
@@ -576,7 +640,7 @@ func (m Manifest) Encode() []byte {
 // touches are sorted by file and line with duplicates removed; entries it
 // does not touch are returned unchanged. Merging the same entries again
 // gives the same result. Merge copies what it keeps and changes neither m
-// nor entries.
+// nor entries. It does not check the entries; Encode does.
 func (m Manifest) Merge(entries []Entry) Manifest {
 	out := Manifest{CRLF: m.CRLF}
 	for _, e := range m.Entries {
