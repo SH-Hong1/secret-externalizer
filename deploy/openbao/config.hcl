@@ -45,6 +45,20 @@ audit "file" "stdout" {
 # Self-initialisation runs once, on the first start against empty storage. The
 # requests run in order with the root token, which is revoked afterwards.
 initialize "engines" {
+  # The KV mount comes first and its configuration last. A new KV v2 mount
+  # refuses requests while it upgrades its storage, and a refused request
+  # stops the server before it has finished initialising.
+  request "mount-kv" {
+    operation = "update"
+    path      = "sys/mounts/secret"
+    data = {
+      type = "kv"
+      options = {
+        version = "2"
+      }
+    }
+  }
+
   request "mount-transit" {
     operation = "update"
     path      = "sys/mounts/transit"
@@ -61,28 +75,6 @@ initialize "engines" {
     path      = "transit/keys/fingerprint"
     data = {
       type = "aes256-gcm96"
-    }
-  }
-
-  request "mount-kv" {
-    operation = "update"
-    path      = "sys/mounts/secret"
-    data = {
-      type = "kv"
-      options = {
-        version = "2"
-      }
-    }
-  }
-
-  # KV v2 keeps 10 versions of a path by default and drops the oldest on the
-  # eleventh write. An externalized value may have no other copy, so every
-  # path keeps 100 versions; the worker cannot delete any of them.
-  request "kv-max-versions" {
-    operation = "update"
-    path      = "secret/config"
-    data = {
-      max_versions = 100
     }
   }
 
@@ -202,6 +194,19 @@ initialize "roles" {
         eval_source = "file"
         path        = "/openbao/secrets/web/secret-id"
       }
+    }
+  }
+}
+
+initialize "kv" {
+  # KV v2 keeps 10 versions of a path by default and drops the oldest on the
+  # eleventh write. An externalized value may have no other copy, so every
+  # path keeps 100 versions; the worker cannot delete any of them.
+  request "kv-max-versions" {
+    operation = "update"
+    path      = "secret/config"
+    data = {
+      max_versions = 100
     }
   }
 }
