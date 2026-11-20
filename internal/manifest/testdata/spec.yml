@@ -1,0 +1,24 @@
+version: 1
+entries:
+  - name: EXT_DB_MAIN_PASSWORD
+    category: storage-credential
+    action: externalized
+    store: "openbao:secret/data/projects/7/ext.db.main.password"
+    locations:
+      - file: deploy/backup.sh
+        line: 12
+  - name: ext.db.main.password
+    category: storage-credential
+    action: externalized
+    store: "openbao:secret/data/projects/7/ext.db.main.password"
+    locations:
+      - file: src/main/resources/application-prod.yml
+        line: 14
+      - file: src/main/webapp/WEB-INF/spring/root-context.xml
+        line: 31
+  - name: ext.deploy.ssh.key
+    category: ssh-credential
+    action: file-removed
+    store: "openbao:secret/data/projects/7/ext.deploy.ssh.key"
+    locations:
+      - file: deploy/id_rsa

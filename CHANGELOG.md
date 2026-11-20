@@ -79,6 +79,8 @@
 - `internal/rewrite`: 소스 파일의 텍스트에서 범위를 바꾸고 나머지 바이트(인코딩, BOM, 줄바꿈)를 그대로 둔다. `Span`은 항목의 위치를 텍스트의 범위로, `Replace`는 겹치지 않는 범위를 출력 가능한 ASCII로 바꾼 바이트와 그 SHA-256, 치환이 시작하는 줄을 돌려준다. `Dir`은 `os.Root`로 연 프로젝트 폴더에서 일반 파일만 읽고, 같은 폴더의 임시 파일(`<이름>.se-apply-<16자리>.tmp`, `O_EXCL`)을 거쳐 원래 모드로 바꿔 쓴다. 읽은 뒤 파일이 바뀌었으면(같은 파일, 크기, 수정 시각) `rename` 직전에도 확인해 `ErrChanged`로 거부하고, 심볼릭 링크와 링크인 중간 폴더, 폴더 밖 경로를 거부한다. `Create`는 없는 파일만 만들고(0644), `RemoveTemp`는 `TempName` 모양의 일반 파일만 지운다. 링크가 둘 이상인 파일은 바꾸거나 지우지 않고(`ErrHardLinked`), 바꾼 파일은 원래 파일의 권한 비트만 이어받는다. 변경이 디스크에 반영된 뒤의 단계가 실패하면 `ErrAfterCommit`을 감싼 오류를 돌려준다.
 - 결정 기록 0037 (프로젝트 폴더의 파일 바꾸기)
 - `textfile.Decode`(디스크의 바이트를 `File`로), `File.CharOffset`(글자로 센 줄과 열을 텍스트의 바이트 위치로), `File.DiskOffset`(텍스트의 위치를 디스크 바이트의 위치로. EUC-KR은 파일의 처음부터 글자 단위로 따라간다), `textfile.ErrRawMismatch`. `Read`는 `Decode`를 쓴다(동작은 같다).
+- `internal/manifest`: 프로젝트 폴더의 `secrets-manifest.yml`을 YAML 라이브러리 없이 읽고(`Parse`), 합치고(`Merge`), 쓴다(`Encode`). 항목은 placeholder 이름, 분류, 동작(`externalized`, `file-removed`), 저장 위치, 쓴 파일과 줄이고 값은 담지 않는다. 쓰는 모양 하나만 읽으며, 주석, 모르는 키, 다른 `version`, 앵커, 흐름 표기, 탭, 같은 이름 두 번, UTF-8이 아닌 바이트, 1MiB를 넘는 입력은 줄 번호만 적은 `ErrUnsupported`로 거부한다. 파일 이름은 필요하면 큰따옴표와 JSON 이스케이프로 써서 키나 항목을 끼워 넣지 못하게 하고, CRLF 파일은 CRLF로 다시 쓴다. 합치기는 새 이름을 이름순 자리에 넣고 있는 이름의 위치를 합치며, 여러 번 해도 결과가 같다.
+- 결정 기록 0034 (manifest 형식)
 
 ### 변경
 
