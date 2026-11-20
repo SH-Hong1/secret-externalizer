@@ -52,6 +52,13 @@
 - [ ] 계획 3 이후의 계획 문서는 `docs/superpowers/plans/`에 한글로 쓰고, 사용자의 검토를 받은 뒤 구현한다.
 - [x] 계획 4에 필요한 계획 3의 남은 일. 2026-11-20에 계획 4에서 정리했다: 판정 화면이 항목 ID로 항목을 가리키고, 목록을 한 쪽에 50줄씩 나누며, 마지막 성공한 스캔만 보여 `has_original`을 믿을 수 있고, 건너뛴 파일 이름과 스캐너 오류 수를 스캔 화면에 보이며, 주변 줄은 저장된 그대로 보이기로 했다(`docs/decisions/0028-reveal-is-the-one-place-a-value-is-shown.md`). 남은 base64 값과 제외 경로는 각자의 항목에 있다.
 
+## 계획 5에서 남은 일
+
+계획 5를 구현하는 동안 나온 것 가운데 아직 고치지 않은 것이다.
+
+- [ ] 볼륨을 지우지 않고 OpenBao 정책을 바꾸는 방법을 둔다. self-init은 빈 저장소에서 한 번만 실행되므로 지금은 `config.hcl`의 정책을 고치면 `openbao-data`, `openbao-secrets`를 지워야 하는데, 적용을 한 번이라도 한 환경에서는 그 볼륨에 추적되지 않는 파일에서 빼낸 값의 유일한 사본이 있다(`docs/local-run.md`의 "정책을 바꾼 뒤").
+- [ ] OpenBao에 저장되는 외부화 값은 소스에 적힌 글자 그대로다. XML의 `&amp;`, properties와 Java의 `\` 이스케이프, YAML의 따옴표 안 이스케이프를 풀지 않는다. 값을 쓰는 쪽(배포 스크립트, 설정 주입)이 파일 종류를 보고 풀어야 한다. 풀어 저장할지 정한다(`docs/decisions/0035-externalized-values-in-openbao.md`).
+
 ## 계획 4에서 남은 일
 
 계획 4가 하지 않고 넘긴 것과 검토에서 나온 것 가운데 아직 고치지 않은 것이다. 해당하는 계획을 쓸 때 함께 정한다.
@@ -78,7 +85,7 @@
 - [ ] worker가 둘 이상일 때: 오래된 임시 원본 정리가 다음 스캔의 `PutPending`과 겹치면 `has_original = true`인데 원본이 없는 항목이 생길 수 있다. worker를 늘리기 전에 삭제 직전에 최신 스캔을 다시 확인하게 한다.
 - [ ] compose의 worker에 `restart:` 정책이 없다. 하나뿐인 worker가 죽으면 스캔이 "실행 중"으로 남고 그 프로젝트의 새 스캔을 막는다.
 - [ ] compose의 모든 서비스가 한 네트워크를 쓴다. web이 `openbao:8200`에 닿을 수 있고(자격 증명은 없다) worker와 스캔 도구가 바깥으로 나갈 수 있다. 네트워크를 나눈다.
-- [ ] 큰 값: 지문 요청은 건수(500)로만 나누고 크기로 나누지 않는다. 20MiB에 가까운 키 파일은 OpenBao의 요청 한도를 넘을 수 있고, 그때 실패 사유가 "secret store could not be reached"로 나온다. 빈 키 파일(빈 HMAC 입력)도 확인하지 않았다.
+- [x] 큰 값: 지문 요청은 건수(500)로만 나누고 크기로 나누지 않는다. 20MiB에 가까운 키 파일은 OpenBao의 요청 한도를 넘을 수 있고, 그때 실패 사유가 "secret store could not be reached"로 나온다. 빈 키 파일(빈 HMAC 입력)도 확인하지 않았다. 2026-11-20에 계획 5 Task 4에서 지문 요청을 값의 바이트 합 8MiB로도 나누게 했다. 요청 한도는 32MiB이고 20MiB 값 하나(본문 약 26.7MiB)는 혼자 한 요청으로 통과하며, 빈 입력도 HMAC을 돌려주는 것을 `openbao-test`에서 확인했다(`docs/decisions/0035-externalized-values-in-openbao.md`).
 - [ ] PEM 키가 CRLF 파일에 있으면 betterleaks가 본문을 디코딩한 결과를 하나 더 보고해 그 파일의 주변 줄이 빠지고 버린 건수가 늘 수 있다(실제 DER 본문에서도 그런지는 확인하지 않았다).
 - [ ] 스캐너의 `HOME`/`TMPDIR`(`/tmp/scan` 아래 캐시)은 지우지 않는다. 컨테이너가 아닌 곳에서 worker를 강제 종료하면 `copies/<스캔 ID>`도 남는다.
 - [ ] `SaveResult`는 항목마다 DB를 두 번 왕복한다. 항목이 수만 건이면 묶어서 넣는다.

@@ -336,6 +336,15 @@ func TestClient_ErrorsHideValues(t *testing.T) {
 			_, err := c.ReadPending(t.Context(), 7, fingerprint)
 			return err
 		},
+		"PutStored": func(c *bao.Client) error {
+			v := bao.StoredValue{Value: []byte(testValue), Fingerprint: fingerprint, Kind: "password"}
+			_, err := c.PutStored(t.Context(), 7, "ext.db.main.password", v, 0)
+			return err
+		},
+		"ReadStored": func(c *bao.Client) error {
+			_, err := c.ReadStored(t.Context(), 7, "ext.db.main.password")
+			return err
+		},
 	}
 	encoded := base64.StdEncoding.EncodeToString([]byte(testValue))
 	forbidden := []string{testValue, encoded, testSecretID, tokenPrefix}

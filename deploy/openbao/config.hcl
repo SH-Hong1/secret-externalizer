@@ -85,6 +85,9 @@ initialize "engines" {
 }
 
 initialize "policies" {
+  # The worker reads back the externalized values it writes under projects/
+  # to check the stored bytes before it changes a source file. It has no
+  # delete and no metadata access there, so it cannot remove a version.
   request "worker-policy" {
     operation = "update"
     path      = "sys/policies/acl/worker"
@@ -97,7 +100,7 @@ initialize "policies" {
           capabilities = ["create", "update"]
         }
         path "secret/data/projects/*" {
-          capabilities = ["create", "update"]
+          capabilities = ["create", "update", "read"]
         }
         path "secret/metadata/pending/*" {
           capabilities = ["list", "delete"]

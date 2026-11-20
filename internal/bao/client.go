@@ -3,7 +3,9 @@
 // A fingerprint is the transit HMAC of a value under the key "fingerprint",
 // always at key version 1, so the same value gives the same fingerprint in
 // every scan and every project. An original value waits in the KV v2 mount
-// "secret" at pending/<project ID>/<fingerprint> until it is judged.
+// "secret" at pending/<project ID>/<fingerprint> until it is judged. A value
+// taken out of the source by an apply is kept at projects/<project ID>/<key>,
+// where every write is a check-and-set and earlier versions stay.
 //
 // The package wraps the official OpenBao client, and none of its types
 // appear in this API. Errors from the official client can carry the response
@@ -34,6 +36,11 @@ const (
 
 	// batchSize is the number of values sent in one HMAC request.
 	batchSize = 500
+
+	// maxBatchBytes is the most value bytes sent in one HMAC request. Base64
+	// and JSON make the request about 4/3 of it, well under the 32 MiB that
+	// OpenBao accepts by default; a single larger value is sent alone.
+	maxBatchBytes = 8 << 20
 
 	// hmacPrefix starts every HMAC under key version 1.
 	hmacPrefix = "vault:v1:"
@@ -100,8 +107,8 @@ type Credentials struct {
 	SecretID SecretID
 }
 
-// Client fingerprints values and stores, lists, and deletes pending original
-// values. It logs in with its AppRole on first use and again when OpenBao
+// Client fingerprints values, stores, lists, and deletes pending original
+// values, and stores and reads externalized values. It logs in with its AppRole on first use and again when OpenBao
 // refuses its token. It is safe for concurrent use.
 type Client struct {
 	api  *api.Client
@@ -164,12 +171,15 @@ func New(addr string, creds Credentials, hc *http.Client) (*Client, error) {
 }
 
 // Fingerprints returns the fingerprint of each value, in the order of
-// values, as 64 lower-case hex digits.
+// values, as 64 lower-case hex digits. One request holds at most batchSize
+// values and maxBatchBytes value bytes, except that a larger value goes
+// alone.
 func (c *Client) Fingerprints(ctx context.Context, values [][]byte) ([]string, error) {
 	const op = "fingerprinting values"
 	fps := make([]string, 0, len(values))
-	for start := 0; start < len(values); start += batchSize {
-		batch := values[start:min(start+batchSize, len(values))]
+	for start := 0; start < len(values); {
+		end := batchEnd(values, start)
+		batch := values[start:end]
 		inputs := make([]map[string]any, len(batch))
 		for i, v := range batch {
 			inputs[i] = map[string]any{"input": base64.StdEncoding.EncodeToString(v)}
@@ -190,8 +200,21 @@ func (c *Client) Fingerprints(ctx context.Context, values [][]byte) ([]string, e
 			return nil, fmt.Errorf("%s: values %d to %d: %w", op, start, start+len(batch)-1, err)
 		}
 		fps = append(fps, got...)
+		start = end
 	}
 	return fps, nil
+}
+
+// batchEnd returns the end of the batch that starts at values[start]: it
+// takes values while the batch has fewer than batchSize of them and their
+// bytes stay within maxBatchBytes, and always takes at least one.
+func batchEnd(values [][]byte, start int) int {
+	end, size := start+1, len(values[start])
+	for end < len(values) && end-start < batchSize && size+len(values[end]) <= maxBatchBytes {
+		size += len(values[end])
+		end++
+	}
+	return end
 }
 
 // parseHMACs reads n fingerprints from a batch HMAC response. Errors name
