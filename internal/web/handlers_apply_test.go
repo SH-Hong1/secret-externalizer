@@ -65,6 +65,13 @@ func run(state apply.State) *apply.Run {
 	}
 }
 
+// confirmed is run 5 in state after a user confirmed its apply.
+func confirmed(state apply.State) *apply.Run {
+	r := run(state)
+	r.ConfirmedAt = time.Date(2026, 11, 20, 10, 5, 0, 0, time.UTC)
+	return r
+}
+
 // readyItems are the outcomes a ready check saved: two places to replace,
 // one to redact, and one file changed since the scan.
 func readyItems() []apply.Item {
@@ -196,9 +203,20 @@ func TestApplyPage_States(t *testing.T) {
 		},
 		{
 			name:    "after an apply",
-			summary: summary(run(apply.StateSucceeded)),
+			summary: summary(confirmed(apply.StateSucceeded)),
 			want:    []string{checkForm, `<a href="/applies/5">#5</a> 적용 완료`},
 			wantNot: []string{"점검한 뒤 판정이 바뀌었습니다"},
+		},
+		{
+			name:    "after a failed apply",
+			summary: summary(confirmed(apply.StateFailed)),
+			want:    []string{checkForm, `<a href="/applies/5">#5</a> 적용 실패`},
+		},
+		{
+			name:    "after a failed check",
+			summary: summary(run(apply.StateFailed)),
+			want:    []string{checkForm, "#5 점검 실패", ">조건 점검</button>"},
+			wantNot: []string{`href="/applies/5"`, "적용 실패"},
 		},
 	}
 	for _, tt := range tests {
@@ -327,8 +345,17 @@ func TestApplyPage_Irreversible(t *testing.T) {
 		if strings.Contains(res.body, "checked") {
 			t.Errorf("GET %s checks the consent box for the user", applyPagePath)
 		}
-		if strings.Contains(res.body, fakePhone) {
-			t.Errorf("GET %s shows a customer-data value", applyPagePath)
+		// For each file the section names the path and the number of
+		// places, and nothing else: no line, no kind, no preview.
+		section := between(res.body, `<section class="notice-warn`, "</section>")
+		got := between(section, `<ul class="skips-list">`, "</ul>")
+		if want := "\n<li>data/members.csv · 3곳</li>\n<li>tmp/export.log · 1곳</li>\n"; got != want {
+			t.Errorf("GET %s list of files that cannot be restored = %q, want %q", applyPagePath, got, want)
+		}
+		for _, w := range []string{"members.csv:", "전화번호", "이메일", "주민등록번호"} {
+			if strings.Contains(section, w) {
+				t.Errorf("GET %s section of files that cannot be restored holds %q", applyPagePath, w)
+			}
 		}
 	})
 	t.Run("none", func(t *testing.T) {
@@ -339,6 +366,40 @@ func TestApplyPage_Irreversible(t *testing.T) {
 			t.Errorf("GET %s without files that cannot be restored shows the consent section", applyPagePath)
 		}
 	})
+}
+
+// between returns the text of s after the first start and before the next
+// end, or "".
+func between(s, start, end string) string {
+	i := strings.Index(s, start)
+	if i < 0 {
+		return ""
+	}
+	rest := s[i+len(start):]
+	j := strings.Index(rest, end)
+	if j < 0 {
+		return ""
+	}
+	return rest[:j]
+}
+
+func TestApplyPage_SkipsCapped(t *testing.T) {
+	var items []apply.Item
+	for i := range 53 {
+		items = append(items, apply.Item{File: "conf/f" + strconv.Itoa(i) + ".yml", StartLine: 1, Kind: finding.KindPassword, Status: apply.StatusSkipped, Reason: apply.ReasonFileChanged})
+	}
+	e := applyEnv(t)
+	e.applies.put(summary(run(apply.StateReady)), items...)
+	res := e.getApply(t)
+	group := between(res.body, "<summary>재스캔 필요", "</details>")
+	if n := strings.Count(group, "<li>"); n != 50 {
+		t.Errorf("GET %s lists %d places of a group of 53, want 50", applyPagePath, n)
+	}
+	for _, w := range []string{" · 53곳</summary>", "처음 50곳만 보여 줍니다. 외 3곳."} {
+		if !strings.Contains(group, w) {
+			t.Errorf("GET %s group of 53 lacks %q; group:\n%s", applyPagePath, w, group)
+		}
+	}
 }
 
 func TestApplyPage_SkipReasons(t *testing.T) {
@@ -445,6 +506,36 @@ func TestApplyCheck_Post(t *testing.T) {
 			}
 		})
 	}
+	scanActive := summary(nil)
+	scanActive.ScanActive = true
+	newer := summary(nil)
+	newer.Blockers = []apply.Blocker{apply.BlockerScanNotLatest}
+	nothing := summary(nil)
+	nothing.Blockers = []apply.Blocker{apply.BlockerNothingToApply}
+	for _, tt := range []struct {
+		name    string
+		summary apply.Summary
+		want    string
+	}{
+		{"scan active", scanActive, "이 프로젝트의 스캔이 진행 중입니다. 스캔이 끝난 뒤 다시 점검해 주세요."},
+		{"newer scan", newer, "지금은 점검할 수 없습니다. 아래 조건을 확인해 주세요."},
+		{"nothing to apply", nothing, "지금은 점검할 수 없습니다. 아래 조건을 확인해 주세요."},
+		{"check running", summary(run(apply.StateChecking)), "이 프로젝트의 점검이나 적용이 이미 진행 중입니다."},
+		{"apply queued", summary(confirmed(apply.StateQueued)), "이 프로젝트의 점검이나 적용이 이미 진행 중입니다."},
+		{"no succeeded scan", apply.Summary{}, "성공한 스캔이 없어 점검할 수 없습니다."},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := applyEnv(t)
+			e.applies.put(tt.summary)
+			res := e.post(t, applyCheckPath, nil, nil)
+			if res.status != http.StatusConflict || !strings.Contains(res.body, `role="alert">`+tt.want) {
+				t.Errorf("POST %s (%s) = %d, want 409 and %q; body:\n%s", applyCheckPath, tt.name, res.status, tt.want, res.body)
+			}
+			if calls := e.applies.checkCalls(); len(calls) != 0 {
+				t.Errorf("POST %s (%s) RequestApplyCheck calls = %v, want none", applyCheckPath, tt.name, calls)
+			}
+		})
+	}
 	t.Run("no project", func(t *testing.T) {
 		e := applyEnv(t)
 		res := e.post(t, "/projects/2/apply/check", nil, nil)
@@ -467,7 +558,9 @@ func TestApply_Post(t *testing.T) {
 	setup := func(t *testing.T) *testEnv {
 		t.Helper()
 		e := applyEnv(t)
-		e.applies.put(summary(run(apply.StateReady)), readyItems()...)
+		ready := run(apply.StateReady)
+		ready.IrreversibleFiles = []string{"data/members.csv"}
+		e.applies.put(summary(ready), readyItems()...)
 		other := run(apply.StateReady)
 		other.ID, other.ProjectID = 6, 2
 		e.applies.putRun(*other)
@@ -486,6 +579,46 @@ func TestApply_Post(t *testing.T) {
 			}
 		})
 	}
+	t.Run("consent without files that cannot be restored", func(t *testing.T) {
+		e := applyEnv(t)
+		e.applies.put(summary(run(apply.StateReady)), readyItems()...)
+		res := e.post(t, applyPagePath, applyForm("5", digestNow, true), nil)
+		if res.status != http.StatusSeeOther {
+			t.Fatalf("POST %s status = %d, want 303", applyPagePath, res.status)
+		}
+		want := []confirmCall{{Run: 5, Digest: digestNow, AllowIrreversible: false, By: fakeActor}}
+		if diff := cmp.Diff(want, e.applies.confirmCalls()); diff != "" {
+			t.Errorf("POST %s with consent for a check that listed no file, ConfirmApply calls (-want +got):\n%s", applyPagePath, diff)
+		}
+	})
+	for _, tt := range []struct {
+		name     string
+		run      *apply.Run
+		status   int
+		location string
+		want     string
+	}{
+		{"already queued", confirmed(apply.StateQueued), http.StatusSeeOther, "/applies/5", ""},
+		{"already applied", confirmed(apply.StateSucceeded), http.StatusSeeOther, "/applies/5", ""},
+		{"apply failed", confirmed(apply.StateFailed), http.StatusSeeOther, "/applies/5", ""},
+		{"superseded", run(apply.StateSuperseded), http.StatusConflict, "", "다시 점검해 주세요."},
+		{"blocked", run(apply.StateBlocked), http.StatusConflict, "", "다시 점검해 주세요."},
+		{"check failed", run(apply.StateFailed), http.StatusConflict, "", "다시 점검해 주세요."},
+	} {
+		t.Run("run "+tt.name, func(t *testing.T) {
+			e := applyEnv(t)
+			e.applies.put(summary(nil))
+			e.applies.putRun(*tt.run)
+			res := e.post(t, applyPagePath, applyForm("5", digestNow, false), nil)
+			if res.status != tt.status || res.location() != tt.location || !strings.Contains(res.body, tt.want) {
+				t.Errorf("POST %s for a run %s = %d %q, want %d %q and %q; body:\n%s",
+					applyPagePath, tt.name, res.status, res.location(), tt.status, tt.location, tt.want, res.body)
+			}
+			if calls := e.applies.confirmCalls(); len(calls) != 0 {
+				t.Errorf("POST %s for a run %s ConfirmApply calls = %v, want none", applyPagePath, tt.name, calls)
+			}
+		})
+	}
 	for _, tt := range []struct {
 		err    error
 		status int
@@ -493,8 +626,7 @@ func TestApply_Post(t *testing.T) {
 	}{
 		{db.ErrPlanChanged, http.StatusConflict, "판정이 바뀌었습니다. 다시 점검해 주세요"},
 		{db.ErrScanActive, http.StatusConflict, "이 프로젝트의 스캔이 진행 중입니다."},
-		{db.ErrApplyActive, http.StatusConflict, "이 프로젝트의 점검이나 적용이 이미 진행 중입니다."},
-		{db.ErrNotFound, http.StatusNotFound, "화면을 찾을 수 없습니다."},
+		{db.ErrNotFound, http.StatusConflict, "다시 점검해 주세요."},
 	} {
 		t.Run(tt.err.Error(), func(t *testing.T) {
 			e := setup(t)

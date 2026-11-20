@@ -116,11 +116,13 @@ type Originals interface {
 // ApplyStore keeps the applies of projects. ApplySummary returns what the
 // database tells about applying a project, or an error matching
 // db.ErrNotFound when the project is unknown. RequestApplyCheck asks the
-// worker to check a project, and ConfirmApply queues the apply of a ready
-// run; both fail with errors matching db.ErrScanActive or db.ErrApplyActive
-// when a scan or another apply of the project is active and db.ErrNotFound
-// when what they name is unknown, ConfirmApply also with one matching
-// db.ErrPlanChanged when the plan is not the one the check showed. ApplyRun,
+// worker to check a project; it fails with an error matching
+// db.ErrScanActive or db.ErrApplyActive when a scan or an apply of the
+// project is active and db.ErrNotFound when the project or its succeeded
+// scan is unknown. ConfirmApply queues the apply of a ready run; it fails
+// with an error matching db.ErrScanActive when a scan of the project is
+// active, db.ErrPlanChanged when the plan is not the one the check showed,
+// and db.ErrNotFound when the run is unknown or not ready. ApplyRun,
 // ApplyRunsByProject and ApplyItems read runs and their outcomes, and
 // Reappeared counts the findings of applied bundles a scan found again.
 type ApplyStore interface {

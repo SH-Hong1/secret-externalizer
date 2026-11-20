@@ -33,7 +33,7 @@
 </div>
 {{else}}<dl class="facts">
 <div><dt>기준 스캔</dt><dd><a href="/scans/{{.ScanID}}">#{{.ScanID}}</a>{{with .ScanFinished}} · <span class="mono">{{.}}</span>{{end}}</dd></div>
-{{with .Run}}<div><dt>{{if eq $.View "before"}}마지막 실행{{else}}점검 요청{{end}}</dt><dd>{{if eq $.View "before"}}<a href="{{$.RunHref}}">#{{.ID}}</a> {{$.RunState.Label}} · {{end}}{{.Requester.Name}} · <span class="mono">{{$.RequestedAt}}</span></dd></div>
+{{with .Run}}<div><dt>{{if eq $.View "before"}}마지막 실행{{else}}점검 요청{{end}}</dt><dd>{{if eq $.View "before"}}{{if $.RunConfirmed}}<a href="{{$.RunHref}}">#{{.ID}}</a>{{else}}#{{.ID}}{{end}} {{$.RunState.Label}} · {{end}}{{.Requester.Name}} · <span class="mono">{{$.RequestedAt}}</span></dd></div>
 {{if $.CheckedAt}}<div><dt>점검을 마친 시각</dt><dd class="mono">{{$.CheckedAt}}</dd></div>
 {{end}}{{end}}</dl>
 <section>
@@ -95,13 +95,14 @@
 {{with .Skips}}<section class="flex flex-col gap-2.5">
 <h2 class="section-title mb-0">건너뛸 위치</h2>
 {{range .}}<details class="skips">
-<summary>{{.Label}}{{with .Code}} <span class="mono">{{.}}</span>{{end}} · {{len .Items}}곳</summary>
+<summary>{{.Label}}{{with .Code}} <span class="mono">{{.}}</span>{{end}} · {{.Count}}곳</summary>
 <div class="skips-body">
 {{with .Action}}<p class="text-2">{{.}}</p>
 {{end}}<ul class="skips-list">
 {{range .Items}}<li>{{.File}}:{{.Line}} · {{.Kind}}{{with .Name}} · {{.}}{{end}}</li>
 {{end}}</ul>
-</div>
+{{if .More}}<p class="muted">처음 {{len .Items}}곳만 보여 줍니다. 외 {{.More}}곳.</p>
+{{end}}</div>
 </details>
 {{end}}</section>
 {{end}}{{with .Irreversible}}<section class="notice-warn flex flex-col gap-2.5" aria-labelledby="irreversible-title">

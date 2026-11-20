@@ -21,6 +21,9 @@ const (
 	msgApplyScanActive  = "이 프로젝트의 스캔이 진행 중입니다. 스캔이 끝난 뒤 다시 점검해 주세요."
 	msgApplyAlready     = "이 프로젝트의 점검이나 적용이 이미 진행 중입니다."
 	msgApplyNotPossible = "지금은 적용할 수 없습니다."
+	msgCheckNotPossible = "지금은 점검할 수 없습니다. 아래 조건을 확인해 주세요."
+	msgCheckNoScan      = "성공한 스캔이 없어 점검할 수 없습니다."
+	msgCheckAgain       = "이 점검으로는 적용할 수 없습니다. 다시 점검해 주세요."
 )
 
 // applyWriter holds what the handlers of the apply page share.
@@ -47,8 +50,11 @@ func handleApplyPage(aw applyWriter) http.Handler {
 }
 
 // handleApplyCheck asks the worker to check the project for the signed-in
-// user and sends the browser back to the apply page. A scan or apply in the
-// way shows the page again with the reason and status 409.
+// user and sends the browser back to the apply page. It refuses what the
+// page would not offer: without a succeeded scan, while a scan, check or
+// apply is active, or while the database shows a blocker, it shows the page
+// again with the reason and status 409 and requests nothing, since such a
+// check would be refused or blocked and would supersede the ready run.
 func handleApplyCheck(aw applyWriter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n, ok := pathID(r, "id")
@@ -57,7 +63,16 @@ func handleApplyCheck(aw applyWriter) http.Handler {
 			return
 		}
 		pid := project.ID(n)
-		_, err := aw.store.RequestApplyCheck(r.Context(), pid, actorOf(r))
+		sum, err := aw.store.ApplySummary(r.Context(), pid)
+		if err != nil {
+			aw.rd.fail(w, r, aw.logger, bundleReadStatus(err), fmt.Errorf("summarizing apply: %w", err))
+			return
+		}
+		if msg := checkRefusal(sum); msg != "" {
+			aw.show(w, r, pid, http.StatusConflict, msg)
+			return
+		}
+		_, err = aw.store.RequestApplyCheck(r.Context(), pid, actorOf(r))
 		switch {
 		case err == nil:
 			http.Redirect(w, r, applyPath(pid), http.StatusSeeOther) //nolint:gosec // G710: the path is built from the parsed project ID
@@ -66,7 +81,9 @@ func handleApplyCheck(aw applyWriter) http.Handler {
 		case errors.Is(err, db.ErrApplyActive):
 			aw.show(w, r, pid, http.StatusConflict, msgApplyAlready)
 		case errors.Is(err, db.ErrNotFound):
-			aw.rd.fail(w, r, aw.logger, http.StatusNotFound, err)
+			// The project lost its succeeded scan since the summary; show
+			// shows 404 when the project itself is gone.
+			aw.show(w, r, pid, http.StatusConflict, msgCheckNoScan)
 		default:
 			aw.rd.fail(w, r, aw.logger, http.StatusInternalServerError, fmt.Errorf("requesting apply check: %w", err))
 		}
@@ -75,10 +92,13 @@ func handleApplyCheck(aw applyWriter) http.Handler {
 
 // handleApplyConfirm queues the apply of the run the form names, with the
 // digest the page showed and the user's consent for the files that cannot
-// be restored, and sends the browser to the page of the run. A run of
-// another project is unknown. A plan that changed, or a scan or apply in
-// the way, shows the apply page again with the reason and status 409, and
-// nothing is stored.
+// be restored, and sends the browser to the page of the run. Consent counts
+// only when the check listed such files. A run of another project is
+// unknown. A run that is not ready is not confirmed: a confirmed one sends
+// the browser to its page, so a second submit lands where the first did,
+// and any other shows the apply page with status 409. A plan that changed
+// or a scan in the way shows the apply page again with the reason and
+// status 409, and nothing is stored.
 func handleApplyConfirm(aw applyWriter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n, ok := pathID(r, "id")
@@ -107,7 +127,11 @@ func handleApplyConfirm(aw applyWriter) http.Handler {
 			aw.rd.fail(w, r, aw.logger, http.StatusInternalServerError, fmt.Errorf("reading apply run: %w", err))
 			return
 		}
-		allow := r.PostFormValue("irreversible") == "on"
+		if run.State != apply.StateReady {
+			aw.notReady(w, r, pid, run)
+			return
+		}
+		allow := len(run.IrreversibleFiles) > 0 && r.PostFormValue("irreversible") == "on"
 		err = aw.store.ConfirmApply(r.Context(), run.ID, digest, allow, actorOf(r))
 		switch {
 		case err == nil:
@@ -116,14 +140,46 @@ func handleApplyConfirm(aw applyWriter) http.Handler {
 			aw.show(w, r, pid, http.StatusConflict, msgPlanChanged)
 		case errors.Is(err, db.ErrScanActive):
 			aw.show(w, r, pid, http.StatusConflict, msgApplyScanActive)
-		case errors.Is(err, db.ErrApplyActive):
-			aw.show(w, r, pid, http.StatusConflict, msgApplyAlready)
 		case errors.Is(err, db.ErrNotFound):
-			aw.rd.fail(w, r, aw.logger, http.StatusNotFound, err)
+			// The run left ready since it was read: another submit or a
+			// new check got there first.
+			now, err := aw.store.ApplyRun(r.Context(), run.ID)
+			if err != nil {
+				aw.rd.fail(w, r, aw.logger, bundleReadStatus(err), fmt.Errorf("reading apply run: %w", err))
+				return
+			}
+			aw.notReady(w, r, pid, now)
 		default:
 			aw.rd.fail(w, r, aw.logger, http.StatusInternalServerError, fmt.Errorf("confirming apply: %w", err))
 		}
 	})
+}
+
+// checkRefusal returns why the page would not offer a check of the project
+// sum describes, or "" when it would.
+func checkRefusal(sum apply.Summary) string {
+	switch {
+	case sum.Scan.ID == 0:
+		return msgCheckNoScan
+	case sum.Check != nil && sum.Check.State.Active():
+		return msgApplyAlready
+	case sum.ScanActive:
+		return msgApplyScanActive
+	case len(sum.Blockers) > 0:
+		return msgCheckNotPossible
+	}
+	return ""
+}
+
+// notReady answers a confirmation of run, which is not ready: a confirmed
+// run sends the browser to its page, and any other run shows the apply page
+// with status 409.
+func (aw applyWriter) notReady(w http.ResponseWriter, r *http.Request, pid project.ID, run apply.Run) {
+	if !run.ConfirmedAt.IsZero() {
+		http.Redirect(w, r, runPath(run.ID), http.StatusSeeOther)
+		return
+	}
+	aw.show(w, r, pid, http.StatusConflict, msgCheckAgain)
 }
 
 // validDigest reports whether s has the form of a plan digest: 64
@@ -180,7 +236,8 @@ func (aw applyWriter) build(ctx context.Context, pid project.ID) (applyPage, int
 	if c == nil {
 		return page, 0, nil
 	}
-	page.Run, page.RunState, page.RunHref = c, applyStateOf(c.State), runPath(c.ID)
+	page.Run, page.RunState, page.RunHref = c, runStateOf(*c), runPath(c.ID)
+	page.RunConfirmed = !c.ConfirmedAt.IsZero()
 	page.RequestedAt, page.CheckedAt = formatTime(c.RequestedAt), formatTime(c.CheckedAt)
 	switch c.State {
 	case apply.StateChecking:

@@ -43,6 +43,7 @@ type applyPage struct {
 	Run          *apply.Run
 	RunState     applyStateView
 	RunHref      string
+	RunConfirmed bool
 	RequestedAt  string
 	CheckedAt    string
 	Checks       []applyCheck
@@ -109,13 +110,21 @@ type applyActionCount struct {
 	N     int
 }
 
-// skipGroup is the locations a run leaves alone for one reason.
+// skipGroup is the locations a run leaves alone for one reason. The apply
+// page lists at most maxSkipsShown of them in Items and sets Count to all of
+// them and More to those it leaves out.
 type skipGroup struct {
 	Label  string
 	Action string
 	Code   string
 	Items  []skipLine
+	Count  int
+	More   int
 }
+
+// maxSkipsShown is the number of locations the apply page lists for one
+// reason, as many as it lists changed files.
+const maxSkipsShown = apply.MaxDirtyShown
 
 // skipLine is one location a run leaves alone.
 type skipLine struct {
@@ -130,6 +139,16 @@ type skipLine struct {
 type irreversibleFile struct {
 	File string
 	N    int
+}
+
+// runStateOf returns the label and badge style of the state of r. A run
+// that failed before anyone confirmed it is a failed check, not a failed
+// apply.
+func runStateOf(r apply.Run) applyStateView {
+	if r.State == apply.StateFailed && r.ConfirmedAt.IsZero() {
+		return applyStateView{"점검 실패", "failed"}
+	}
+	return applyStateOf(r.State)
 }
 
 // applyStateOf returns the label and badge style of a run state, in the
@@ -428,7 +447,12 @@ func (p *applyPage) setItems(r apply.Run, items []apply.Item) {
 		return boolRank(a == apply.ReasonFileChanged) - boolRank(b == apply.ReasonFileChanged)
 	})
 	for _, reason := range order {
-		p.Skips = append(p.Skips, *groups[reason])
+		g := *groups[reason]
+		g.Count = len(g.Items)
+		if g.Count > maxSkipsShown {
+			g.Items, g.More = g.Items[:maxSkipsShown], g.Count-maxSkipsShown
+		}
+		p.Skips = append(p.Skips, g)
 	}
 	for _, f := range r.IrreversibleFiles {
 		n := 0
