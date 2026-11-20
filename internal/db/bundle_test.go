@@ -888,6 +888,65 @@ func TestMoveFinding_KeepsAppliedBundle(t *testing.T) {
 	}
 }
 
+// TestMoveFinding_KeepsAppliedPlaces moves members of an applied bundle
+// after the apply and before any new scan, while the latest scan still lists
+// the places the apply changed as current.
+func TestMoveFinding_KeepsAppliedPlaces(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, _, pw, _ := decidedProject(t, s, "shop")
+	sid := save(t, s, pid, append(mixed(), password("conf/d.properties"))...)
+	if got := bundleOf(t, s, pid, fpA, "conf/d.properties"); got != pw {
+		t.Fatalf("bundle of d.properties = %d, want the shared bundle %d", got, pw)
+	}
+	id, j := claimApply(t, s, pid)
+	writeFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
+	beginFile(t, s, id, "conf/b.xml", hashOf("2"), replaceItem(t, s, pid, pw, "conf/b.xml"))
+	if err := s.FailApply(ctx, j.ID, "worker-a", id, "apply could not finish; see the worker log", nil, nil); err != nil {
+		t.Fatalf("FailApply(%d) error = %v", id, err)
+	}
+	if b := readBundle(t, s, pid, sid, pw); b.AppliedAt.IsZero() || len(b.Members) != 3 {
+		t.Fatalf("Bundle(%d) after the apply applied at %v with %d members, want applied with 3", pw, b.AppliedAt, len(b.Members))
+	}
+	bundles, err := s.Count(ctx, "bundle")
+	if err != nil {
+		t.Fatalf("Count(bundle) error = %v", err)
+	}
+	events, err := s.Count(ctx, "audit_event")
+	if err != nil {
+		t.Fatalf("Count(audit_event) error = %v", err)
+	}
+
+	// a.yml holds an applied item and b.xml a writing one.
+	for _, file := range []string{"conf/a.yml", "conf/b.xml"} {
+		if _, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, file), 0, tester); !errors.Is(err, triage.ErrNotAllowed) {
+			t.Errorf("MoveFinding(%s, new bundle) of an applied place error = %v, want ErrNotAllowed", file, err)
+		}
+	}
+	if b := readBundle(t, s, pid, sid, pw); len(b.Members) != 3 || b.Decision != externalizeDB {
+		t.Errorf("Bundle(%d) after refused moves = %+v with %d members, want %+v with 3", pw, b.Decision, len(b.Members), externalizeDB)
+	}
+	if n, err := s.Count(ctx, "bundle"); err != nil || n != bundles {
+		t.Errorf("rows in bundle after refused moves = %d, %v, want %d", n, err, bundles)
+	}
+	if n, err := s.Count(ctx, "audit_event"); err != nil || n != events {
+		t.Errorf("rows in audit_event after refused moves = %d, %v, want %d", n, err, events)
+	}
+
+	moved, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/d.properties"), 0, tester)
+	if err != nil {
+		t.Fatalf("MoveFinding(d.properties, new bundle) with no applied place error = %v, want nil", err)
+	}
+	if moved == pw || bundleOf(t, s, pid, fpA, "conf/d.properties") != moved {
+		t.Errorf("MoveFinding(d.properties, new bundle) = %d, want a new bundle holding it", moved)
+	}
+	for _, file := range []string{"conf/a.yml", "conf/b.xml"} {
+		if got := bundleOf(t, s, pid, fpA, file); got != pw {
+			t.Errorf("bundle of %s after the moves = %d, want %d", file, got, pw)
+		}
+	}
+}
+
 func TestMoveFinding_KeepsLastFindingOfAppliedBundle(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()
