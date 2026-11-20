@@ -6,6 +6,7 @@
 
 ### 추가
 
+- 스캔 리포트의 타입과 만드는 함수 `internal/report`(`Build`). 찾은 것, 적용한 것, 판정 이력을 절로 나누고 줄을 1,000개로 자른다. 미리보기, 지문, 주변 줄은 싣지 않는다(`docs/decisions/0042-what-a-scan-report-shows.md`)
 - Go 모듈과 `cmd/web` 진입점 골격
 - 버전을 고정한 gofumpt, golangci-lint 설치와 `make fmt`, `make lint`, `make vet`, `make test`, `make check`
 - golangci-lint 설정

@@ -276,7 +276,7 @@
   - `History`는 `Events`를 그대로 복사하고 `Total`은 `EventTotal`이다.
   - 모든 `List`의 `Rows`는 `MaxRows`에서 자르고 `Total`은 자르기 전의 수다. `Delta`는 `Previous`가 0이면 영이다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다** (`package report_test`, `cmp.Diff`로 비교).
+- [x] **Step 1: 실패하는 테스트를 쓴다** (`package report_test`, `cmp.Diff`로 비교).
   - `TestBuild_Partition`: 표 형태. 오탐(프론트엔드 파일 포함)은 `FalsePositives`, 미판정 프론트엔드와 "구조 변경 필요" 보류는 `Structure`, `.jsp`의 고객정보 줄(`Frontend` false, 삭제·마스킹 판정)은 `Remaining`, `HoldLater` 보류와 미판정과 외부화 판정(적용 전)은 `Remaining`에만 있다. 세 목록의 `Total` 합이 줄 수와 같다.
   - `TestBuild_Externalized`: 묶음 하나의 `ext.db.main.password`(`a.yml` 14줄, `b.xml` 31줄)와 `EXT_DB_MAIN_PASSWORD`(`deploy.sh` 3줄)는 항목 둘이고 자리가 파일과 줄 순이다. `remove-file` 항목은 `Removed`가 true이고 `Line`이 0이다. `.java` 자리 하나가 `CodeChange`면 항목도 그렇다. 그 묶음의 줄이 `AppliedBefore`면 `Reappeared`다.
   - `TestBuild_RedactedKinds`: `card` 2개 파일, `phone` 1개 파일을 주면 `RedactedKinds`가 `phone`, `card` 순이고 건수와 파일 수가 맞다.
@@ -285,11 +285,11 @@
   - `TestBuild_Empty`: 영 값 `Data`는 패닉 없이 모든 목록의 `Total`이 0이다.
   - `TestBuild_KeepsNoInput`: `Build` 뒤에 `Data`의 `Lines`, `Changes`, `Events`와 `Detail` 맵을 고쳐도 `Report`가 바뀌지 않는다.
   - `TestTypes_HoldNoValueField`: `reflect`로 `Data`와 `Report`에서 닿는 이 패키지의 모든 구조체 타입을 돌며 이름이 `Preview`, `Fingerprint`, `Context`, `Value`인 필드가 없음을 확인한다.
-- [ ] **Step 2:** `go test ./internal/report/` 가 컴파일 오류로 실패하는 것을 본다.
-- [ ] **Step 3:** `internal/report/report.go`에 위의 타입과 `Build`를 쓴다.
-- [ ] **Step 4:** `go test -race ./internal/report/` 가 통과한다.
-- [ ] **Step 5:** 결정 기록 0042를 쓴다(검토 항목 2~9의 내용과 다른 안, 다시 적용한 자리가 두 번 실리는 한계). `AGENTS.md` Security 절의 첫 항목 끝에 한 줄을 더한다: "A report and its PDF carry neither the fingerprint nor the preview." `CHANGELOG.md`의 `[Unreleased]`에 한 줄을 더한다.
-- [ ] **Step 6:** `make check`가 통과한 뒤 커밋한다(`feat(report): shape the report of a scan`).
+- [x] **Step 2:** `go test ./internal/report/` 가 컴파일 오류로 실패하는 것을 본다.
+- [x] **Step 3:** `internal/report/report.go`에 위의 타입과 `Build`를 쓴다.
+- [x] **Step 4:** `go test -race ./internal/report/` 가 통과한다.
+- [x] **Step 5:** 결정 기록 0042를 쓴다(검토 항목 2~9의 내용과 다른 안, 다시 적용한 자리가 두 번 실리는 한계). `AGENTS.md` Security 절의 첫 항목 끝에 한 줄을 더한다: "A report and its PDF carry neither the fingerprint nor the preview." `CHANGELOG.md`의 `[Unreleased]`에 한 줄을 더한다.
+- [x] **Step 6:** `make check`가 통과한 뒤 커밋한다(`feat(report): shape the report of a scan`).
 
 ### Task 2: 리포트 자료 조회
 
