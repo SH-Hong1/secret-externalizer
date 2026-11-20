@@ -250,3 +250,9 @@ type Group struct {
 	Count   int
 	Lines   []int
 }
+
+// ShellFile reports whether file is a shell script, whose placeholder takes
+// the shell form. Case is ignored.
+func ShellFile(file string) bool {
+	return strings.EqualFold(path.Ext(file), ".sh")
+}
