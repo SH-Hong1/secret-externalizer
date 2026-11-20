@@ -585,14 +585,14 @@ func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id 
 // check or an apply fails with, the only ones FailApply stores.
 func knownFailureReason(reason string) bool {
 	switch reason {
-	case "the work tree has uncommitted changes",
-		"the project folder is not a git work tree",
-		"the repository configuration is not safe to read",
-		"the existing manifest could not be read",
-		"the verdicts changed after the check",
-		"the secret store could not be reached; see the worker log",
-		"apply took longer than the time limit",
-		"apply could not finish; see the worker log":
+	case apply.FailureDirty,
+		apply.FailureNotRepository,
+		apply.FailureUnsafeConfig,
+		apply.FailureManifest,
+		apply.FailurePlanChanged,
+		apply.FailureSecretStore,
+		apply.FailureTimeLimit,
+		apply.FailureOther:
 		return true
 	}
 	return false
