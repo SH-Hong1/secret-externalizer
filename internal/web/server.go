@@ -109,17 +109,25 @@ type Originals interface {
 	ReadPending(ctx context.Context, projectID int64, fingerprint string) (bao.Value, error)
 }
 
+// Stores holds the stores the server reads and writes.
+type Stores struct {
+	Projects ProjectStore
+	Scans    ScanStore
+	Triage   TriageStore
+	Audits   AuditStore
+}
+
 // NewServer returns the complete handler, including middleware. From the
 // outside in, a request passes panic recovery, the request log, the security
 // headers, and cross-origin protection before it reaches its route. A route
-// that calls projects, scans, triage, the audit trail or the originals runs
-// under a deadline storeLimit from the moment it is reached; the session is
-// read before that deadline starts.
-func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, triage TriageStore, suggester Suggester, audits AuditStore, originals Originals, storeLimit time.Duration) http.Handler {
+// that calls the stores or the originals runs under a deadline storeLimit
+// from the moment it is reached; the session is read before that deadline
+// starts.
+func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, stores Stores, suggester Suggester, originals Originals, storeLimit time.Duration) http.Handler {
 	mux := http.NewServeMux()
 	a := loadAssets(staticFiles())
 	rd := newRenderer(a)
-	addRoutes(mux, logger, rd, a, authn, sessions, attempts, projects, scans, triage, suggester, audits, originals, storeLimit)
+	addRoutes(mux, logger, rd, a, authn, sessions, attempts, stores, suggester, originals, storeLimit)
 
 	return chain(mux,
 		recoverPanic(logger, rd),

@@ -10,10 +10,11 @@ import (
 
 // addRoutes registers every route of the server. Only the routes that need a
 // signed-in user read the session, so /healthz answers and logout works even
-// when the session store is down. The routes that call projects, scans,
-// triage, the audit trail or the originals get a deadline of storeLimit. The
+// when the session store is down. The routes that call the stores or the
+// originals get a deadline of storeLimit. The
 // static files need no session.
-func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets, authn Authenticator, sessions SessionStore, attempts AttemptStore, projects ProjectStore, scans ScanStore, triage TriageStore, suggester Suggester, audits AuditStore, originals Originals, storeLimit time.Duration) {
+func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets, authn Authenticator, sessions SessionStore, attempts AttemptStore, stores Stores, suggester Suggester, originals Originals, storeLimit time.Duration) {
+	projects, scans, triage, audits := stores.Projects, stores.Scans, stores.Triage, stores.Audits
 	signedIn := func(h http.Handler) http.Handler {
 		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd))
 	}
