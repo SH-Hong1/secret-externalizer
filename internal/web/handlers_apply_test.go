@@ -1127,3 +1127,26 @@ func TestProjectPage_Apply(t *testing.T) {
 		wantNotIn(t, "GET /projects/1", res.body, scanButton, "적용 기록")
 	})
 }
+
+func TestApplyRunPage_ReportLink(t *testing.T) {
+	for _, tt := range []struct {
+		status scan.Status
+		want   bool
+	}{
+		{scan.StatusSucceeded, true},
+		{scan.StatusFailed, false},
+		{scan.StatusRunning, false},
+	} {
+		t.Run(string(tt.status), func(t *testing.T) {
+			e := applyEnv(t)
+			e.putRun(finishedRun(apply.StateSucceeded, 8), runItems(), confirmationScan(tt.status), 0)
+			res := e.getRun(t)
+			const link = `href="/scans/8/report"`
+			if tt.want {
+				wantIn(t, "GET "+runPagePath+" with a "+string(tt.status)+" confirmation scan", res.body, link)
+			} else {
+				wantNotIn(t, "GET "+runPagePath+" with a "+string(tt.status)+" confirmation scan", res.body, link)
+			}
+		})
+	}
+}

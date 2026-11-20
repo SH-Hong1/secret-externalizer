@@ -14,6 +14,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/report"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
@@ -138,6 +139,12 @@ type ApplyStore interface {
 	Reappeared(ctx context.Context, id scan.ID) (int, error)
 }
 
+// ReportStore reads what a scan's report shows. Report fails with an
+// error matching db.ErrNotFound when the scan is unknown.
+type ReportStore interface {
+	Report(ctx context.Context, id scan.ID) (report.Data, error)
+}
+
 // Stores holds the stores the server reads and writes.
 type Stores struct {
 	Projects ProjectStore
@@ -145,6 +152,7 @@ type Stores struct {
 	Triage   TriageStore
 	Audits   AuditStore
 	Applies  ApplyStore
+	Reports  ReportStore
 }
 
 // NewServer returns the complete handler, including middleware. From the

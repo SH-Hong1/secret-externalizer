@@ -380,8 +380,8 @@
   - 분류, 종류, 판정, 보류 사유의 표기는 지금의 `categoryLabel`, `kindLabel`, `verdictOf`, `reasonLabel`을 쓴다. 시각은 `formatTime`이다.
 - 리포트 링크: 성공한 스캔의 스캔 화면 머리에 "리포트" 버튼(`btn btn-secondary`), 프로젝트 화면 스캔 목록의 성공한 줄에 "리포트" 링크, 적용 결과 화면의 확인 스캔이 성공했으면 그 옆에 "리포트" 링크.
 
-- [ ] **Step 1:** frontend-design 스킬을 불러 `docs/design/README.md`의 토큰과 `assets/app.css`의 지금 구성 요소로 리포트 화면의 배치를 정한다. 새 색과 글꼴은 만들지 않는다. 긴 경로와 사유는 표 안에서 줄을 바꾼다(`overflow-wrap: anywhere`).
-- [ ] **Step 2: 실패하는 테스트를 쓴다** (`fakes_test.go`에 `fakeReports`를 더한다. `NewServer`를 `run`과 같은 방식으로 부른다).
+- [x] **Step 1:** frontend-design 스킬을 불러 `docs/design/README.md`의 토큰과 `assets/app.css`의 지금 구성 요소로 리포트 화면의 배치를 정한다. 새 색과 글꼴은 만들지 않는다. 긴 경로와 사유는 표 안에서 줄을 바꾼다(`overflow-wrap: anywhere`).
+- [x] **Step 2: 실패하는 테스트를 쓴다** (`fakes_test.go`에 `fakeReports`를 더한다. `NewServer`를 `run`과 같은 방식으로 부른다).
   - `TestHandleReport_OK`: 200. 본문에 일곱 절의 제목, `${ext.db.main.password}`, `openbao:secret/data/projects/3/ext.db.main.password`, `application-prod.yml:14`, "코드 수정 필요", "복구 불가", 요약의 숫자와 `-70`이 있다.
   - `TestHandleReport_Redirects`: 대기, 실행 중, 실패한 스캔은 303과 `Location: /scans/7`.
   - `TestHandleReport_NotFound`: 없는 스캔, 숫자가 아닌 ID, 0은 404.
@@ -394,11 +394,11 @@
   - `TestHandleReport_NoPreview`: 본문에 `****`가 없다.
   - `TestHandleReport_StoreError`: 저장소 오류는 500 화면이고 오류의 글이 본문에 없다.
   - `TestHandleScan_ReportLink`: 성공한 스캔의 화면에 `href="/scans/7/report"`가 있고 실패한 스캔에는 없다. 프로젝트 화면과 적용 결과 화면의 링크도 같은 방식으로 확인한다.
-- [ ] **Step 3:** `go test ./internal/web/ -run 'Report|ReportLink'` 가 실패하는 것을 본다.
-- [ ] **Step 4:** handler, `reportview.go`, `report.html`, 링크, CSS를 쓴다. `make css`로 `static/app.css`를 다시 만든다.
-- [ ] **Step 5:** `make check`가 통과한다.
-- [ ] **Step 6:** 로컬 스택(`docs/local-run.md`)을 `docker compose up -d --build web`으로 띄워 예제 프로젝트의 마지막 스캔 리포트를 브라우저(playwright)로 열고, 일곱 절이 보이는지와 1280px, 800px 폭에서 표가 넘치지 않는지 확인한다. 스택을 띄울 수 없으면 그 사실을 보고에 적고 Task 6으로 넘긴다.
-- [ ] **Step 7:** `CHANGELOG.md`에 줄을 더하고 커밋한다(`feat(web): show the report of a scan`).
+- [x] **Step 3:** `go test ./internal/web/ -run 'Report|ReportLink'` 가 실패하는 것을 본다.
+- [x] **Step 4:** handler, `reportview.go`, `report.html`, 링크, CSS를 쓴다. `make css`로 `static/app.css`를 다시 만든다.
+- [x] **Step 5:** `make check`가 통과한다.
+- [x] **Step 6:** 로컬 스택(`docs/local-run.md`)을 `docker compose up -d --build web`으로 띄워 예제 프로젝트의 마지막 스캔 리포트를 브라우저(playwright)로 열고, 일곱 절이 보이는지와 1280px, 800px 폭에서 표가 넘치지 않는지 확인한다. 스택을 띄울 수 없으면 그 사실을 보고에 적고 Task 6으로 넘긴다.
+- [x] **Step 7:** `CHANGELOG.md`에 줄을 더하고 커밋한다(`feat(web): show the report of a scan`).
 
 PR 1을 만들고, 전체 검토를 거쳐 병합한다.
 

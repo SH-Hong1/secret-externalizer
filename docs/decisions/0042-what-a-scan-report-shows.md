@@ -28,6 +28,7 @@
 - 한 트랜잭션의 `now()`는 트랜잭션을 시작한 시각이다. `Decide` 한 번으로 묶음 세 개를 판정하면 `audit_event` 세 줄의 `at`이 같고, `(at, actor_subject, actor_name, action, detail)`로 `GROUP BY`하면 한 줄이 된다. `jsonb` 열로 묶을 수 있다. 그래서 판정 이력은 이 다섯 열로 묶는다.
 - 정상으로 끝난 실행은 `started_at`이 확인 스캔의 `requested_at`보다 앞서고, `finished_at`은 확인 스캔의 `requested_at`과 같다(같은 트랜잭션).
 - `ReleaseJob`으로 `started_at`이 비워진 실행을 다시 시작하지 않은 채 `FailApply`로 닫으면 `started_at`은 NULL이고 `finished_at`이 확인 스캔의 `requested_at`과 같다. `coalesce(started_at, finished_at) < requested_at`만으로는 이 실행이 자기 확인 스캔의 앞에 들지 않아, 방금 바꾼 항목이 확인 스캔의 리포트에서 빠지고 "이후 적용됨"으로 보인다. 그래서 2번의 "적용한 것"에 `scan.apply_id`로 가리킨 실행을 더했다. 다른 실행의 시작 시각이 스캔 요청 시각과 같아지는 일은 스캔과 적용이 겹치지 않으므로(결정 기록 0036) 생기지 않는다.
+- `http.ServeMux`는 `GET /scans/{id}`, `GET /scans/{id}/report`, `GET /scans/{id}/report.pdf`를 함께 등록해도 충돌하지 않고, 세 주소를 각각의 패턴으로 보내며 `{id}`를 같은 값으로 읽는다(2026-11-21에 go1.27.4의 `net/http`로 확인).
 
 ## 이유
 

@@ -16,6 +16,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 )
 
 // postForm sends a form-encoded POST to /projects with header and cookies.
@@ -389,4 +390,17 @@ func TestProject_NoVerdictCountsWithoutScan(t *testing.T) {
 		t.Fatalf("GET /projects/1 status = %d, want 200", res.status)
 	}
 	wantNotIn(t, "project page without a scan", res.body, "판정하기", "/triage?status=")
+}
+
+func TestProject_ReportLink(t *testing.T) {
+	e := newTestEnv(t)
+	pid := e.newProject(t)
+	e.scans.put(scan.Scan{ID: 7, ProjectID: pid, Status: scan.StatusSucceeded})
+	e.scans.put(scan.Scan{ID: 8, ProjectID: pid, Status: scan.StatusFailed})
+	res := e.do(t, http.MethodGet, "/projects/"+itoa(pid), nil, e.user(t))
+	if res.status != http.StatusOK {
+		t.Fatalf("GET /projects/%d status = %d, want 200", pid, res.status)
+	}
+	wantIn(t, "GET /projects/"+itoa(pid), res.body, `href="/scans/7/report"`)
+	wantNotIn(t, "GET /projects/"+itoa(pid), res.body, `href="/scans/8/report"`)
 }

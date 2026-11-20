@@ -1,0 +1,149 @@
+{{define "title"}}리포트 · 스캔 #{{.View.ScanID}}{{end}}
+{{define "section"}}projects{{end}}
+{{define "body"}}<main class="page">
+<nav class="crumbs" aria-label="위치"><a href="/projects">프로젝트</a> / <a href="{{.View.ProjectHref}}">{{.View.ProjectName}}</a> / <a href="{{.View.ScanHref}}">스캔 #{{.View.ScanID}}</a> /</nav>
+{{template "report" .View}}</main>{{end}}
+{{/* The report itself, drawn by the screen and by the PDF document. It
+takes a reportView and calls no function, so both draw the same thing. */}}
+{{define "report"}}<article id="report" class="report">
+<header class="report-head">
+<h1 class="page-title">리포트 · 스캔 #{{.ScanID}}</h1>
+<dl class="facts">
+<div><dt>프로젝트</dt><dd>{{.ProjectName}}</dd></div>
+<div><dt>스캔</dt><dd>#{{.ScanID}} · <span class="mono">{{if .FinishedAt}}{{.FinishedAt}}{{else}}—{{end}}</span>에 끝남</dd></div>
+<div><dt>커밋</dt><dd class="mono">{{if .Commit}}{{.Commit}}{{else}}<span class="muted">없음</span>{{end}}</dd></div>
+<div><dt>규칙 버전</dt><dd class="mono">{{.RulesVersion}}</dd></div>
+<div><dt>도구</dt><dd class="mono">{{range $i, $t := .Tools}}{{if $i}} · {{end}}{{$t.Name}} {{$t.Version}}{{else}}<span class="muted">—</span>{{end}}</dd></div>
+<div><dt>만든 시각</dt><dd class="mono">{{.GeneratedAt}}</dd></div>
+</dl>
+<p class="notice-soft">이 리포트에는 값, 미리보기, 주변 코드가 없습니다. 판정은 리포트를 만든 시각의 것이고, 외부화·삭제한 항목은 이 스캔이 요청되기 전에 적용된 것입니다.</p>
+{{if .Later}}<p class="notice-warn">이후 스캔이 있습니다. 프로젝트의 마지막 성공한 스캔은 #{{.Later}}입니다. <a href="{{.LaterHref}}">스캔 #{{.Later}}의 리포트</a></p>
+{{end}}{{with .Unchecked}}<p class="notice">{{.}} <a href="{{$.UncheckedHref}}">스캔 화면에서 보기</a></p>
+{{end}}</header>
+
+<section class="report-section">
+<h2 class="section-title">1. 요약</h2>
+<div class="tiles report-tiles">
+{{range .Summary}}<div class="tile{{with .Class}} tile-{{.}}{{end}}">
+<span class="tile-label">{{.Label}}</span>
+<span class="report-count">{{.Count}}</span>
+<span class="report-delta">{{if $.Previous}}이전 스캔보다 <span class="delta">{{.Delta}}</span>{{else}}이전 스캔 없음{{end}}</span>
+</div>
+{{end}}</div>
+</section>
+
+<section class="report-section">
+<h2 class="section-title">2. 외부화한 항목</h2>
+{{with .Externalized.Rows}}<div class="table-wrap">
+<table class="table report-table">
+<thead><tr><th>이름 · 저장 위치</th><th>분류 · 종류</th><th>자리</th><th>표시</th></tr></thead>
+<tbody>
+{{range .}}<tr>
+<td><span class="mono report-name">{{.Name}}</span><span class="mono report-sub">{{.Store}}</span></td>
+<td>{{.Category}}<span class="report-sub">{{.Kind}}</span></td>
+<td><ul class="report-places">{{range .Places}}<li>{{.}}</li>{{end}}{{with .MorePlaces}}<li class="muted">{{.}}</li>{{end}}</ul></td>
+<td>{{if .CodeChange}}<span class="badge badge-hold">코드 수정 필요</span> {{end}}{{if .Reappeared}}<span class="badge badge-failed">다시 발견</span>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</div>
+{{else}}<p class="notice">외부화한 항목이 없습니다.</p>
+{{end}}{{with .Externalized.More}}<p class="report-more">{{.}}</p>
+{{end}}</section>
+
+<section class="report-section">
+<h2 class="section-title">3. 삭제·마스킹한 고객정보</h2>
+{{if .Redacted.Rows}}<div class="table-wrap">
+<table class="table report-table">
+<thead><tr><th>종류</th><th class="num">묶음</th><th class="num">위치</th><th class="num">파일</th></tr></thead>
+<tbody>
+{{range .RedactedKinds}}<tr><td>{{.Kind}}</td><td class="num">{{.Bundles}}개</td><td class="num">{{.Locations}}곳</td><td class="num">{{.Files}}개</td></tr>
+{{end}}</tbody>
+</table>
+</div>
+<div class="table-wrap">
+<table class="table report-table">
+<thead><tr><th>종류</th><th>파일</th><th class="num">묶음</th><th class="num">위치</th></tr></thead>
+<tbody>
+{{range .Redacted.Rows}}<tr>
+<td>{{.Kind}}</td>
+<td><span class="mono report-path">{{.File}}</span>{{if .Untracked}} <span class="badge badge-failed">복구 불가</span>{{end}}</td>
+<td class="num">{{.Bundles}}개</td>
+<td class="num">{{.Locations}}곳</td>
+</tr>
+{{end}}</tbody>
+</table>
+</div>
+{{else}}<p class="notice">삭제·마스킹한 고객정보가 없습니다.</p>
+{{end}}{{with .Redacted.More}}<p class="report-more">{{.}}</p>
+{{end}}</section>
+
+<section class="report-section">
+<h2 class="section-title">4. 구조 변경이 필요한 항목</h2>
+{{template "report-lines" .Structure}}{{if not .Structure.Rows}}<p class="notice">구조 변경이 필요한 항목이 없습니다.</p>
+{{end}}</section>
+
+<section class="report-section">
+<h2 class="section-title">5. 남은 항목</h2>
+{{template "report-lines" .Remaining}}{{if not .Remaining.Rows}}<p class="notice">남은 항목이 없습니다.</p>
+{{end}}</section>
+
+<section class="report-section">
+<h2 class="section-title">6. 오탐으로 판정한 항목</h2>
+{{with .FalsePositive.Rows}}<div class="table-wrap">
+<table class="table report-table">
+<thead><tr><th>분류 · 종류</th><th>첫 자리</th><th>수</th><th>사유</th><th>판정 시각</th></tr></thead>
+<tbody>
+{{range .}}<tr>
+<td>{{.Category}}<span class="report-sub">{{.Kind}}</span></td>
+<td class="mono report-path">{{.Place}}</td>
+<td>{{.Count}}</td>
+<td class="report-note">{{.Note}}</td>
+<td class="mono report-time">{{.DecidedAt}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</div>
+{{else}}<p class="notice">오탐으로 판정한 항목이 없습니다.</p>
+{{end}}{{with .FalsePositive.More}}<p class="report-more">{{.}}</p>
+{{end}}</section>
+
+<section class="report-section">
+<h2 class="section-title">7. 판정 이력</h2>
+{{with .History.Rows}}<div class="table-wrap">
+<table class="table report-table">
+<thead><tr><th>시각</th><th>사람</th><th>한 일</th><th>대상</th><th>이름 · 사유</th></tr></thead>
+<tbody>
+{{range .}}<tr>
+<td class="mono report-time">{{.At}}</td>
+<td class="report-user">{{.User}}</td>
+<td>{{if .RunHref}}<a class="badge badge-{{.ActionClass}}" href="{{.RunHref}}">{{.ActionLabel}}</a>{{else}}<span class="badge badge-{{.ActionClass}}">{{.ActionLabel}}</span>{{end}}</td>
+<td class="report-path">{{.Target}}</td>
+<td class="report-note">{{with .Name}}<span class="mono">{{.}}</span> {{end}}{{with .Reason}}<span class="report-sub">{{.}}</span>{{end}}{{with .Note}}<span class="report-sub">{{.}}</span>{{end}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</div>
+{{else}}<p class="notice">판정 이력이 없습니다.</p>
+{{end}}{{with .History.More}}<p class="report-more">{{.}}</p>
+{{end}}</section>
+</article>
+{{end}}
+{{/* The lines of section 4 or 5: a lineList, drawn as a table when it
+has lines. */}}
+{{define "report-lines"}}{{with .Rows}}<div class="table-wrap">
+<table class="table report-table">
+<thead><tr><th>분류 · 종류</th><th>첫 자리</th><th>수</th><th>상태</th><th>사유</th></tr></thead>
+<tbody>
+{{range .}}<tr>
+<td>{{.Category}}<span class="report-sub">{{.Kind}}</span></td>
+<td class="mono report-path">{{.Place}}</td>
+<td>{{.Count}}</td>
+<td><span class="badge badge-{{.StatusClass}}">{{.Status}}</span></td>
+<td class="report-note">{{.Note}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</div>
+{{end}}{{with .More}}<p class="report-more">{{.}}</p>
+{{end}}{{end}}

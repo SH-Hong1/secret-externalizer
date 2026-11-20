@@ -35,8 +35,9 @@ func categoryOrder() []finding.Category {
 // the project's latest succeeded scan when it is newer than this one.
 // SkippedMore counts the skipped files and folders whose path is not listed,
 // SkippedCapped tells whether the list stopped at scan.MaxSkippedFiles, and
-// Unchecked whether the scan left anything unchecked at all. Confirmation
-// is set for a scan that confirms an apply.
+// Unchecked whether the scan left anything unchecked at all. Report is the
+// path of the report of a succeeded scan. Confirmation is set for a scan
+// that confirms an apply.
 type scanPage struct {
 	User          auth.User
 	ProjectName   string
@@ -57,6 +58,7 @@ type scanPage struct {
 	Triage        string
 	Undecided     int
 	LaterScan     scan.ID
+	Report        string
 	Confirmation  *confirmationView
 }
 
@@ -82,7 +84,8 @@ type contextLine struct {
 	Text   string
 }
 
-// scanRow is one line of a project's scan list.
+// scanRow is one line of a project's scan list. Report is the path of the
+// report of a succeeded scan.
 type scanRow struct {
 	ID          scan.ID
 	Status      scan.Status
@@ -93,6 +96,7 @@ type scanRow struct {
 	Succeeded   bool
 	Findings    int
 	Basis       bool
+	Report      string
 }
 
 func formatTime(t time.Time) string {
@@ -182,6 +186,9 @@ func newScanPage(sc scan.Scan) scanPage {
 		ScannerErrors: scannerErrors(sc.ScannerErrors),
 	}
 	p.Unchecked = leftUnchecked(sc)
+	if p.Succeeded {
+		p.Report = reportPath(sc.ID)
+	}
 	return p
 }
 
@@ -271,11 +278,15 @@ func shortCommit(hash string) string {
 func newScanRows(scans []scan.Scan) []scanRow {
 	out := make([]scanRow, 0, len(scans))
 	for _, sc := range scans {
-		out = append(out, scanRow{
+		row := scanRow{
 			ID: sc.ID, Status: sc.Status, StatusLabel: statusLabel(sc.Status), RequestedAt: formatTime(sc.RequestedAt),
 			Requester: requester(sc), Commit: shortCommit(sc.CommitHash),
 			Succeeded: sc.Status == scan.StatusSucceeded, Findings: sc.Findings,
-		})
+		}
+		if row.Succeeded {
+			row.Report = reportPath(sc.ID)
+		}
+		out = append(out, row)
 	}
 	return out
 }

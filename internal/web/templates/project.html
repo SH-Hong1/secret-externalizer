@@ -22,8 +22,8 @@
 {{end}}<section>
 <h2 class="section-title">스캔</h2>
 {{if .Scans}}<div class="table-wrap">
-<table class="table min-w-[680px]">
-<thead><tr><th>번호</th><th>요청</th><th>상태</th><th>커밋</th><th class="num">항목</th></tr></thead>
+<table class="table min-w-[740px]">
+<thead><tr><th>번호</th><th>요청</th><th>상태</th><th>커밋</th><th class="num">항목</th><th>리포트</th></tr></thead>
 <tbody>
 {{range .Scans}}<tr>
 <td><a class="row-link" href="/scans/{{.ID}}">#{{.ID}}</a></td>
@@ -31,6 +31,7 @@
 <td><span class="badge badge-{{.Status}}">{{.StatusLabel}}</span>{{if .Basis}} <span class="muted text-xs">판정 기준</span>{{end}}</td>
 <td class="code-cell">{{if .Commit}}{{.Commit}}{{else}}<span class="muted">—</span>{{end}}</td>
 <td class="num">{{if .Succeeded}}{{.Findings}}개{{else}}<span class="muted">—</span>{{end}}</td>
+<td>{{with .Report}}<a href="{{.}}">리포트</a>{{else}}<span class="muted">—</span>{{end}}</td>
 </tr>
 {{end}}</tbody>
 </table>

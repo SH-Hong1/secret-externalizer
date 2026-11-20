@@ -160,6 +160,7 @@ func TestStoreCallsHaveTimeLimit(t *testing.T) {
 		{http.MethodGet, "/projects/1", ""},
 		{http.MethodPost, "/projects/1/scans", ""},
 		{http.MethodGet, "/scans/1", ""},
+		{http.MethodGet, "/scans/1/report", ""},
 		{http.MethodGet, "/projects/1/triage", ""},
 		{http.MethodPost, "/projects/1/bundles/1/verdict", "verdict=false-positive"},
 		{http.MethodPost, "/projects/1/customer-data/verdict", "kind=phone&file=a.log&verdict=redact"},
@@ -186,7 +187,7 @@ func TestStoreCallsHaveTimeLimit(t *testing.T) {
 				}
 				store := &blockingStore{}
 				h := web.NewServer(logger, &fakeAuthenticator{}, sessions, newFakeAttempts(),
-					web.Stores{Projects: store, Scans: store, Triage: store, Audits: store, Applies: store},
+					web.Stores{Projects: store, Scans: store, Triage: store, Audits: store, Applies: store, Reports: store},
 					web.NewHistorySuggester(store), store, limit)
 
 				req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, strings.NewReader(tt.body))
