@@ -1,8 +1,12 @@
 package worktree_test
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha1" //nolint:gosec // G505: the git index checksum is SHA-1 by format
 	"crypto/sha256"
+	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -10,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -356,20 +361,34 @@ type hostile struct {
 	name string
 	// setup configures dir, a committed repository, to run script.
 	setup func(t *testing.T, dir, script string)
-	// unsafe says Inspect must refuse the repository with ErrUnsafeConfig.
-	unsafe bool
+	// want is what Inspect must return.
+	want expect
 }
 
+// expect is the outcome of Inspect on a hostile repository.
+type expect int
+
+const (
+	// expectClean means no error and no dirty file.
+	expectClean expect = iota + 1
+	// expectCleanOrError means either expectClean or an error: a repository
+	// with a missing object cannot be compared, and git must fail rather
+	// than fetch it.
+	expectCleanOrError
+	// expectUnsafe means ErrUnsafeConfig.
+	expectUnsafe
+)
+
 func hostileRepos() []hostile {
-	attributes := func(t *testing.T, dir string) {
-		write(t, dir, map[string]string{".gitattributes": "* filter=x\n"})
+	attributes := func(t *testing.T, dir, filter string) {
+		write(t, dir, map[string]string{".gitattributes": "* filter=" + filter + "\n"})
 		worktreetest.Git(t, dir, "add", ".gitattributes")
 		worktreetest.Git(t, dir, "commit", "-q", "-m", "attributes")
 	}
 	return []hostile{
 		{"fsmonitor", func(t *testing.T, dir, script string) {
 			worktreetest.Git(t, dir, "config", "core.fsmonitor", script)
-		}, false},
+		}, expectClean},
 		{"post-index-change hook", func(t *testing.T, dir, script string) {
 			hooks := filepath.Join(filepath.Dir(script), "hooks")
 			mkdir(t, hooks)
@@ -381,15 +400,22 @@ func hostileRepos() []hostile {
 				t.Fatalf("writing hook: %v", err)
 			}
 			worktreetest.Git(t, dir, "config", "core.hooksPath", hooks)
-		}, false},
+		}, expectClean},
+		{"post-index-change hook from config", func(t *testing.T, dir, script string) {
+			worktreetest.Git(t, dir, "config", "hook.evil.command", script)
+			worktreetest.Git(t, dir, "config", "hook.evil.event", "post-index-change")
+		}, expectUnsafe},
+		// git starts a pager only when standard output is a terminal, and
+		// Inspect reads it through a pipe, so this case cannot fail even
+		// without --no-pager. It stays to show the configuration is harmless.
 		{"pager", func(t *testing.T, dir, script string) {
 			worktreetest.Git(t, dir, "config", "core.pager", script)
 			worktreetest.Git(t, dir, "config", "pager.status", "true")
-		}, false},
+		}, expectClean},
 		{"alias", func(t *testing.T, dir, script string) {
 			worktreetest.Git(t, dir, "config", "alias.status", "!"+script)
 			worktreetest.Git(t, dir, "config", "alias.ls-files", "!"+script)
-		}, false},
+		}, expectClean},
 		{"promisor remote", func(t *testing.T, dir, script string) {
 			worktreetest.Git(t, dir, "config", "core.repositoryformatversion", "1")
 			worktreetest.Git(t, dir, "config", "extensions.partialClone", "origin")
@@ -400,27 +426,42 @@ func hostileRepos() []hostile {
 			if err := os.Remove(filepath.Join(dir, ".git", "objects", tree[:2], tree[2:])); err != nil {
 				t.Fatalf("removing the tree object: %v", err)
 			}
-		}, false},
+		}, expectCleanOrError},
 		{"filter with .gitattributes", func(t *testing.T, dir, script string) {
-			attributes(t, dir)
+			attributes(t, dir, "x")
 			worktreetest.Git(t, dir, "config", "filter.x.clean", script)
-		}, true},
+		}, expectUnsafe},
 		{"filter process with .gitattributes", func(t *testing.T, dir, script string) {
-			attributes(t, dir)
+			attributes(t, dir, "x")
 			worktreetest.Git(t, dir, "config", "filter.x.process", script)
-		}, true},
+		}, expectUnsafe},
 		{"filter with info/attributes", func(t *testing.T, dir, script string) {
 			write(t, dir, map[string]string{".git/info/attributes": "* filter=x\n"})
 			worktreetest.Git(t, dir, "config", "filter.x.clean", script)
-		}, true},
+		}, expectUnsafe},
 		{"filter from include.path", func(t *testing.T, dir, script string) {
-			attributes(t, dir)
+			attributes(t, dir, "x")
 			write(t, dir, map[string]string{".git/extra.conf": "[filter \"x\"]\n\tClean = " + script + "\n"})
 			worktreetest.Git(t, dir, "config", "include.path", "extra.conf")
-		}, true},
+		}, expectUnsafe},
+		{"filter from includeIf", func(t *testing.T, dir, script string) {
+			attributes(t, dir, "x")
+			write(t, dir, map[string]string{".git/extra.conf": "[filter \"x\"]\n\tclean = " + script + "\n"})
+			worktreetest.Git(t, dir, "config", "includeIf.gitdir:"+dir+"/.path", "extra.conf")
+		}, expectUnsafe},
+		{"filter in config.worktree", func(t *testing.T, dir, script string) {
+			attributes(t, dir, "x")
+			worktreetest.Git(t, dir, "config", "core.repositoryformatversion", "1")
+			worktreetest.Git(t, dir, "config", "extensions.worktreeConfig", "true")
+			worktreetest.Git(t, dir, "config", "--worktree", "filter.x.clean", script)
+		}, expectUnsafe},
+		{"filter name with a dot", func(t *testing.T, dir, script string) {
+			attributes(t, dir, "a.b")
+			worktreetest.Git(t, dir, "config", "filter.a.b.clean", script)
+		}, expectUnsafe},
 		{"core.worktree", func(t *testing.T, dir, _ string) {
 			worktreetest.Git(t, dir, "config", "core.worktree", dir)
-		}, true},
+		}, expectUnsafe},
 	}
 }
 
@@ -444,11 +485,15 @@ func TestInspect_HostileConfig(t *testing.T) {
 			root, dir, marker := setupHostile(t, h)
 			st, err := worktree.Inspect(t.Context(), git, root, dir)
 			switch {
-			case h.unsafe:
+			case h.want == expectUnsafe:
 				if !errors.Is(err, worktree.ErrUnsafeConfig) {
 					t.Errorf("Inspect(%s) error = %v, want ErrUnsafeConfig", h.name, err)
 				}
-			case err == nil && len(st.Dirty) != 0:
+			case err != nil:
+				if h.want != expectCleanOrError {
+					t.Errorf("Inspect(%s) error = %v, want nil", h.name, err)
+				}
+			case len(st.Dirty) != 0:
 				t.Errorf("Inspect(%s).Dirty = %q, want none", h.name, st.Dirty)
 			}
 			checkNoMarker(t, "Inspect("+h.name+")", marker)
@@ -499,6 +544,75 @@ func treeDigest(t *testing.T, dir string) map[string]string {
 		t.Fatalf("walking %s: %v", dir, err)
 	}
 	return files
+}
+
+// writeIndex replaces the index of the repository at dir with a version 2
+// index holding names, each a regular file whose content is the SHA-1 blob
+// blob of size bytes. git itself never writes such names; a hostile
+// repository can.
+func writeIndex(t *testing.T, dir, blob string, size uint32, names []string) {
+	t.Helper()
+	oid, err := hex.DecodeString(blob)
+	if err != nil || len(oid) != sha1.Size {
+		t.Fatalf("blob %q is not a SHA-1 object name", blob)
+	}
+	sorted := slices.Clone(names)
+	slices.Sort(sorted)
+	var b bytes.Buffer
+	b.WriteString("DIRC")
+	_ = binary.Write(&b, binary.BigEndian, []uint32{2, uint32(len(sorted))}) //nolint:gosec // G115: a test index holds a handful of names; a bytes.Buffer does not fail
+	for _, name := range sorted {
+		var e bytes.Buffer
+		// ctime, mtime (seconds, nanoseconds), dev, ino, mode, uid, gid, size
+		_ = binary.Write(&e, binary.BigEndian, []uint32{0, 0, 0, 0, 0, 0, 0o100644, 0, 0, size}) // a bytes.Buffer does not fail
+		e.Write(oid)
+		_ = binary.Write(&e, binary.BigEndian, uint16(min(len(name), 0xfff))) // a bytes.Buffer does not fail
+		e.WriteString(name)
+		e.Write(make([]byte, 8-e.Len()%8)) // one to eight NUL bytes
+		b.Write(e.Bytes())
+	}
+	sum := sha1.Sum(b.Bytes()) //nolint:gosec // G401: the git index checksum is SHA-1 by format
+	b.Write(sum[:])
+	if err := os.WriteFile(filepath.Join(dir, ".git", "index"), b.Bytes(), 0o600); err != nil {
+		t.Fatalf("writing the index: %v", err)
+	}
+}
+
+func TestInspect_PathOutsideFolder(t *testing.T) {
+	git := gitPath(t)
+	tests := []struct {
+		name   string
+		folder string // the folder to inspect, relative to the repository
+		names  []string
+		want   error
+	}{
+		{"crafted index of ordinary names", ".", []string{"a.txt", "sub/b.txt"}, nil},
+		{"parent", ".", []string{"a.txt", "../evil"}, worktree.ErrUnsafePath},
+		{"git folder", ".", []string{"a.txt", ".git/config"}, worktree.ErrUnsafePath},
+		{"git folder in other case", ".", []string{"a.txt", "sub/.GIT/x"}, worktree.ErrUnsafePath},
+		{"climbing out", ".", []string{"a.txt", "x/../../y"}, worktree.ErrUnsafePath},
+		{"into the git folder", ".", []string{"a.txt", "sub/../.git/hooks/z"}, worktree.ErrUnsafePath},
+		{"out of a subfolder", "sub", []string{"sub/b.txt", "sub/../../evil"}, worktree.ErrUnsafePath},
+		{"to a sibling of a subfolder", "sub", []string{"sub/b.txt", "sub/../a.txt"}, worktree.ErrUnsafePath},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, root := workspace(t)
+			dir := repo(t, root, "p", map[string]string{"a.txt": "a\n", "sub/b.txt": "a\n"})
+			blob := strings.TrimSpace(worktreetest.Git(t, dir, "rev-parse", "HEAD:a.txt"))
+			writeIndex(t, dir, blob, 2, tt.names)
+			st, err := worktree.Inspect(t.Context(), git, root, filepath.Join(dir, tt.folder))
+			if tt.want == nil {
+				if err != nil || len(st.Dirty) != 0 {
+					t.Errorf("Inspect(index %q) = %+v, %v, want clean and no error", tt.names, st, err)
+				}
+				return
+			}
+			if !errors.Is(err, tt.want) {
+				t.Errorf("Inspect(index %q) = %+v, %v, want %v", tt.names, st, err, tt.want)
+			}
+		})
+	}
 }
 
 func TestInspect_ChangesNothing(t *testing.T) {

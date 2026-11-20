@@ -21,9 +21,11 @@ func Init(t testing.TB, dir string) {
 }
 
 // Git runs git with args in dir and returns its standard output. It skips
-// the test when git is not installed and fails it when git fails. Hooks and
-// fsmonitor are turned off, so a test may set them up in a repository and
-// keep using Git on it.
+// the test when git is not installed and fails it when git fails. The hooks
+// folder and fsmonitor are turned off, so a test may set them up in a
+// repository and keep using Git on it. Hooks defined in configuration
+// (hook.<name>.command) and filters are not turned off: a test that sets one
+// up must do so after its last call that could run it.
 func Git(t testing.TB, dir string, args ...string) string {
 	t.Helper()
 	git, err := exec.LookPath("git")

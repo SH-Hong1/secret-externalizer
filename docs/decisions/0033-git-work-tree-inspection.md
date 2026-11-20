@@ -13,6 +13,7 @@
 |---|---|---|
 | `core.fsmonitor` | 실행됨, 인덱스를 씀 | 실행 안 됨, 인덱스 그대로 |
 | `core.hooksPath`의 `post-index-change` | 실행됨, 인덱스를 씀 | 실행 안 됨, 인덱스 그대로 |
+| 설정으로 정의한 hook(`hook.<이름>.command`, `hook.<이름>.event=post-index-change`) | 실행됨 | 실행 안 됨. 다만 `-c core.hooksPath=/dev/null`은 이 hook을 끄지 못하고, 인덱스를 쓰지 않는 `--no-optional-locks`만이 막는다(검토에서 확인). 그래서 `hook.*` 키가 있으면 거부한다 |
 | `core.pager`와 `pager.status`(터미널에서) | 실행됨 | 실행 안 됨(`--no-pager`) |
 | `alias.status` | 실행 안 됨(git은 내장 명령의 별칭을 무시한다) | 실행 안 됨 |
 | `filter.x.clean`과 `.gitattributes` | 실행됨 | **실행됨** |
@@ -41,8 +42,9 @@
 
 1. `rev-parse --is-inside-work-tree --show-prefix --absolute-git-dir --git-common-dir --show-toplevel`: 작업본인지, 프로젝트 폴더의 접두어, 세 경로. 세 경로를 `filepath.EvalSymlinks`로 풀어 모두 작업 공간 루트 안이어야 한다. 아니면 `ErrNotRepository`다. 출력 줄 수가 다르면(경로에 줄바꿈이 있으면) 잘못 읽지 않고 거부한다.
 2. `rev-parse --verify --quiet HEAD`: 커밋이 없으면 `ErrNoCommit`.
-3. `config --name-only --list -z`: `filter.<이름>.clean`, `filter.<이름>.process`, `core.worktree`가 있으면 `ErrUnsafeConfig`. 내용을 비교하기 전에 한다.
+3. `config --name-only --list -z`: `filter.<이름>.clean`, `filter.<이름>.process`, `hook.`으로 시작하는 키, `core.worktree`가 있으면 `ErrUnsafeConfig`. 내용을 비교하기 전에 한다. `include.path`, `includeIf`, `config.worktree`에서 온 키도 목록에 나온다.
 4. `status --porcelain=v1 -z --untracked-files=no --ignore-submodules=all --no-renames -- .`와 `ls-files -z -v -t -- .`: staged, unstaged 변경과 `H`가 아닌 표시(assume-unchanged, skip-worktree, 병합 중)가 `Dirty`다. 추적되지 않는 파일은 `Dirty`가 아니고 `Tracked`가 false다.
+5. 두 명령이 보고한 경로가 프로젝트 폴더 밖을 가리키거나(`..` 마디, 절대 경로) 대소문자와 상관없이 `.git` 마디를 가지면 `ErrUnsafePath`로 거부한다. git은 그런 경로를 인덱스에 쓰지 않지만, 손으로 만든 인덱스(`../evil`, `.git/config`, `x/../../y`, `sub/../.git/hooks/z`)는 `ls-files`가 `H`로, `status`가 `AD`, `AM`으로 그대로 보고했다(검토에서 확인). 적용이 이 경로를 그대로 쓰면 폴더 밖이나 git 폴더의 파일을 가리키게 된다.
 
 모든 호출에 붙이는 옵션과 환경, 그리고 각각이 막는 것:
 
@@ -52,7 +54,7 @@
 | `--no-optional-locks`, `GIT_OPTIONAL_LOCKS=0` | `status`가 인덱스를 새로 고쳐 쓰는 것(저장소에 쓰기) |
 | `-c safe.directory=*` | 읽기 전용 마운트처럼 다른 사용자 소유인 저장소에서 git이 거부하는 것 |
 | `-c core.fsmonitor=false` | 저장소의 fsmonitor 프로그램 |
-| `-c core.hooksPath=/dev/null` | 저장소의 hook(`post-index-change` 등) |
+| `-c core.hooksPath=/dev/null` | 저장소의 hook 폴더(`.git/hooks`나 `core.hooksPath`가 가리키는 폴더)의 hook. 설정으로 정의한 hook(`hook.<이름>.command`)은 끄지 못하므로 설정 검사로 거부한다 |
 | `-c core.untrackedCache=false` | 인덱스의 untracked cache 갱신 |
 | `-c core.checkStat=minimal`, `-c core.trustctime=false` | 컨테이너 마운트에서 inode, ctime, uid가 달라 모든 파일이 변경된 것으로 보이는 것 |
 | `-c core.attributesFile=/dev/null`, `GIT_ATTR_NOSYSTEM=1` | 저장소 밖의 속성 파일이 filter를 켜는 것 |
@@ -73,7 +75,7 @@ worker의 환경은 물려주지 않는다. 호출마다 제한 시간 60초, `W
 
 ## 이유
 
-- 검토 항목 6: 스캔 대상 저장소의 설정은 신뢰할 수 없는 입력이다. 위 표의 옵션이 실행 경로를 하나씩 막고, 막을 수 없는 filter는 설정에서 찾아 거부한다. `core.worktree`는 작업본을 다른 곳으로 옮길 수 있으므로 거부한다.
+- 검토 항목 6: 스캔 대상 저장소의 설정은 신뢰할 수 없는 입력이다. 위 표의 옵션이 실행 경로를 하나씩 막고, 막을 수 없는 filter와, 한 겹(`--no-optional-locks`)으로만 막히는 설정 hook은 설정에서 찾아 거부한다. 인덱스도 신뢰할 수 없는 입력이므로 보고된 경로가 폴더 안인지 확인한다. `core.worktree`는 작업본을 다른 곳으로 옮길 수 있으므로 거부한다.
 - 검토 항목 5: 작업본 루트, git 폴더, 공용 git 폴더 가운데 하나라도 작업 공간 밖이면 git은 작업 공간 밖의 파일을 읽는다. 세 경로를 모두 풀어 확인한다.
 - 검토 항목 18: 저장소가 프로젝트 폴더보다 크면 폴더 밖의 변경은 도구가 건드리지 않는 곳이므로 적용을 막을 이유가 없다. 폴더 안의 다른 저장소에 든 파일은 바깥 저장소에서 "추적되지 않음"으로 보이지만 안쪽 저장소의 커밋되지 않은 변경일 수 있으므로 `Nested`로 가려낸다.
 - 검토 항목 29: 도구는 커밋하지 않고, 저장소를 바꾸는 git 명령을 실행하지 않는다. 인덱스도 쓰지 않는다(`--no-optional-locks`). 점검 앞뒤로 `.git` 아래 모든 파일의 이름, 크기, 내용 해시가 같은지 테스트한다.

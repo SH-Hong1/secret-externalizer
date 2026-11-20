@@ -34,8 +34,13 @@ var (
 	// ErrNoCommit means the repository holding the folder has no commit.
 	ErrNoCommit = errors.New("repository has no commit")
 	// ErrUnsafeConfig means the repository configures something that git
-	// would run while comparing file contents, or moves its work tree.
+	// would run while comparing file contents (a filter or a hook), or moves
+	// its work tree.
 	ErrUnsafeConfig = errors.New("repository configuration could run a command")
+	// ErrUnsafePath means git reported a tracked path that is not inside
+	// the folder or that has a .git component. git never writes such a path
+	// to an index itself; a hand-made index can hold one.
+	ErrUnsafePath = errors.New("repository index holds a path outside the folder")
 )
 
 const (
@@ -183,13 +188,9 @@ type repository struct {
 
 // locate finds the work tree holding dir, checks that its work tree root,
 // git folder and common git folder resolve to places under root, and reads
-// HEAD.
+// HEAD. root is already resolved.
 func locate(ctx context.Context, git, root, dir string) (repository, error) {
-	realRoot, err := filepath.EvalSymlinks(root)
-	if err != nil {
-		return repository{}, fmt.Errorf("resolving the workspace root: %w", err)
-	}
-	out, err := run(ctx, git, realRoot, dir, "rev-parse",
+	out, err := run(ctx, git, root, dir, "rev-parse",
 		"--is-inside-work-tree", "--show-prefix", "--absolute-git-dir", "--git-common-dir", "--show-toplevel")
 	var exitErr *exitError
 	if errors.As(err, &exitErr) {
@@ -209,7 +210,7 @@ func locate(ctx context.Context, git, root, dir string) (repository, error) {
 		commonDir = filepath.Join(dir, commonDir)
 	}
 	for _, p := range []string{lines[2], commonDir, lines[4]} {
-		inside, err := under(realRoot, p)
+		inside, err := under(root, p)
 		if err != nil {
 			return repository{}, err
 		}
@@ -218,7 +219,7 @@ func locate(ctx context.Context, git, root, dir string) (repository, error) {
 		}
 	}
 
-	out, err = run(ctx, git, realRoot, dir, "rev-parse", "--verify", "--quiet", "HEAD")
+	out, err = run(ctx, git, root, dir, "rev-parse", "--verify", "--quiet", "HEAD")
 	if errors.As(err, &exitErr) && exitErr.code == 1 {
 		return repository{}, ErrNoCommit
 	}
@@ -261,9 +262,13 @@ func isHash(s string) bool {
 }
 
 // checkConfig refuses a repository whose configuration, with included
-// files and worktree configuration, sets a clean or process filter or
-// core.worktree. Git lower-cases section and key names in the listing; a
-// subsection name keeps its case and may hold dots.
+// files and worktree configuration, sets a clean or process filter, any
+// hook.* key, or core.worktree. core.hooksPath turns off only the hooks
+// folder: a hook defined in configuration (hook.<name>.command with
+// hook.<name>.event) still runs, and only --no-optional-locks keeps status
+// from writing the index that would fire it. Git lower-cases section and
+// key names in the listing; a subsection name keeps its case and may hold
+// dots.
 func checkConfig(ctx context.Context, git, root, dir string) error {
 	out, err := run(ctx, git, root, dir, "config", "--name-only", "--list", "-z")
 	if err != nil {
@@ -271,7 +276,7 @@ func checkConfig(ctx context.Context, git, root, dir string) error {
 	}
 	for name := range strings.SplitSeq(string(out), "\x00") {
 		key := strings.ToLower(name)
-		if key == "core.worktree" ||
+		if key == "core.worktree" || strings.HasPrefix(key, "hook.") ||
 			(strings.HasPrefix(key, "filter.") && (strings.HasSuffix(key, ".clean") || strings.HasSuffix(key, ".process"))) {
 			return ErrUnsafeConfig
 		}
@@ -285,10 +290,15 @@ func checkConfig(ctx context.Context, git, root, dir string) error {
 // It fails with ErrNotRepository when dir is not in a work tree whose work
 // tree root, git folder and common git folder all resolve to places under
 // root, with ErrNoCommit when the repository has no commit, and with
-// ErrUnsafeConfig when its configuration sets a clean or process filter or
-// core.worktree. Other errors name the git command that failed and its exit
-// code, and hold none of git's output.
+// ErrUnsafeConfig when its configuration sets a clean or process filter, a
+// hook, or core.worktree, and with ErrUnsafePath when git reports a tracked
+// path that is not inside dir or has a .git component. Other errors name the
+// git command that failed and its exit code, and hold none of git's output.
 func Inspect(ctx context.Context, git, root, dir string) (State, error) {
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return State{}, fmt.Errorf("resolving the workspace root: %w", err)
+	}
 	repo, err := locate(ctx, git, root, dir)
 	if err != nil {
 		return State{}, err
@@ -311,7 +321,11 @@ func Inspect(ctx context.Context, git, root, dir string) (State, error) {
 		if len(entry) < 4 || entry[2] != ' ' || !strings.HasPrefix(entry[3:], repo.prefix) {
 			return State{}, errors.New("reading git status: unexpected entry")
 		}
-		dirty[entry[3+len(repo.prefix):]] = true
+		rel := entry[3+len(repo.prefix):]
+		if !confined(rel) {
+			return State{}, ErrUnsafePath
+		}
+		dirty[rel] = true
 	}
 
 	out, err = run(ctx, git, root, dir, "ls-files", "-z", "-v", "-t", "--", ".")
@@ -330,6 +344,9 @@ func Inspect(ctx context.Context, git, root, dir string) (State, error) {
 			return State{}, errors.New("reading git ls-files: unexpected entry")
 		}
 		rel := entry[2:]
+		if !confined(rel) {
+			return State{}, ErrUnsafePath
+		}
 		tracked = append(tracked, rel)
 		if entry[0] != 'H' {
 			dirty[rel] = true
@@ -343,6 +360,21 @@ func Inspect(ctx context.Context, git, root, dir string) (State, error) {
 	}
 	slices.Sort(st.Dirty)
 	return st, nil
+}
+
+// confined reports whether rel, a slash-separated path from git, stays
+// inside the folder it is relative to and has no .git component in any
+// case, as git itself would refuse to check out.
+func confined(rel string) bool {
+	if !filepath.IsLocal(filepath.FromSlash(rel)) {
+		return false
+	}
+	for part := range strings.SplitSeq(rel, "/") {
+		if strings.EqualFold(part, ".git") || part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // Nested reports whether rel, a file under dir, lies in a repository of
@@ -375,6 +407,10 @@ func Nested(dir, rel string) (bool, error) {
 // reading HEAD compares no file contents.
 func CommitHash(ctx context.Context, git, root, dir string) string {
 	if git == "" {
+		return ""
+	}
+	root, err := filepath.EvalSymlinks(root)
+	if err != nil {
 		return ""
 	}
 	repo, err := locate(ctx, git, root, dir)
