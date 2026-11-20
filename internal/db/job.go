@@ -175,33 +175,33 @@ func (s *Store) FailScan(ctx context.Context, jobID int64, workerID string, id s
 // job.ErrLeaseLost, when the worker does not hold the job; an error from
 // write undoes everything.
 func (s *Store) closeJob(ctx context.Context, jobID int64, workerID string, id scan.ID, state string, write func(pgx.Tx) error) error {
-	return s.closeLeased(ctx, `
+	return s.closeLeased(ctx, jobID, write, `
 		UPDATE job SET state = $4
 		WHERE id = $1 AND state = 'running' AND locked_by = $2 AND scan_id = $3`,
-		jobID, workerID, int64(id), state, write)
+		jobID, workerID, int64(id), state)
 }
 
 // closeApplyJob is closeJob for an apply-check or apply job, which it finds
-// by the ID of its apply run.
-func (s *Store) closeApplyJob(ctx context.Context, jobID int64, workerID string, applyID int64, state string, write func(pgx.Tx) error) error {
-	return s.closeLeased(ctx, `
+// by the ID of its apply run and its kind, so that a check cannot close as
+// an apply or the reverse.
+func (s *Store) closeApplyJob(ctx context.Context, jobID int64, workerID string, applyID int64, kind job.Kind, state string, write func(pgx.Tx) error) error {
+	return s.closeLeased(ctx, jobID, write, `
 		UPDATE job SET state = $4
-		WHERE id = $1 AND state = 'running' AND locked_by = $2 AND apply_id = $3`,
-		jobID, workerID, applyID, state, write)
+		WHERE id = $1 AND state = 'running' AND locked_by = $2 AND apply_id = $3 AND kind = $5`,
+		jobID, workerID, applyID, state, string(kind))
 }
 
-// closeLeased runs the lease-checking update query, which takes the job ID,
-// the worker ID, the ID of the job's record, and the new state, and then
+// closeLeased runs the lease-checking update query with args and then
 // write, in one transaction. It returns job.ErrLeaseLost, writing nothing,
 // when the query changes no row.
-func (s *Store) closeLeased(ctx context.Context, query string, jobID int64, workerID string, recordID int64, state string, write func(pgx.Tx) error) (err error) {
+func (s *Store) closeLeased(ctx context.Context, jobID int64, write func(pgx.Tx) error, query string, args ...any) (err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
 	}
 	defer rollback(ctx, tx, &err)
 
-	tag, err := tx.Exec(ctx, query, jobID, workerID, recordID, state)
+	tag, err := tx.Exec(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("closing job %d: %w", jobID, err)
 	}

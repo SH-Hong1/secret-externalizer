@@ -221,13 +221,13 @@ func extend(ctx context.Context, q Queue, opts Options, j Job, deadline time.Tim
 
 // Dispatch returns a Handler that passes each job to the handler for its
 // kind and returns what that handler returns. A job of a kind with no
-// handler is an error, which leaves the job to its lease like any other
-// handler error.
+// handler, or with a nil one, is an error, which leaves the job to its lease
+// like any other handler error.
 func Dispatch(handlers map[Kind]Handler) Handler {
 	handlers = maps.Clone(handlers)
 	return func(ctx context.Context, j Job) error {
-		h, ok := handlers[j.Kind]
-		if !ok {
+		h := handlers[j.Kind]
+		if h == nil {
 			return fmt.Errorf("running job %d: no handler for kind %q", j.ID, j.Kind)
 		}
 		return h(ctx, j)

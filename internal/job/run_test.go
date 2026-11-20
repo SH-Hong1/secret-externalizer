@@ -198,6 +198,12 @@ func TestDispatch(t *testing.T) {
 			t.Errorf("Dispatch() ran the scan handler for a job of another kind")
 		}
 	})
+	t.Run("nil handler", func(t *testing.T) {
+		h := job.Dispatch(map[job.Kind]job.Handler{job.KindApply: nil})
+		if err := h(t.Context(), job.Job{ID: 5, Kind: job.KindApply}); err == nil {
+			t.Errorf("Dispatch(nil apply handler)(apply job) error = nil, want an error")
+		}
+	})
 	t.Run("handler error", func(t *testing.T) {
 		fail := errors.New("fake handler failure")
 		h := job.Dispatch(map[job.Kind]job.Handler{job.KindScan: func(context.Context, job.Job) error { return fail }})

@@ -418,9 +418,10 @@ func TestClaimJob_Kinds(t *testing.T) {
 		reason string
 	}{
 		{job.KindApply, "running", "worker stopped during the apply three times"},
+		{job.KindApply, "queued", "worker stopped during the apply three times"},
 		{job.KindApplyCheck, "checking", "worker stopped during the check three times"},
 	} {
-		t.Run(string(c.kind)+" gives up after three", func(t *testing.T) {
+		t.Run(string(c.kind)+" "+c.state+" gives up after three", func(t *testing.T) {
 			s := newMigratedStore(t)
 			ctx := t.Context()
 			applyID := newApplyRun(t, s, "shop", c.state, c.kind)
@@ -462,6 +463,92 @@ func TestClaimJob_Kinds(t *testing.T) {
 				t.Errorf("ApplyRecords(%d) file written flags after giving up (-want +got):\n%s", applyID, diff)
 			}
 		})
+	}
+}
+
+// TestClaimJob_GivesUpScanAndApplyTogether gives up a scan job and an apply
+// job in one claim, where the scan's ID and the run's ID are the same
+// number, and checks that each record gets only its own reason.
+func TestClaimJob_GivesUpScanAndApplyTogether(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	projectID := newProject(t, s, "shop")
+	scanID, err := s.InsertRawScan(ctx, projectID)
+	if err != nil {
+		t.Fatalf("InsertRawScan() error = %v", err)
+	}
+	applyID, err := s.InsertApplyRun(ctx, projectID, scanID, "running")
+	if err != nil {
+		t.Fatalf("InsertApplyRun() error = %v", err)
+	}
+	if int64(scanID) != applyID {
+		t.Fatalf("scan ID %d and run ID %d differ, want them equal for this test", scanID, applyID)
+	}
+	if err := s.InsertScanJob(ctx, scanID); err != nil {
+		t.Fatalf("InsertScanJob(%d) error = %v", scanID, err)
+	}
+	if _, err := s.InsertApplyJob(ctx, applyID, string(job.KindApply)); err != nil {
+		t.Fatalf("InsertApplyJob(%d) error = %v", applyID, err)
+	}
+	if err := s.ExhaustJobs(ctx); err != nil {
+		t.Fatalf("ExhaustJobs() error = %v", err)
+	}
+
+	if _, err := s.ClaimJob(ctx, "worker", time.Minute); !errors.Is(err, job.ErrNoJob) {
+		t.Fatalf("ClaimJob() of exhausted jobs error = %v, want ErrNoJob", err)
+	}
+	status, reason, err := s.ScanStatus(ctx, scanID)
+	if err != nil {
+		t.Fatalf("ScanStatus(%d) error = %v", scanID, err)
+	}
+	if status != "failed" || reason != "worker stopped during the scan three times" {
+		t.Errorf("ScanStatus(%d) = %q, %q, want failed with the scan reason", scanID, status, reason)
+	}
+	run, err := s.ApplyRunState(ctx, applyID)
+	if err != nil {
+		t.Fatalf("ApplyRunState(%d) error = %v", applyID, err)
+	}
+	if run.State != "failed" || run.FailureReason != "worker stopped during the apply three times" {
+		t.Errorf("ApplyRunState(%d) = %+v, want failed with the apply reason", applyID, run)
+	}
+}
+
+func TestCloseApplyJob_Kind(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	applyID := newApplyRun(t, s, "shop", "checking", job.KindApplyCheck)
+	if _, err := s.InsertApplyJob(ctx, applyID, string(job.KindApply)); err != nil {
+		t.Fatalf("InsertApplyJob(%d, apply) error = %v", applyID, err)
+	}
+	check, err := s.ClaimJob(ctx, "worker", time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimJob(check) error = %v", err)
+	}
+	run, err := s.ClaimJob(ctx, "worker", time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimJob(apply) error = %v", err)
+	}
+	if check.Kind != job.KindApplyCheck || run.Kind != job.KindApply {
+		t.Fatalf("ClaimJob() kinds = %s, %s, want apply-check, apply", check.Kind, run.Kind)
+	}
+	write := func(pgx.Tx) error { return nil }
+
+	if err := s.CloseApplyJob(ctx, check.ID, "worker", applyID, job.KindApply, "done", write); !errors.Is(err, job.ErrLeaseLost) {
+		t.Errorf("CloseApplyJob(check job as apply) error = %v, want ErrLeaseLost", err)
+	}
+	if err := s.CloseApplyJob(ctx, run.ID, "worker", applyID, job.KindApplyCheck, "done", write); !errors.Is(err, job.ErrLeaseLost) {
+		t.Errorf("CloseApplyJob(apply job as apply-check) error = %v, want ErrLeaseLost", err)
+	}
+	for _, k := range []job.Kind{job.KindApplyCheck, job.KindApply} {
+		if jr, err := s.ApplyJob(ctx, applyID, string(k)); err != nil || jr.State != "running" {
+			t.Errorf("ApplyJob(%d, %s) after refused closes = %+v, %v, want running", applyID, k, jr, err)
+		}
+	}
+	if err := s.CloseApplyJob(ctx, check.ID, "worker", applyID, job.KindApplyCheck, "done", write); err != nil {
+		t.Errorf("CloseApplyJob(check job as apply-check) error = %v", err)
+	}
+	if err := s.CloseApplyJob(ctx, run.ID, "worker", applyID, job.KindApply, "done", write); err != nil {
+		t.Errorf("CloseApplyJob(apply job as apply) error = %v", err)
 	}
 }
 
@@ -530,13 +617,13 @@ func TestCloseApplyJob(t *testing.T) {
 		called = true
 		return nil
 	}
-	if err := s.CloseApplyJob(ctx, a.ID, "worker-a", applyID, "done", write); !errors.Is(err, job.ErrLeaseLost) {
+	if err := s.CloseApplyJob(ctx, a.ID, "worker-a", applyID, job.KindApply, "done", write); !errors.Is(err, job.ErrLeaseLost) {
 		t.Fatalf("CloseApplyJob(worker-a, taken over) error = %v, want ErrLeaseLost", err)
 	}
 	if called {
 		t.Errorf("CloseApplyJob(worker-a, taken over) called write, want it not called")
 	}
-	if err := s.CloseApplyJob(ctx, a.ID, "worker-b", applyID+1, "done", write); !errors.Is(err, job.ErrLeaseLost) {
+	if err := s.CloseApplyJob(ctx, a.ID, "worker-b", applyID+1, job.KindApply, "done", write); !errors.Is(err, job.ErrLeaseLost) {
 		t.Fatalf("CloseApplyJob(worker-b, other run) error = %v, want ErrLeaseLost", err)
 	}
 	if called {
@@ -546,7 +633,7 @@ func TestCloseApplyJob(t *testing.T) {
 		t.Errorf("ApplyJob(%d) after refused closes = %+v, %v, want running", applyID, jr, err)
 	}
 
-	if err := s.CloseApplyJob(ctx, a.ID, "worker-b", applyID, "done", write); err != nil {
+	if err := s.CloseApplyJob(ctx, a.ID, "worker-b", applyID, job.KindApply, "done", write); err != nil {
 		t.Fatalf("CloseApplyJob(worker-b, holder) error = %v", err)
 	}
 	if !called {
@@ -562,7 +649,7 @@ func TestCloseApplyJob(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimJob(worker-c) error = %v", err)
 	}
-	if err := s.CloseApplyJob(ctx, c.ID, "worker-c", applyID2, "done", func(pgx.Tx) error { return fail }); !errors.Is(err, fail) {
+	if err := s.CloseApplyJob(ctx, c.ID, "worker-c", applyID2, job.KindApply, "done", func(pgx.Tx) error { return fail }); !errors.Is(err, fail) {
 		t.Fatalf("CloseApplyJob(failing write) error = %v, want the write's error", err)
 	}
 	if jr, err := s.ApplyJob(ctx, applyID2, "apply"); err != nil || jr.State != "running" {

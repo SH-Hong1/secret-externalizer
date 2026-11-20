@@ -18,6 +18,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
@@ -322,8 +323,30 @@ func (s *Store) ApplyRecords(ctx context.Context, applyID int64) (statuses []str
 }
 
 // CloseApplyJob runs closeApplyJob.
-func (s *Store) CloseApplyJob(ctx context.Context, jobID int64, workerID string, applyID int64, state string, write func(pgx.Tx) error) error {
-	return s.closeApplyJob(ctx, jobID, workerID, applyID, state, write)
+func (s *Store) CloseApplyJob(ctx context.Context, jobID int64, workerID string, applyID int64, kind job.Kind, state string, write func(pgx.Tx) error) error {
+	return s.closeApplyJob(ctx, jobID, workerID, applyID, kind, state, write)
+}
+
+// InsertScanJob queues a job for the existing scan with the given ID.
+func (s *Store) InsertScanJob(ctx context.Context, scanID scan.ID) error {
+	_, err := s.pool.Exec(ctx, "INSERT INTO job (scan_id) VALUES ($1)", scanID)
+	return err
+}
+
+// ExhaustJobs makes every job one whose lease has run out after its last
+// attempt, so the next ClaimJob gives them all up in one statement.
+func (s *Store) ExhaustJobs(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `
+		UPDATE job SET state = 'running', attempts = 3, locked_by = 'fake-worker',
+			locked_until = now() - interval '1 second'`)
+	return err
+}
+
+// ScanStatus returns the status and failure reason of the scan with the
+// given ID.
+func (s *Store) ScanStatus(ctx context.Context, id scan.ID) (status, reason string, err error) {
+	err = s.pool.QueryRow(ctx, "SELECT status, failure_reason FROM scan WHERE id = $1", id).Scan(&status, &reason)
+	return status, reason, err
 }
 
 // SetApplyState puts the apply run with the given ID in state and, unless
