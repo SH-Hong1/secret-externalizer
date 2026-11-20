@@ -2,10 +2,12 @@ package db_test
 
 import (
 	"errors"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
@@ -179,4 +181,79 @@ func TestMigration0006KeepsOlderScans(t *testing.T) {
 	if got.RequestedBy != "fake-subject" || got.RequesterName != "" || got.SkippedFiles != nil || got.ScannerErrors != nil {
 		t.Errorf("Scan(%d) = %+v, want requested by fake-subject with no name, skipped files or scanner errors", id, got)
 	}
+}
+
+func TestApplyExcludesScan(t *testing.T) {
+	for _, state := range []apply.State{apply.StateChecking, apply.StateQueued, apply.StateRunning} {
+		t.Run("apply "+string(state), func(t *testing.T) {
+			s := newMigratedStore(t)
+			ctx := t.Context()
+			pid := newProject(t, s, "shop")
+			sid := save(t, s, pid, mixed()...)
+			applyRunIn(t, s, pid, sid, state)
+			if _, err := s.RequestScan(ctx, pid, tester); !errors.Is(err, db.ErrApplyActive) {
+				t.Errorf("RequestScan(%d) while an apply is %s error = %v, want ErrApplyActive", pid, state, err)
+			}
+			if n, err := s.Count(ctx, "scan"); err != nil || n != 1 {
+				t.Errorf("rows in scan = %d, %v, want 1", n, err)
+			}
+		})
+	}
+	for _, status := range []scan.Status{scan.StatusQueued, scan.StatusRunning} {
+		t.Run("scan "+string(status), func(t *testing.T) {
+			s := newMigratedStore(t)
+			ctx := t.Context()
+			pid := newProject(t, s, "shop")
+			save(t, s, pid, mixed()...)
+			id, err := s.RequestScan(ctx, pid, tester)
+			if err != nil {
+				t.Fatalf("RequestScan(%d) error = %v", pid, err)
+			}
+			if status == scan.StatusRunning {
+				if err := s.StartScan(ctx, id); err != nil {
+					t.Fatalf("StartScan(%d) error = %v", id, err)
+				}
+			}
+			if _, err := s.RequestApplyCheck(ctx, pid, tester); !errors.Is(err, db.ErrScanActive) {
+				t.Errorf("RequestApplyCheck(%d) while a scan is %s error = %v, want ErrScanActive", pid, status, err)
+			}
+			if n, err := s.Count(ctx, "apply_run"); err != nil || n != 0 {
+				t.Errorf("rows in apply_run = %d, %v, want 0", n, err)
+			}
+		})
+	}
+	t.Run("concurrent", func(t *testing.T) {
+		s := newMigratedStore(t)
+		ctx := t.Context()
+		const rounds = 20
+		var pids []project.ID
+		for i := range rounds {
+			pid := newProject(t, s, "race-"+strconv.Itoa(i))
+			save(t, s, pid, mixed()...)
+			pids = append(pids, pid)
+		}
+		for i, pid := range pids {
+			start := make(chan struct{})
+			scanDone, checkDone := make(chan error, 1), make(chan error, 1)
+			go func() {
+				<-start
+				_, err := s.RequestScan(ctx, pid, tester)
+				scanDone <- err
+			}()
+			go func() {
+				<-start
+				_, err := s.RequestApplyCheck(ctx, pid, tester)
+				checkDone <- err
+			}()
+			close(start)
+			scanErr, checkErr := <-scanDone, <-checkDone
+			switch {
+			case scanErr == nil && errors.Is(checkErr, db.ErrScanActive):
+			case checkErr == nil && errors.Is(scanErr, db.ErrApplyActive):
+			default:
+				t.Errorf("round %d: RequestScan() error = %v, RequestApplyCheck() error = %v, want one nil and the other refused",
+					i, scanErr, checkErr)
+			}
+		}
+	})
 }

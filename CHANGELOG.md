@@ -87,9 +87,13 @@
 - `finding.Kind.CustomerData`: 고객정보 종류(`phone`, `rrn`, `email`, `card`, `address`)인지 알려 준다.
 - 마이그레이션 `0007`: 적용 실행(`apply_run`), 위치별 결과(`apply_item`), 바꾸기 전에 적는 파일 기록(`apply_file`) 표를 만들고, 묶음에 `applied_at`, `store_path`, 스캔에 `apply_id`, 감사 기록의 동작에 `apply`를 더한다. 작업(`job`)에 종류(`scan`, `apply-check`, `apply`)와 `apply_id`가 생기고, 이미 있던 작업은 모두 `scan`이다.
 - 작업 큐가 스캔 작업과 적용 작업을 만든 순서대로 내준다. `job.Dispatch`가 작업의 종류에 맞는 handler를 부르고 모르는 종류는 오류로 둔다. worker의 작업 로그에 `kind`, `apply_id`가 남는다. 세 번 멈춘 적용 작업은 실행을 `worker stopped during the apply three times`, 점검 작업은 `worker stopped during the check three times`로 실패시키고, 정상 종료로 돌려준 적용 작업은 실행을 `queued`로, 점검 작업은 `checking`으로 둔다. 스캔 작업의 동작은 그대로다.
+- 적용 점검 요청(`RequestApplyCheck`)과 적용 확인(`ConfirmApply`): 점검 요청은 마지막으로 성공한 스캔의 외부화·삭제 묶음으로 계획 지문(`apply.Digest`)을 만들어 `checking` 실행과 `apply-check` 작업을 넣고, 앞선 `ready`, `blocked` 실행을 `superseded`로 둔다. 적용 확인은 화면이 보여 준 지문이 실행과 지금 계획의 것과 모두 같을 때만 `ready` 실행을 `queued`로 바꾸고 `apply` 작업과 감사 기록(`apply`, 실행 ID, `irreversible`)을 한 트랜잭션으로 남긴다. 다르면 `ErrPlanChanged`다. 실행과 위치별 결과를 읽는 `ApplyRun`, `ApplyRunsByProject`, `ApplyItems`.
+- 결정 기록 0036 (점검 작업과 상호 배제)
 
 ### 변경
 
+- 한 프로젝트의 스캔과 적용이 겹치지 않는다. 점검 중, 대기 중, 실행 중인 적용이 있으면 스캔 요청, 판정, 묶음 옮기기가 `ErrApplyActive`로 거부되고, 스캔이 걸려 있으면 점검 요청과 적용 확인이 `ErrScanActive`로 거부된다. 잠금은 `project` 행으로 한다.
+- 적용한 외부화 묶음은 판정과 이름이 고정된다. 판정 변경, 이름 변경, 판정 취소는 `triage.ErrNotAllowed`이고(메모만 바꾸는 것은 된다), 그 묶음의 마지막 항목은 옮길 수 없다. 묶음 조회가 `applied_at`, `store_path`를 함께 돌려준다. 감사 기록 화면은 `apply` 동작을 "적용 요청"으로 보인다.
 - OpenBao worker 정책이 `secret/data/projects/*`를 읽을 수 있다(`create`, `update`, `read`). 지우기와 메타데이터 권한은 없다. KV v2 마운트 `secret`은 경로마다 버전을 10개가 아니라 100개 남긴다(self-init의 `secret/config`). 기존 볼륨에는 반영되지 않으므로 `openbao-data`, `openbao-secrets`를 지우고 다시 띄워야 하며, 적용을 한 번이라도 한 환경에서는 볼륨을 지우면 값이 사라진다(`docs/local-run.md`).
 - 지문 요청을 값 500개뿐 아니라 값의 바이트 합 8MiB에서도 나눈다. 그보다 큰 값 하나는 혼자 한 요청이다.
 - web은 `DATABASE_URL`을 필수로 읽고 기동할 때 마이그레이션을 실행한다.

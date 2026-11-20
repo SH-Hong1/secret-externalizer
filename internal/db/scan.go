@@ -32,7 +32,9 @@ const scanColumns = `id, project_id, status, requested_by, requester_name, reque
 // RequestScan records a queued scan of the project, requested by the user
 // by, and the job that runs it, in one transaction, and returns the scan ID. When the project already has
 // a queued or running scan, it returns that scan's ID with ErrScanActive and
-// stores nothing. It returns ErrNotFound when the project does not exist.
+// stores nothing. It returns ErrApplyActive, storing nothing, when the
+// project has an apply that is being checked, is queued or runs, and
+// ErrNotFound when the project does not exist.
 func (s *Store) RequestScan(ctx context.Context, projectID project.ID, by audit.Actor) (scan.ID, error) {
 	for range requestScanAttempts {
 		id, err := s.insertScan(ctx, projectID, by)
@@ -51,7 +53,8 @@ func (s *Store) RequestScan(ctx context.Context, projectID project.ID, by audit.
 }
 
 // insertScan adds the scan and its job. It returns ErrScanActive, unwrapped,
-// when the partial unique index refuses the scan.
+// when the partial unique index refuses the scan, and ErrApplyActive when the
+// project has an active apply.
 func (s *Store) insertScan(ctx context.Context, projectID project.ID, by audit.Actor) (_ scan.ID, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -71,6 +74,11 @@ func (s *Store) insertScan(ctx context.Context, projectID project.ID, by audit.A
 		return 0, fmt.Errorf("requesting scan of project %d: %w", projectID, ErrNotFound)
 	case err != nil:
 		return 0, fmt.Errorf("creating scan: %w", err)
+	}
+	// The insert waited for any transaction that holds the project row FOR
+	// UPDATE, so this sees an apply that such a transaction committed.
+	if err := refuseActiveApply(ctx, tx, projectID); err != nil {
+		return 0, fmt.Errorf("requesting scan: %w", err)
 	}
 	if _, err := tx.Exec(ctx, "INSERT INTO job (scan_id) VALUES ($1)", id); err != nil {
 		return 0, fmt.Errorf("creating job: %w", err)

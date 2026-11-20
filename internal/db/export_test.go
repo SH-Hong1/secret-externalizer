@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"io/fs"
 	"os"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
@@ -266,8 +268,8 @@ type ApplyRunRow struct {
 	FinishedAt    *time.Time
 }
 
-// ApplyRun returns the state columns of the apply run with the given ID.
-func (s *Store) ApplyRun(ctx context.Context, id int64) (ApplyRunRow, error) {
+// ApplyRunState returns the state columns of the apply run with the given ID.
+func (s *Store) ApplyRunState(ctx context.Context, id int64) (ApplyRunRow, error) {
 	var r ApplyRunRow
 	err := s.pool.QueryRow(ctx,
 		"SELECT state, failure_reason, started_at, finished_at FROM apply_run WHERE id = $1", id).
@@ -322,4 +324,103 @@ func (s *Store) ApplyRecords(ctx context.Context, applyID int64) (statuses []str
 // CloseApplyJob runs closeApplyJob.
 func (s *Store) CloseApplyJob(ctx context.Context, jobID int64, workerID string, applyID int64, state string, write func(pgx.Tx) error) error {
 	return s.closeApplyJob(ctx, jobID, workerID, applyID, state, write)
+}
+
+// SetApplyState puts the apply run with the given ID in state and, unless
+// the state is checking, marks its apply-check job done, as a finished check
+// would.
+func (s *Store) SetApplyState(ctx context.Context, id apply.ID, state apply.State) error {
+	if _, err := s.pool.Exec(ctx, "UPDATE apply_run SET state = $2 WHERE id = $1", id, state); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx,
+		"UPDATE job SET state = 'done' WHERE apply_id = $1 AND kind = 'apply-check' AND $2::text <> 'checking'", id, state)
+	return err
+}
+
+// SetApplyRun stores every column of r but its ID, project, scan and
+// requester on the apply run r.ID, as a check and an apply would.
+func (s *Store) SetApplyRun(ctx context.Context, r apply.Run) error {
+	blockers := make([]string, 0, len(r.Blockers))
+	for _, b := range r.Blockers {
+		blockers = append(blockers, string(b))
+	}
+	_, err := s.pool.Exec(ctx, `
+		UPDATE apply_run SET state = $2, plan_digest = $3, requested_at = $4, checked_at = $5, confirmed_at = $6,
+			started_at = $7, finished_at = $8, allow_irreversible = $9, irreversible_files = $10, blockers = $11,
+			dirty_files = $12, dirty_count = $13, failure_reason = $14, applied = $15, skipped = $16, failed = $17,
+			rescan_id = $18
+		WHERE id = $1`,
+		r.ID, r.State, r.PlanDigest, r.RequestedAt, r.CheckedAt, r.ConfirmedAt, r.StartedAt, r.FinishedAt,
+		r.AllowIrreversible, r.IrreversibleFiles, blockers, r.DirtyFiles, r.DirtyCount, r.FailureReason,
+		r.Applied, r.Skipped, r.Failed, nullID(r.RescanID))
+	return err
+}
+
+// InsertApplyItem stores it as an apply_item of the apply run.
+func (s *Store) InsertApplyItem(ctx context.Context, id apply.ID, it apply.Item) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO apply_item (apply_id, bundle_id, finding_id, file_path, start_line, start_col, line, action,
+			category, kind, name, store_path, store_version, tracked, code_change, status, reason)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+		id, it.BundleID, it.FindingID, it.File, it.StartLine, it.StartCol, it.Line, it.Action,
+		it.Category, it.Kind, it.Name, it.StorePath, it.StoreVersion, it.Tracked, it.CodeChange, it.Status, it.Reason)
+	return err
+}
+
+// MarkApplied records that an apply changed the source for the bundle and
+// stored its value at storePath.
+func (s *Store) MarkApplied(ctx context.Context, id triage.BundleID, storePath string) error {
+	_, err := s.pool.Exec(ctx, "UPDATE bundle SET applied_at = now(), store_path = $2 WHERE id = $1", id, storePath)
+	return err
+}
+
+// JobsOfKind returns the number of jobs of the given kind.
+func (s *Store) JobsOfKind(ctx context.Context, kind string) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, "SELECT count(*) FROM job WHERE kind = $1", kind).Scan(&n)
+	return n, err
+}
+
+// HeldLock is a transaction a test keeps open while it holds a lock.
+type HeldLock struct {
+	tx  pgx.Tx
+	pid int32
+}
+
+// LockProject starts a transaction that locks the project's row in mode,
+// "FOR UPDATE" or "FOR SHARE", and keeps it until Commit.
+func (s *Store) LockProject(ctx context.Context, id project.ID, mode string) (*HeldLock, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	h := &HeldLock{tx: tx}
+	if err := tx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&h.pid); err != nil {
+		return nil, errors.Join(err, tx.Rollback(ctx))
+	}
+	if _, err := tx.Exec(ctx, "SELECT 1 FROM project WHERE id = $1 "+mode, id); err != nil {
+		return nil, errors.Join(err, tx.Rollback(ctx))
+	}
+	return h, nil
+}
+
+// Exec runs a statement of the test in the held transaction.
+func (h *HeldLock) Exec(ctx context.Context, sql string, args ...any) error {
+	_, err := h.tx.Exec(ctx, sql, args...)
+	return err
+}
+
+// Commit ends the held transaction.
+func (h *HeldLock) Commit(ctx context.Context) error {
+	return h.tx.Commit(ctx)
+}
+
+// Blocking reports whether another backend waits for a lock the held
+// transaction has.
+func (h *HeldLock) Blocking(ctx context.Context, s *Store) (bool, error) {
+	var n int
+	err := s.pool.QueryRow(ctx,
+		"SELECT count(*) FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))", h.pid).Scan(&n)
+	return n > 0, err
 }

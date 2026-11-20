@@ -437,7 +437,7 @@ func TestClaimJob_Kinds(t *testing.T) {
 				t.Fatalf("ClaimJob() call 4 error = %v, want ErrNoJob", err)
 			}
 
-			run, err := s.ApplyRun(ctx, applyID)
+			run, err := s.ApplyRunState(ctx, applyID)
 			if err != nil {
 				t.Fatalf("ApplyRun(%d) error = %v", applyID, err)
 			}
@@ -493,7 +493,7 @@ func TestReleaseJob_Apply(t *testing.T) {
 			if jr.State != "queued" || jr.Attempts != 0 || jr.LockedBy != nil || jr.LockedUntil != nil {
 				t.Errorf("ApplyJob(%d) after release = %+v, want queued with 0 attempts and no lease", applyID, jr)
 			}
-			run, err := s.ApplyRun(ctx, applyID)
+			run, err := s.ApplyRunState(ctx, applyID)
 			if err != nil {
 				t.Fatalf("ApplyRun(%d) error = %v", applyID, err)
 			}
