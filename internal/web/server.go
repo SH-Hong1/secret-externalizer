@@ -13,6 +13,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/report"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
@@ -145,6 +146,26 @@ type ReportStore interface {
 	Report(ctx context.Context, id scan.ID) (report.Data, error)
 }
 
+// Converter turns a document into a PDF. Convert fails with an error
+// matching pdf.ErrUnavailable when the converter cannot be reached or is
+// too slow, and pdf.ErrRejected when it does not return a PDF.
+type Converter interface {
+	Convert(ctx context.Context, doc pdf.Document) ([]byte, error)
+}
+
+// Limits bounds the calls one request makes: Store the database and the
+// secret store, PDF one conversion.
+type Limits struct {
+	Store, PDF time.Duration
+}
+
+// printer is what the PDF export needs: the converter and the files every
+// document sends beside its page, made once.
+type printer struct {
+	converter Converter
+	files     []pdf.File
+}
+
 // Stores holds the stores the server reads and writes.
 type Stores struct {
 	Projects ProjectStore
@@ -158,14 +179,18 @@ type Stores struct {
 // NewServer returns the complete handler, including middleware. From the
 // outside in, a request passes panic recovery, the request log, the security
 // headers, and cross-origin protection before it reaches its route. A route
-// that calls the stores or the originals runs under a deadline storeLimit
+// that calls the stores or the originals runs under a deadline limits.Store
 // from the moment it is reached; the session is read before that deadline
-// starts.
-func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore, stores Stores, suggester Suggester, originals Originals, storeLimit time.Duration) http.Handler {
+// starts. The PDF export reads the store under limits.Store and converts
+// under limits.PDF. NewServer panics when the stylesheet names a font the
+// binary does not hold.
+func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore,
+	stores Stores, suggester Suggester, originals Originals, converter Converter, limits Limits,
+) http.Handler {
 	mux := http.NewServeMux()
 	a := loadAssets(staticFiles())
 	rd := newRenderer(a)
-	addRoutes(mux, logger, rd, a, authn, sessions, attempts, stores, suggester, originals, storeLimit)
+	addRoutes(mux, logger, rd, a, authn, sessions, attempts, stores, suggester, originals, printer{converter, printFiles(a)}, limits)
 
 	return chain(mux,
 		recoverPanic(logger, rd),

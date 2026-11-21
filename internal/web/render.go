@@ -157,6 +157,19 @@ func (rd *renderer) fragment(w http.ResponseWriter, r *http.Request, logger *slo
 	rd.write(w, r, logger, status, &buf)
 }
 
+// render returns the template tmpl of the named page drawn with data.
+func (rd *renderer) render(name, tmpl string, data any) ([]byte, error) {
+	t, ok := rd.pages[name]
+	if !ok {
+		return nil, fmt.Errorf("unknown template %q", name)
+	}
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, tmpl, data); err != nil {
+		return nil, fmt.Errorf("rendering template %q of %q: %w", tmpl, name, err)
+	}
+	return buf.Bytes(), nil
+}
+
 // fail renders the error page for status with the text errorMessage gives
 // it. A 401 page links to the login.
 func (rd *renderer) fail(w http.ResponseWriter, r *http.Request, logger *slog.Logger, status int, err error) {

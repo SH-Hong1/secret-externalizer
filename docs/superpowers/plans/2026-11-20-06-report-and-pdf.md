@@ -22,7 +22,7 @@
 6. **[권고안으로 확정] 요약의 숫자는 일곱 개다.** 찾은 항목, 외부화 완료, 삭제·마스킹 완료, 오탐, 보류, 미판정, 적용 대기(판정이 외부화나 삭제·마스킹인데 이 스캔이 아직 찾는 것). 찾은 항목 = 오탐 + 보류 + 미판정 + 적용 대기다. 증감은 같은 계산을 바로 앞의 성공한 스캔에 한 값과의 차이다(판정은 둘 다 지금의 것). 앞의 성공한 스캔이 없으면 증감을 보이지 않는다. 설계의 "탐지, 외부화, 삭제, 오탐, 보류"에 미판정과 적용 대기를 더한 것이다. 둘이 없으면 숫자의 합이 맞지 않는다.
 7. **[권고안으로 확정] 찾은 묶음은 세 절 가운데 정확히 한 곳에 실린다.** 오탐이면 6절. 오탐이 아니고, 비밀 값 묶음의 구성원이 JSP·JS·HTML 파일에 있거나 보류 사유가 "구조 변경 필요"면 4절. 고객정보는 프론트엔드 파일에 있어도 삭제·마스킹할 수 있으므로(`triage.Bundle.Allowed`) 파일 종류로는 4절에 가지 않는다(판정 화면의 안내 "리포트의 구조 변경이 필요한 항목에 실립니다"와 같다). 나머지(미판정, 다른 사유의 보류, 적용 대기)는 5절이고, 그래서 5절의 제목은 설계의 "남은 미판정 항목"이 아니라 "남은 항목"이다. 줄마다 상태를 보인다: 미판정, 보류와 사유, "적용 전", "적용됨 · 다시 발견"(이 스캔 전에 적용했는데 이 스캔이 또 찾음), "이후 적용됨"(이 스캔 뒤의 실행이 바꿈. 마지막 스캔에서는 확인 스캔이 실패했거나 아직 돌지 않았을 때만 나온다).
 8. **[권고안으로 확정] 고객정보는 어느 절에서든 파일, 종류, 판정, 보류 사유, 사유 글이 같은 것끼리 한 줄로 묶어 건수를 보인다.** 설계의 "종류별 건수와 파일"이다. 비밀 값은 묶음마다 한 줄이고 첫 파일과 줄, 파일 수, 위치 수를 보인다. 외부화한 항목(2절)은 소스에 쓰인 이름(`${ext.…}`, `${EXT_…}`)마다 한 줄이고 바뀐 자리(파일과 적용 뒤의 줄, 또는 "파일 제거")를 모두 적는다.
-9. **[권고안으로 확정] 절마다 1,000줄까지만 싣고 "외 N줄"을 적는다. 외부화한 항목 하나의 자리는 50곳까지다.** 건수는 언제나 전체를 센다. 로그 파일이 수천 개인 프로젝트에서도 화면이 5초 안에 그려지고 PDF가 제한 시간 안에 만들어지게 하려는 것이다. 판정 이력은 한 번의 판정 요청이 여러 묶음에 남긴 기록(같은 시각, 같은 사람, 같은 내용)을 한 줄로 합쳐 새것부터 1,000줄이다. 원본 보기 기록은 싣지 않는다(판정 이력이 아니고, 감사 로그는 `admin`의 화면이다).
+9. **[권고안으로 확정, 구현 중 100줄로 줄임] 절마다 100줄까지만 싣고 "외 N줄"을 적는다. 외부화한 항목 하나의 자리는 50곳까지다.** 건수는 언제나 전체를 센다. 로그 파일이 수천 개인 프로젝트에서도 화면이 5초 안에 그려지고 PDF가 제한 시간 안에 만들어지게 하려는 것이다. 판정 이력은 한 번의 판정 요청이 여러 묶음에 남긴 기록(같은 시각, 같은 사람, 같은 내용)을 한 줄로 합쳐 새것부터 100줄이다. 처음 권고는 1,000줄이었으나 Task 5에서 모든 한도까지 채운 리포트를 변환기가 인쇄하지 못해 100줄로 줄였다(`docs/decisions/0042-what-a-scan-report-shows.md`). 원본 보기 기록은 싣지 않는다(판정 이력이 아니고, 감사 로그는 `admin`의 화면이다).
 10. **[권고안으로 확정] 주소는 `GET /scans/{id}/report`와 `GET /scans/{id}/report.pdf`이고, `user`와 `admin` 모두 볼 수 있다.** 내용이 역할에 따라 다르지 않다. 성공하지 않은 스캔의 리포트 주소는 스캔 화면으로 돌려보낸다(303). 스캔 화면, 프로젝트 화면의 스캔 목록, 적용 결과 화면의 확인 스캔 옆에 리포트 링크를 둔다. PDF 내보내기는 상태를 바꾸지 않으므로 `GET`이고 감사 로그에 남기지 않는다.
 11. **[권고안으로 확정] PDF 변환기는 Gotenberg이고(결정 기록 0006), HTML에 자원을 끼워 넣지 않고 한 요청의 multipart 파일로 함께 보낸다.** 보내는 파일은 `index.html`, `footer.html`, `app.css`(글꼴 주소를 같은 폴더의 파일 이름으로 바꾼 것), woff2 다섯 개다. 설계의 "글꼴, 스타일을 모두 포함한 상태로 보낸다"를 요청 단위로 지킨다. 다른 안: CSS와 글꼴을 `data:` 주소로 HTML에 넣는다. HTML이 6MB가 되고 `template.CSS`로 변환해야 한다. 설계 8절의 [제안] "한글 글꼴은 pdf 이미지에 넣는다"와 다르다. 이미지를 따로 빌드하지 않고 화면과 같은 글꼴 파일을 쓰려는 것이고, 결정 기록 0043에 적는다. 차트는 이 계획에 없다(요약은 숫자와 `meter` 막대다). 차트 라이브러리는 계획 7이 고른다.
 12. **[권고안으로 확정] pdf 컨테이너는 받은 파일만 읽는다.** compose에 `internal: true`인 네트워크 `pdf`를 만들어 `pdf` 서비스는 거기에만 두고, web은 기본 네트워크와 `pdf` 둘 다에 붙인다. 호스트 포트는 열지 않는다. Gotenberg는 Chromium 경로만 켜고 JavaScript를 끄고, Chromium이 열 수 있는 주소를 자기 작업 폴더의 `file://`로 좁히고, webhook과 "주소에서 내려받기"를 끈다. 이미지는 digest로 고정한다. `docs/next-steps.md`의 "compose의 모든 서비스가 한 네트워크를 쓴다"는 pdf만 나누고 나머지는 그대로 남긴다.
@@ -71,7 +71,7 @@
 
 ## Review Focus
 
-1. 큰 프로젝트: 고객정보 묶음이 수만 개, 로그 파일이 수천 개여도 건수는 전체를 세고 목록은 1,000줄에서 잘리며 "외 N줄"이 맞다. (Task 1 `TestBuild_Caps`, Task 2 `TestReport_CustomerDataGrouped`, `TestReport_Events`)
+1. 큰 프로젝트: 고객정보 묶음이 수만 개, 로그 파일이 수천 개여도 건수는 전체를 세고 목록은 100줄에서 잘리며 "외 N줄"이 맞다. (Task 1 `TestBuild_Caps`, Task 2 `TestReport_CustomerDataGrouped`, `TestReport_Events`)
 2. 변환기의 실패: pdf 컨테이너가 없거나, 답이 늦거나, PDF가 아닌 것을 돌려주거나, 한도보다 큰 것을 돌려줘도 사용자는 반쯤 내려받은 파일이 아니라 안내 화면을 보고, web은 멈추지 않는다. (Task 4 `TestConvert_Errors`, Task 5 `TestHandleReportPDF_ConverterDown`, `TestHandleReportPDF_Deadline`)
 3. 이름과 사유에 든 글자: 파일 이름과 사유에 HTML, 스크립트, 아주 긴 줄, 줄바꿈 없는 긴 경로가 있어도 이스케이프되고 표가 쪽 밖으로 나가지 않는다. PDF 문서에서도 같다. (Task 3 `TestHandleReport_Escapes`, Task 5 `TestHandleReportPDF_Document`, Task 6의 6번)
 4. 비어 있거나 오래된 스캔: 아무것도 찾지 못한 스캔, 앞의 성공한 스캔이 없는 첫 스캔, 적용이 한 번도 없던 프로젝트, 이후 스캔이 있는 지난 스캔, 성공하지 않은 스캔에서 각 절이 "없습니다"를 말하거나 돌려보낸다. (Task 1 `TestBuild_Empty`, `TestBuild_Delta`, Task 3 `TestHandleReport_Redirects`, `TestHandleReport_OlderScan`)
@@ -114,7 +114,7 @@
   package report
 
   const (
-  	MaxRows   = 1000 // the most lines a section lists
+  	MaxRows   = 100  // the most lines a section lists
   	MaxPlaces = 50   // the most places an externalized entry lists
   )
 
@@ -280,7 +280,7 @@
   - `TestBuild_Partition`: 표 형태. 오탐(프론트엔드 파일 포함)은 `FalsePositives`, 미판정 프론트엔드와 "구조 변경 필요" 보류는 `Structure`, `.jsp`의 고객정보 줄(`Frontend` false, 삭제·마스킹 판정)은 `Remaining`, `HoldLater` 보류와 미판정과 외부화 판정(적용 전)은 `Remaining`에만 있다. 세 목록의 `Total` 합이 줄 수와 같다.
   - `TestBuild_Externalized`: 묶음 하나의 `ext.db.main.password`(`a.yml` 14줄, `b.xml` 31줄)와 `EXT_DB_MAIN_PASSWORD`(`deploy.sh` 3줄)는 항목 둘이고 자리가 파일과 줄 순이다. `remove-file` 항목은 `Removed`가 true이고 `Line`이 0이다. `.java` 자리 하나가 `CodeChange`면 항목도 그렇다. 그 묶음의 줄이 `AppliedBefore`면 `Reappeared`다.
   - `TestBuild_RedactedKinds`: `card` 2개 파일, `phone` 1개 파일을 주면 `RedactedKinds`가 `phone`, `card` 순이고 건수와 파일 수가 맞다.
-  - `TestBuild_Caps`: 줄 `MaxRows+5`개는 `Rows` 1,000개, `Total` 1,005, `More()` 5다. 자리 `MaxPlaces+3`곳인 항목은 `Places` 50곳, `PlaceTotal` 53이다. `EventTotal`이 2,400이고 `Events`가 1,000개면 `History.More()`는 1,400이다.
+  - `TestBuild_Caps`: 줄 `MaxRows+5`개는 `Rows` `MaxRows`개, `Total` `MaxRows`+5, `More()` 5다. 자리 `MaxPlaces+3`곳인 항목은 `Places` 50곳, `PlaceTotal` 53이다. `EventTotal`이 `MaxRows`+1,400이고 `Events`가 `MaxRows`개면 `History.More()`는 1,400이다.
   - `TestBuild_Delta`: `Previous`가 0이면 `Delta`는 영이다. 있으면 필드마다 차이이고 음수도 나온다.
   - `TestBuild_Empty`: 영 값 `Data`는 패닉 없이 모든 목록의 `Total`이 0이다.
   - `TestBuild_KeepsNoInput`: `Build` 뒤에 `Data`의 `Lines`, `Changes`, `Events`와 `Detail` 맵을 고쳐도 `Report`가 바뀌지 않는다.
@@ -376,7 +376,7 @@
   - `5. 남은 항목`: 같은 열. 상태는 `미판정`, `보류 · <사유>`, `외부화 판정 · 적용 전`, `삭제·마스킹 판정 · 적용 전`, `적용됨 · 다시 발견`, `이후 적용됨`. 없으면 "남은 항목이 없습니다."
   - `6. 오탐으로 판정한 항목`: 분류, 종류, 첫 파일과 줄, 수, 사유 글, 판정 시각. 없으면 "오탐으로 판정한 항목이 없습니다."
   - `7. 판정 이력`: 시각(UTC), 사람, 한 일(감사 화면의 표기를 따른다: `판정 · 외부화`, `판정 취소`, `묶음 옮기기`, `적용 #N`), 대상(종류와 파일, 묶인 기록이 둘 이상이면 "N건"), 이름·보류 사유·사유 글. 없으면 "판정 이력이 없습니다."
-  - 잘린 목록의 끝: "처음 1000줄만 싣습니다. 외 N줄."
+  - 잘린 목록의 끝: "처음 100줄만 싣습니다. 외 N줄."
   - 분류, 종류, 판정, 보류 사유의 표기는 지금의 `categoryLabel`, `kindLabel`, `verdictOf`, `reasonLabel`을 쓴다. 시각은 `formatTime`이다.
 - 리포트 링크: 성공한 스캔의 스캔 화면 머리에 "리포트" 버튼(`btn btn-secondary`), 프로젝트 화면 스캔 목록의 성공한 줄에 "리포트" 링크, 적용 결과 화면의 확인 스캔이 성공했으면 그 옆에 "리포트" 링크.
 
@@ -389,7 +389,7 @@
   - `TestHandleReport_OlderScan`: `Latest`가 9이고 스캔이 7이면 "이후 스캔이 있습니다"와 `href="/scans/9/report"`가 있고, 같으면 없다.
   - `TestHandleReport_NoPrevious`: `Previous`가 0이면 "이전 스캔 없음"이 있고 증감 숫자가 없다.
   - `TestHandleReport_Empty`: 줄이 하나도 없는 자료는 여섯 개의 "…없습니다" 문구를 모두 보인다.
-  - `TestHandleReport_Capped`: `Remaining`이 1,005줄이면 "처음 1000줄만 싣습니다. 외 5줄."이 있다.
+  - `TestHandleReport_Capped`: `Remaining`이 `MaxRows`+5줄이면 "처음 100줄만 싣습니다. 외 5줄."이 있다.
   - `TestHandleReport_Escapes`: 파일 이름 `<img src=x onerror=alert(1)>.yml`과 사유 `</td><script>alert(1)</script>`가 이스케이프되어 나오고 `<script>alert`와 `<img src=x`가 본문에 없다.
   - `TestHandleReport_NoPreview`: 본문에 `****`가 없다.
   - `TestHandleReport_StoreError`: 저장소 오류는 500 화면이고 오류의 글이 본문에 없다.
@@ -524,7 +524,7 @@ PR 1을 만들고, 전체 검토를 거쳐 병합한다.
 - CSS: `body.print`와 `@media print`에서 바탕을 흰색으로, 본문 폭을 쪽에 맞추고, 표의 줄과 카드가 쪽 사이에서 잘리지 않게(`break-inside: avoid`) 하고, 절 제목이 쪽 끝에 홀로 남지 않게(`break-after: avoid`) 한다. 링크는 밑줄 없는 본문 색이다.
 - 리포트 화면의 `reportPage.PDF`를 `/scans/<id>/report.pdf`로 채워 머리에 "PDF로 내보내기" 버튼(`btn btn-primary`, 일반 링크)을 보인다.
 
-- [ ] **Step 1: 실패하는 테스트를 쓴다** (`fakes_test.go`에 받은 `Document`를 기억하는 `fakeConverter`를 더한다).
+- [x] **Step 1: 실패하는 테스트를 쓴다** (`fakes_test.go`에 받은 `Document`를 기억하는 `fakeConverter`를 더한다).
   - `TestHandleReportPDF_OK`: 200, `Content-Type: application/pdf`, `Content-Disposition: attachment; filename="report-project-3-scan-7.pdf"`, 본문은 가짜 변환기가 준 바이트 그대로다.
   - `TestHandleReportPDF_Document`: 변환기가 받은 `Index`에 일곱 절의 제목과 `href="app.css"`가 있고, `/static/`, `<script`, `<form`, `<nav`, `****`가 없다. `Footer`에 `scan #7`, `pageNumber`, `totalPages`가 있다. `Files`는 `app.css`와 woff2 다섯 개이고 `app.css`에 `url(fonts/`가 없다. 파일 이름 `<img src=x onerror=alert(1)>.yml`이 `Index`에 이스케이프되어 있다.
   - `TestHandleReportPDF_SameAsPage`: 같은 자료로 그린 리포트 화면과 `Index`에서 `<article id="report">`부터 `</article>`까지가 같다.
@@ -535,10 +535,10 @@ PR 1을 만들고, 전체 검토를 거쳐 병합한다.
   - `TestHandleReport_PDFButton`: 리포트 화면에 `href="/scans/7/report.pdf"`와 "PDF로 내보내기"가 있다.
   - `TestPrintFiles`(internal): 글꼴 다섯 개와 `app.css`를 돌려주고, 스타일시트가 없는 글꼴을 가리키면 패닉한다.
   - `cmd/web`: `PDF_URL`이 없으면 빠진 변수 목록에 나오고, `pdf:3000` 같은 값은 `checking PDF_URL` 오류다. `config`의 `String`에 `pdf_url`이 있다.
-- [ ] **Step 2:** `go test ./internal/web/ ./cmd/web/` 가 실패하는 것을 본다.
-- [ ] **Step 3:** `Limits`, `Converter`, `printFiles`, `render`, handler, 템플릿, CSS, `cmd/web`을 쓴다. `NewServer`를 부르는 모든 테스트를 새 서명에 맞춘다. `make css`.
-- [ ] **Step 4:** `make check`가 통과한다.
-- [ ] **Step 5:** `CHANGELOG.md`에 줄을 더하고 커밋한다(`feat(web): export the report of a scan as a PDF`).
+- [x] **Step 2:** `go test ./internal/web/ ./cmd/web/` 가 실패하는 것을 본다.
+- [x] **Step 3:** `Limits`, `Converter`, `printFiles`, `render`, handler, 템플릿, CSS, `cmd/web`을 쓴다. `NewServer`를 부르는 모든 테스트를 새 서명에 맞춘다. `make css`.
+- [x] **Step 4:** `make check`가 통과한다.
+- [x] **Step 5:** `CHANGELOG.md`에 줄을 더하고 커밋한다(`feat(web): export the report of a scan as a PDF`).
 
 ### Task 6: 실제 확인과 문서
 
@@ -566,7 +566,7 @@ PR 1을 만들고, 전체 검토를 거쳐 병합한다.
 
 - [ ] **Step 3:** 확인에서 나온 결함은 실패하는 테스트를 먼저 쓰고 고친다. 고치지 않고 넘기는 것은 `docs/next-steps.md`에 적는다.
 - [ ] **Step 4:** 결정 기록 0044를 쓴다(0041의 형식: 정한 것, 이유, 틀렸을 때). 검토 항목 16개를 권고안으로 확정한 것과 구현하면서 바꾼 것을 모은다.
-- [ ] **Step 5:** `docs/next-steps.md`를 고친다. 표의 계획 6을 완료로 바꾸고, "지금 상태" 줄을 계획 7로 옮기고, "계획 6에서 남은 일" 절에 넘긴 것을 적는다(적어도: 리포트는 저장되지 않아 지난 스캔의 판정을 그때의 것으로 볼 수 없다, 절마다 1,000줄 한도, 바닥글에 프로젝트 이름이 없다, PDF 변환의 동시 요청 한도가 없다, pdf 말고는 네트워크가 나뉘지 않았다, 계획 7이 추이를 그리려면 스캔별 건수의 스냅숏이 필요한지 정해야 한다). `CHANGELOG.md`를 마무리한다.
+- [ ] **Step 5:** `docs/next-steps.md`를 고친다. 표의 계획 6을 완료로 바꾸고, "지금 상태" 줄을 계획 7로 옮기고, "계획 6에서 남은 일" 절에 넘긴 것을 적는다(적어도: 리포트는 저장되지 않아 지난 스캔의 판정을 그때의 것으로 볼 수 없다, 절마다 100줄 한도, 바닥글에 프로젝트 이름이 없다, PDF 변환의 동시 요청 한도가 없다, pdf 말고는 네트워크가 나뉘지 않았다, 계획 7이 추이를 그리려면 스캔별 건수의 스냅숏이 필요한지 정해야 한다). `CHANGELOG.md`를 마무리한다.
 - [ ] **Step 6:** `make check`와 `make test-integration`이 통과한 뒤 커밋한다(`docs: close plan 6`).
 
 PR 2를 만들고, 전체 검토를 거쳐 병합한다.

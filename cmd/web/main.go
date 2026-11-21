@@ -20,6 +20,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
 	"github.com/SH-Hong1/secret-externalizer/internal/web"
 )
@@ -117,10 +118,27 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 		return fmt.Errorf("preparing openbao client: %w", err)
 	}
 
+	// pdf.New does not contact the converter either, so web starts while
+	// it is down, and only the PDF export says that it cannot be reached.
+	converter, err := pdf.New(cfg.pdfURL, &http.Client{Timeout: pdfClientLimit})
+	if err != nil {
+		return fmt.Errorf("preparing pdf client: %w", err)
+	}
+
 	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store,
 		web.Stores{Projects: database, Scans: database, Triage: database, Audits: database, Applies: database, Reports: database},
-		web.NewHistorySuggester(database), originals, databaseLimit))
+		web.NewHistorySuggester(database), originals, converter, web.Limits{Store: databaseLimit, PDF: pdfLimit}))
 }
+
+// pdfLimit bounds one conversion of a report to a PDF. With databaseLimit
+// for reading the report it stays inside the server's WriteTimeout, and it
+// is longer than the converter's own limit, so the converter's answer to a
+// slow page normally arrives first. pdfClientLimit is the client's own
+// bound, a little longer, for a call made without a deadline.
+const (
+	pdfLimit       = 20 * time.Second
+	pdfClientLimit = 25 * time.Second
+)
 
 // databaseLimit bounds the database and secret store calls of one request,
 // so that a page shows the error page instead of hanging when postgres or

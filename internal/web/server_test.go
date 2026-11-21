@@ -22,7 +22,7 @@ func newTestServer(t *testing.T, logOut io.Writer) *httptest.Server {
 	tr := newFakeTriage()
 	srv := httptest.NewServer(web.NewServer(logger, &fakeAuthenticator{}, newFakeSessions(), newFakeAttempts(),
 		web.Stores{Projects: newFakeProjects(), Scans: newFakeScans(), Triage: tr, Audits: &fakeAudit{log: &callLog{}}, Applies: newFakeApplies()},
-		web.NewHistorySuggester(tr), &fakeOriginals{log: &callLog{}}, time.Minute))
+		web.NewHistorySuggester(tr), &fakeOriginals{log: &callLog{}}, &fakeConverter{}, web.Limits{Store: time.Minute, PDF: time.Minute}))
 	t.Cleanup(srv.Close)
 	return srv
 }
@@ -161,6 +161,7 @@ func TestStoreCallsHaveTimeLimit(t *testing.T) {
 		{http.MethodPost, "/projects/1/scans", ""},
 		{http.MethodGet, "/scans/1", ""},
 		{http.MethodGet, "/scans/1/report", ""},
+		{http.MethodGet, "/scans/1/report.pdf", ""},
 		{http.MethodGet, "/projects/1/triage", ""},
 		{http.MethodPost, "/projects/1/bundles/1/verdict", "verdict=false-positive"},
 		{http.MethodPost, "/projects/1/customer-data/verdict", "kind=phone&file=a.log&verdict=redact"},
@@ -188,7 +189,7 @@ func TestStoreCallsHaveTimeLimit(t *testing.T) {
 				store := &blockingStore{}
 				h := web.NewServer(logger, &fakeAuthenticator{}, sessions, newFakeAttempts(),
 					web.Stores{Projects: store, Scans: store, Triage: store, Audits: store, Applies: store, Reports: store},
-					web.NewHistorySuggester(store), store, limit)
+					web.NewHistorySuggester(store), store, &fakeConverter{}, web.Limits{Store: limit, PDF: limit})
 
 				req := httptest.NewRequestWithContext(t.Context(), tt.method, tt.target, strings.NewReader(tt.body))
 				req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

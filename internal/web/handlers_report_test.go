@@ -2,18 +2,27 @@ package web_test
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
+	"regexp"
+	"slices"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
+
+	"github.com/google/go-cmp/cmp"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/report"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
+	"github.com/SH-Hong1/secret-externalizer/internal/web"
 )
 
 // reportSections are the titles of the seven sections of a report.
@@ -230,7 +239,7 @@ func TestHandleReport_Empty(t *testing.T) {
 func TestHandleReport_Capped(t *testing.T) {
 	e := newTestEnv(t)
 	d := emptyReport()
-	for i := range 1005 {
+	for i := range report.MaxRows + 5 {
 		d.Lines = append(d.Lines, report.Line{
 			Bundle: triage.BundleID(i + 1), Category: finding.CategoryOther, Kind: finding.KindToken,
 			File: "conf/a.properties", FirstLine: i + 1, Files: 1, Bundles: 1, Locations: 1,
@@ -238,7 +247,7 @@ func TestHandleReport_Capped(t *testing.T) {
 	}
 	e.reports.put(d)
 	res := e.getReport(t)
-	wantIn(t, "GET /scans/7/report with 1005 remaining lines", res.body, "처음 1000줄만 싣습니다. 외 5줄.")
+	wantIn(t, "GET /scans/7/report with MaxRows+5 remaining lines", res.body, "처음 100줄만 싣습니다. 외 5줄.")
 }
 
 func TestHandleReport_Escapes(t *testing.T) {
@@ -275,4 +284,216 @@ func TestHandleReport_StoreError(t *testing.T) {
 		t.Errorf("GET /scans/7/report with a failing store status = %d, want 500", res.status)
 	}
 	wantNotIn(t, "GET /scans/7/report with a failing store", res.body, "fake report store failure")
+}
+
+// getReportPDF asks for the PDF of the report of scan 7 as a signed-in user.
+func (e *testEnv) getReportPDF(t *testing.T) result {
+	t.Helper()
+	return e.do(t, http.MethodGet, "/scans/7/report.pdf", nil, e.user(t))
+}
+
+// lastDocument returns the document the converter was given last.
+func (e *testEnv) lastDocument(t *testing.T) pdf.Document {
+	t.Helper()
+	docs, _ := e.converter.calls()
+	if len(docs) == 0 {
+		t.Fatal("the converter was not called")
+	}
+	return docs[len(docs)-1]
+}
+
+// wantNoConversion fails the test when the converter was called.
+func (e *testEnv) wantNoConversion(t *testing.T, what string) {
+	t.Helper()
+	if docs, _ := e.converter.calls(); len(docs) != 0 {
+		t.Errorf("%s called the converter %d times, want none", what, len(docs))
+	}
+}
+
+// reportArticle returns the report block in page, from its opening tag to
+// its closing tag, with the time it was made left out: two requests may fall
+// in different seconds.
+func reportArticle(t *testing.T, what, page string) string {
+	t.Helper()
+	start := strings.Index(page, `<article id="report"`)
+	end := strings.Index(page, "</article>")
+	if start < 0 || end < start {
+		t.Fatalf("%s has no report article", what)
+	}
+	return generatedAt.ReplaceAllString(page[start:end+len("</article>")], "")
+}
+
+var generatedAt = regexp.MustCompile(`<dt>만든 시각</dt><dd class="mono">[^<]*</dd>`)
+
+func TestHandleReportPDF_OK(t *testing.T) {
+	e := newTestEnv(t)
+	e.reports.put(fullReport())
+	res := e.getReportPDF(t)
+	if res.status != http.StatusOK {
+		t.Fatalf("GET /scans/7/report.pdf status = %d, want 200; body:\n%s", res.status, res.body)
+	}
+	if got := res.header.Get("Content-Type"); got != "application/pdf" {
+		t.Errorf("GET /scans/7/report.pdf Content-Type = %q, want application/pdf", got)
+	}
+	if got, want := res.header.Get("Content-Disposition"), `attachment; filename="report-project-3-scan-7.pdf"`; got != want {
+		t.Errorf("GET /scans/7/report.pdf Content-Disposition = %q, want %q", got, want)
+	}
+	if got, want := res.header.Get("Content-Length"), strconv.Itoa(len(e.converter.out)); got != want {
+		t.Errorf("GET /scans/7/report.pdf Content-Length = %q, want %q", got, want)
+	}
+	if res.body != string(e.converter.out) {
+		t.Errorf("GET /scans/7/report.pdf body = %q, want the converter's %q", res.body, e.converter.out)
+	}
+}
+
+func TestHandleReportPDF_Document(t *testing.T) {
+	const file = "<img src=x onerror=alert(1)>.yml"
+	e := newTestEnv(t)
+	d := fullReport()
+	d.Lines[1].File = file
+	e.reports.put(d)
+	if res := e.getReportPDF(t); res.status != http.StatusOK {
+		t.Fatalf("GET /scans/7/report.pdf status = %d, want 200; body:\n%s", res.status, res.body)
+	}
+	doc := e.lastDocument(t)
+	index, footer := string(doc.Index), string(doc.Footer)
+
+	wantIn(t, "the PDF page", index, reportSections...)
+	wantIn(t, "the PDF page", index, `href="app.css"`, `<body class="print">`, `lang="ko"`, "&lt;img src=x onerror=alert(1)&gt;.yml")
+	wantNotIn(t, "the PDF page", index, "/static/", "<script", "<form", "<nav", "****", "<img src=x", "PDF로 내보내기")
+	wantIn(t, "the PDF footer", footer, "scan #7", `class="pageNumber"`, `class="totalPages"`)
+	for i, r := range footer {
+		if r > 0x7f {
+			t.Errorf("the PDF footer has the non-ASCII %q at byte %d, want ASCII only", r, i)
+			break
+		}
+	}
+
+	var names []string
+	for _, f := range doc.Files {
+		names = append(names, f.Name)
+		if f.Name == "app.css" && strings.Contains(string(f.Data), "url(fonts/") {
+			t.Errorf("the PDF's app.css still names url(fonts/...), want bare file names")
+		}
+	}
+	want := []string{
+		"app.css",
+		"D2Coding-1.4.0-Bold.woff2", "D2Coding-1.4.0-Regular.woff2",
+		"IBMPlexSansKR-1.1.0-Bold.woff2", "IBMPlexSansKR-1.1.0-Regular.woff2", "IBMPlexSansKR-1.1.0-SemiBold.woff2",
+	}
+	slices.Sort(names)
+	slices.Sort(want)
+	if diff := cmp.Diff(want, names); diff != "" {
+		t.Errorf("the PDF's files mismatch (-want +got):\n%s", diff)
+	}
+}
+
+func TestHandleReportPDF_SameAsPage(t *testing.T) {
+	e := newTestEnv(t)
+	e.reports.put(fullReport())
+	page := e.getReport(t)
+	if res := e.getReportPDF(t); res.status != http.StatusOK {
+		t.Fatalf("GET /scans/7/report.pdf status = %d, want 200; body:\n%s", res.status, res.body)
+	}
+	want := reportArticle(t, "GET /scans/7/report", page.body)
+	got := reportArticle(t, "the PDF page", string(e.lastDocument(t).Index))
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("the PDF page's report differs from the screen's (-screen +pdf):\n%s", diff)
+	}
+}
+
+func TestHandleReportPDF_ConverterDown(t *testing.T) {
+	e := newTestEnv(t)
+	e.reports.put(fullReport())
+	e.converter.err = fmt.Errorf("%w: dial tcp pdf.invalid:3000", pdf.ErrUnavailable)
+	res := e.getReportPDF(t)
+	if res.status != http.StatusServiceUnavailable {
+		t.Errorf("GET /scans/7/report.pdf with the converter down status = %d, want 503", res.status)
+	}
+	if got := res.header.Get("Content-Type"); !strings.HasPrefix(got, "text/html") {
+		t.Errorf("GET /scans/7/report.pdf with the converter down Content-Type = %q, want text/html", got)
+	}
+	if got := res.header.Get("Content-Disposition"); got != "" {
+		t.Errorf("GET /scans/7/report.pdf with the converter down Content-Disposition = %q, want none", got)
+	}
+	wantIn(t, "GET /scans/7/report.pdf with the converter down", res.body, "PDF 변환 서비스에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요.")
+	wantNotIn(t, "GET /scans/7/report.pdf with the converter down", res.body, "pdf.invalid")
+	if n := strings.Count(e.log.String(), `"msg":"request failed"`); n != 1 {
+		t.Errorf("GET /scans/7/report.pdf with the converter down logged %d failures, want 1; log:\n%s", n, e.log)
+	}
+}
+
+func TestHandleReportPDF_Rejected(t *testing.T) {
+	e := newTestEnv(t)
+	e.reports.put(fullReport())
+	e.converter.err = fmt.Errorf("%w: status 400", pdf.ErrRejected)
+	res := e.getReportPDF(t)
+	if res.status != http.StatusInternalServerError {
+		t.Errorf("GET /scans/7/report.pdf with a rejected document status = %d, want 500", res.status)
+	}
+	if got := res.header.Get("Content-Disposition"); got != "" {
+		t.Errorf("GET /scans/7/report.pdf with a rejected document Content-Disposition = %q, want none", got)
+	}
+	wantIn(t, "GET /scans/7/report.pdf with a rejected document", res.body,
+		"PDF를 만들지 못했습니다. 리포트가 너무 커서 변환기가 인쇄하지 못했을 수 있습니다.")
+}
+
+func TestHandleReportPDF_Deadline(t *testing.T) {
+	e := newTestEnvWith(t, web.Limits{Store: time.Minute, PDF: 50 * time.Millisecond}, nil)
+	e.reports.put(fullReport())
+	e.converter.wait = true
+	res := e.getReportPDF(t)
+	if res.status != http.StatusServiceUnavailable {
+		t.Errorf("GET /scans/7/report.pdf with a converter that does not answer status = %d, want 503", res.status)
+	}
+	wantIn(t, "GET /scans/7/report.pdf with a converter that does not answer", res.body, "PDF 변환 서비스에 연결할 수 없습니다.")
+	if _, deadlines := e.converter.calls(); len(deadlines) != 1 || !deadlines[0] {
+		t.Errorf("the converter's contexts had deadlines %v, want one call with a deadline", deadlines)
+	}
+}
+
+func TestHandleReportPDF_Redirects(t *testing.T) {
+	for _, status := range []scan.Status{scan.StatusQueued, scan.StatusRunning, scan.StatusFailed} {
+		t.Run(string(status), func(t *testing.T) {
+			e := newTestEnv(t)
+			d := emptyReport()
+			d.Scan.Status = status
+			e.reports.put(d)
+			res := e.getReportPDF(t)
+			if res.status != http.StatusSeeOther || res.location() != "/scans/7" {
+				t.Errorf("GET /scans/7/report.pdf of a %s scan = %d to %q, want 303 to /scans/7", status, res.status, res.location())
+			}
+			e.wantNoConversion(t, "GET /scans/7/report.pdf of a "+string(status)+" scan")
+		})
+	}
+}
+
+func TestHandleReportPDF_NotFound(t *testing.T) {
+	e := newTestEnv(t)
+	for _, target := range []string{"/scans/9/report.pdf", "/scans/x/report.pdf", "/scans/0/report.pdf"} {
+		if res := e.do(t, http.MethodGet, target, nil, e.user(t)); res.status != http.StatusNotFound {
+			t.Errorf("GET %s status = %d, want 404", target, res.status)
+		}
+	}
+	e.wantNoConversion(t, "GET of an unknown scan's PDF")
+}
+
+func TestHandleReportPDF_RequiresLogin(t *testing.T) {
+	e := newTestEnv(t)
+	e.reports.put(emptyReport())
+	res := e.do(t, http.MethodGet, "/scans/7/report.pdf", nil)
+	if res.status != http.StatusSeeOther {
+		t.Errorf("GET /scans/7/report.pdf without a session status = %d, want 303", res.status)
+	}
+	e.wantNoConversion(t, "GET /scans/7/report.pdf without a session")
+	if res := e.getReportPDF(t); res.status != http.StatusOK {
+		t.Errorf("GET /scans/7/report.pdf as a user status = %d, want 200", res.status)
+	}
+}
+
+func TestHandleReport_PDFButton(t *testing.T) {
+	e := newTestEnv(t)
+	e.reports.put(fullReport())
+	res := e.getReport(t)
+	wantIn(t, "GET /scans/7/report", res.body, `href="/scans/7/report.pdf"`, "PDF로 내보내기")
 }

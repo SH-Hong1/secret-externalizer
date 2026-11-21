@@ -134,6 +134,11 @@ func TestLayoutNavigation_ErrorPageKeepsMenu(t *testing.T) {
 // event handler attribute.
 var inlineCode = regexp.MustCompile(`(?is)<script\b[^>]*>\s*[^<\s]|\sstyle\s*=|<style\b|\son[a-z]+\s*=`)
 
+// footerStyle matches the style element of the PDF footer. The converter
+// draws the footer apart from the page and reads no stylesheet for it, and
+// the footer is never served, so the CSP does not apply to it.
+var footerStyle = regexp.MustCompile(`(?s)(\{\{define "print-footer"\}\}.*?)<style>[^<]*</style>`)
+
 func TestNoInlineScriptOrStyle(t *testing.T) {
 	templates := os.DirFS("templates")
 	files, err := fs.Glob(templates, "*.html")
@@ -145,6 +150,7 @@ func TestNoInlineScriptOrStyle(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ReadFile(%q) error = %v", file, err)
 		}
+		b = footerStyle.ReplaceAll(b, []byte("$1"))
 		if m := inlineCode.Find(b); m != nil {
 			t.Errorf("%s contains %q, want no inline script, style or event handler", file, m)
 		}
