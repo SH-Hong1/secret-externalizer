@@ -1,6 +1,6 @@
 # 로컬에서 띄우기
 
-`compose.yaml`은 postgres, valkey, Keycloak, OpenBao, web, worker를 한 번에 띄워 Keycloak으로 로그인해 볼 수 있게 한다. 이 파일과 `deploy/` 아래의 비밀번호와 시크릿은 모두 `dev-only-…` 형태의 가짜 값이며 로컬 개발에만 쓴다. 공유하거나 배포하는 환경에 그대로 쓰지 않는다.
+`compose.yaml`은 postgres, valkey, Keycloak, OpenBao, web, worker, PDF 변환기(`pdf`)를 한 번에 띄워 Keycloak으로 로그인해 볼 수 있게 한다. 이 파일과 `deploy/` 아래의 비밀번호와 시크릿은 모두 `dev-only-…` 형태의 가짜 값이며 로컬 개발에만 쓴다. 공유하거나 배포하는 환경에 그대로 쓰지 않는다.
 
 ## 띄우고 내리기
 
@@ -120,6 +120,19 @@ docker compose exec -e BAO_ADDR=http://127.0.0.1:8200 openbao sh -c '
 3. 누르면 web이 먼저 감사 기록을 남기고, 그다음 OpenBao에서 원본을 읽어 그 응답에만 넣는다. 검은 테두리 상자에 값과 연 사람, 시각이 보이고 "닫기"를 누르면 값 없이 같은 상세로 돌아간다. 값은 저장하지 않고 캐시하지 않는다(`Cache-Control: no-store`). 텍스트가 아닌 값(UTF-8이 아니거나 NUL이 든 값)은 크기만 보인다.
 4. OpenBao에 원본이 없으면 "보관된 원본이 없습니다. 다시 스캔하면 보관됩니다.", OpenBao에 닿지 않으면 "비밀 저장소에 연결할 수 없습니다.", OpenBao가 읽기를 거부했으면 "비밀 저장소에서 원본을 읽지 못했습니다."가 보인다. 두 경우에도 열람 시도는 감사 기록에 남는다. web은 OpenBao가 없어도 기동하고 다른 화면은 그대로 쓸 수 있다.
 5. 머리 띠의 "감사 로그"(`/audit`)에서 판정, 묶음 옮기기, 원본 보기가 최신순으로 한 쪽에 100줄씩 보인다. 시각은 UTC이고, 내용에는 묶음과 항목 번호, 판정한 묶음의 종류(고객정보는 파일 경로도), 이름(`ext.…`), 보류 사유, 메모만 있고 값은 없다. "더 보기"가 다음 쪽(`/audit?before=<마지막 줄의 ID>`)을 연다.
+
+## 리포트와 PDF
+
+1. 성공한 스캔의 화면, 프로젝트 화면의 스캔 목록, 적용 결과 화면의 확인 스캔 옆에 "리포트" 링크가 있다(`/scans/{id}/report`). `user`와 `admin` 모두 볼 수 있다. 성공하지 않은 스캔의 리포트 주소는 스캔 화면으로 돌아간다.
+2. 리포트는 열 때마다 만든다. 판정은 리포트를 만든 시각의 것이고, 외부화·삭제한 항목은 그 스캔이 요청되기 전에 적용된 것이다. 그래서 적용 뒤의 확인 스캔 리포트에 방금 외부화한 항목이 실린다. 지난 스캔의 리포트는 머리에 "이후 스캔이 있습니다"와 마지막 스캔 리포트의 링크를 보인다.
+3. 리포트에는 값, 미리보기, 지문, 주변 줄이 없다. 절마다 100줄까지만 싣고 "외 N줄"을 적는다. 건수는 언제나 전체를 센다. 판정 화면에서 전체 목록을 볼 수 있다.
+4. "PDF로 내보내기"를 누르면 같은 내용의 A4 PDF(`report-project-<프로젝트 ID>-scan-<스캔 ID>.pdf`)를 받는다. 예제 프로젝트에서 13~14쪽이고 1초 안팎이 걸린다. `pdf`가 멈춰 있으면 503 "PDF 변환 서비스에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요." 화면이 나오고, 다른 화면은 그대로 쓸 수 있다. `docker compose start pdf` 뒤 다시 된다.
+5. 바닥글은 `secret-externalizer | scan #N | 쪽 / 전체`이고 왼쪽에 붙는다. 프로젝트 이름은 본문 첫머리에 있다.
+
+## 이미지를 다시 빌드할 때
+
+- web과 worker는 같은 마이그레이션 파일을 가지고 뜰 때 스키마를 확인한다. 새 마이그레이션이 든 web이 먼저 뜨면, 그 파일이 없는 이전 worker 이미지는 다시 시작할 때 `schema_migration records versions [N] that this binary has no migration file for`로 뜨지 않는다(이미 떠 있던 worker는 계속 돌지만 재시작하면 멈춘다). 마이그레이션이 바뀐 커밋을 받으면 web과 worker를 함께 다시 빌드한다.
+- Docker VM의 메모리가 2GB(colima 기본값)이면 Go 이미지 빌드가 매우 느리다. 전체 스택이 떠 있는 채 web을 빌드하자 90분 넘게 끝나지 않고 Keycloak이 메모리 부족으로 죽은 일이 있었고, `pdf-test`와 `openbao-test`를 멈춘 채 worker 하나를 빌드하는 데 약 16분이 걸렸다. 빌드 전에 `test` 프로필의 서비스를 멈추고, 이미지를 하나씩 빌드한 뒤(`docker compose build worker`) `docker compose up -d --no-deps --no-build worker`로 바꿔 띄운다. 가능하면 VM 메모리를 4GB 이상으로 늘린다(`colima stop && colima start --memory 4`).
 
 ## OpenBao
 

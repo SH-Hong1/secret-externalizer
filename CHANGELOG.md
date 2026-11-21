@@ -11,12 +11,15 @@
 - 마이그레이션 `0008`: `apply_run (project_id, id DESC)`, `audit_event (project_id, id DESC)` 인덱스
 - 스캔 리포트 화면 `GET /scans/{id}/report`. 요약 숫자 일곱 개와 이전 성공한 스캔 대비 증감, 외부화한 항목, 삭제·마스킹한 고객정보, 구조 변경이 필요한 항목, 남은 항목, 오탐, 판정 이력을 보인다. 값, 미리보기, 지문, 주변 줄은 싣지 않는다. 성공하지 않은 스캔은 스캔 화면으로 돌려보낸다. 성공한 스캔의 스캔 화면, 프로젝트 화면의 스캔 목록, 적용 결과 화면의 확인 스캔 옆에 리포트 링크를 둔다
 - compose의 `pdf` 서비스(Gotenberg 9.9.1 Chromium 전용 이미지, digest 고정)와 내부 네트워크 `pdf`. 호스트 포트가 없고 바깥으로 나가지 못하며 web만 함께 붙는다. Chromium 경로만 쓰고 JavaScript, webhook, 주소에서 내려받기를 끄며, Chromium은 요청 폴더 바로 아래의 파일만 연다. 요청 제한 15초, 본문 한도 32MB, 메모리 한도 1GB. 루트 파일 시스템은 읽기 전용이고 모든 capability를 뺀다(`docs/decisions/0043-pdf-converter-setup.md`). 통합 테스트용 `pdf-test`(`test` 프로필, `127.0.0.1:13000`)
-- web 컨테이너에 환경 변수 `PDF_URL`(`http://pdf:3000`)과 `pdf` 네트워크. web은 아직 이 값을 읽지 않는다
+- web 컨테이너에 환경 변수 `PDF_URL`(`http://pdf:3000`)과 `pdf` 네트워크
 - HTML 문서와 그 파일을 Gotenberg에 보내 A4 PDF를 받는 클라이언트 `internal/pdf`. 변환기가 없거나 늦으면 `ErrUnavailable`, 문서를 거부하거나 PDF가 아니거나 64MiB를 넘으면 `ErrRejected`다. 오류에 변환기의 응답 본문을 넣지 않는다
 - `make test-integration`이 `TEST_PDF_URL`을 요구한다
 - 스캔 리포트의 PDF 내보내기 `GET /scans/{id}/report.pdf`. 리포트 화면의 "PDF로 내보내기" 버튼이 가리킨다. 화면과 같은 `report` 블록을 스크립트·양식·메뉴 없는 인쇄용 문서로 그려 스타일시트, 글꼴 다섯 개, 쪽 번호가 든 바닥글과 함께 변환기에 보내고, 다 받은 PDF만 `report-project-<프로젝트 ID>-scan-<스캔 ID>.pdf` 첨부 파일로 내려 준다. DB 읽기에 5초, 변환에 20초 제한을 따로 건다. 변환기가 없거나 늦으면 503 "PDF 변환 서비스에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요.", 변환기가 PDF를 돌려주지 않으면 500 "PDF를 만들지 못했습니다. 리포트가 너무 커서 변환기가 인쇄하지 못했을 수 있습니다." 화면이다
 - 인쇄용 CSS(`body.print`, `@media print`): 흰 바탕, 쪽 폭에 맞춘 표, 쪽 사이에서 잘리지 않는 표의 줄과 카드, 쪽 끝에 홀로 남지 않는 절 제목, 본문 글자처럼 보이는 링크
 - web이 환경 변수 `PDF_URL`(필수)을 읽는다. 시작할 때 주소를 확인하고 변환기에 닿지는 않는다
+- 결정 기록 0042 (스캔 리포트가 보이는 것), 0043 (PDF 변환기의 구성과 제한), 0044 (계획 6을 구현하면서 대신 정한 것)
+- `docs/local-run.md`에 "리포트와 PDF"와 "이미지를 다시 빌드할 때" 절. 마이그레이션이 바뀌면 web과 worker를 함께 다시 빌드해야 하고(이전 worker는 다시 시작할 때 모르는 스키마 버전으로 뜨지 않는다), 2GB Docker VM에서 이미지를 하나씩 빌드하는 순서를 적었다
+- `TestNoInlineScriptOrStyle`이 PDF 바닥글의 `<style>`을 `print-footer` 정의 안에서만 빼고, 그 정의에 `<style>`이 정확히 하나인지 확인한다
 - Go 모듈과 `cmd/web` 진입점 골격
 - 버전을 고정한 gofumpt, golangci-lint 설치와 `make fmt`, `make lint`, `make vet`, `make test`, `make check`
 - golangci-lint 설정
