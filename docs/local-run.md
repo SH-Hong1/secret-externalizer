@@ -291,7 +291,7 @@ TEST_PDF_URL=http://127.0.0.1:13000 \
 make test-integration
 ```
 
-Chromium이 든 `pdf`와 `pdf-test`는 각각 200MB 안팎의 메모리를 쓴다. Docker VM의 메모리가 2GB쯤이면(colima 기본값) 전체 스택과 `pdf-test`를 띄운 채 통합 테스트를 돌릴 때 큰 값을 다루는 `internal/apply` 테스트 중에 `openbao-test`가 메모리 부족으로 죽을 수 있다(`docker inspect`의 `OOMKilled`). 그때는 `docker compose stop pdf`로 `pdf`를 멈추고 `openbao-test`를 다시 띄운 뒤 돌리거나 VM 메모리를 늘린다.
+Chromium이 든 `pdf`와 `pdf-test`는 쉬고 있을 때 각각 200MB 안팎을 쓰고, 컨테이너마다 1GB 한도가 있다. Docker VM의 메모리가 2GB(colima 기본값)인 기계에서 전체 스택과 `pdf-test`를 함께 띄운 채 `make test-integration`이 통과했다. VM 메모리가 그보다 작거나 다른 컨테이너가 더 떠 있어 `openbao-test`가 메모리 부족으로 죽으면(`docker inspect`의 `OOMKilled`, `internal/apply`가 `store-failed`나 연결 거부로 실패) `docker compose stop pdf`로 `pdf`를 멈추고 `openbao-test`를 다시 띄운 뒤 돌리거나 VM 메모리를 늘린다.
 
 valkey는 디스크에 아무것도 남기지 않는다. valkey를 다시 띄우면 모든 세션이 사라지고 다시 로그인해야 한다. 메모리는 64MB로 제한하며, 다 차면 기존 키를 지우지 않고 새 쓰기만 거부한다(`noeviction`). 이때 새 로그인은 503 화면을 보고, 이미 로그인한 세션은 그대로 쓸 수 있다.
 

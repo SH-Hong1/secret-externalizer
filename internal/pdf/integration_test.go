@@ -11,8 +11,8 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 )
 
-// fontFile is the Korean body font the web pages use. testdata holds a link
-// to the copy under internal/web/static/fonts.
+// fontFile is the Korean body font the web pages use, read from the copy
+// that web serves so that the test checks the font the report sends.
 const fontFile = "IBMPlexSansKR-1.1.0-Regular.woff2"
 
 // realClient returns a client for the Gotenberg server at TEST_PDF_URL, the
@@ -47,7 +47,7 @@ func convert(t *testing.T, c *pdf.Client, doc pdf.Document) []byte {
 
 func TestConvert_Real(t *testing.T) {
 	c := realClient(t)
-	font, err := os.ReadFile("testdata/" + fontFile)
+	font, err := os.ReadFile("../web/static/fonts/" + fontFile)
 	if err != nil {
 		t.Fatalf("reading the font: %v", err)
 	}

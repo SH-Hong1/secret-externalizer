@@ -114,6 +114,9 @@ func (c *Client) Convert(ctx context.Context, doc Document) ([]byte, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
+		// No answer: the converter is down or slow, or ctx was cancelled
+		// or ran out, which the caller sees as the converter not answering
+		// in time. The context error stays matchable through the chain.
 		return nil, fmt.Errorf("%w: %w", ErrUnavailable, err)
 	}
 	defer func() {
@@ -167,6 +170,9 @@ var (
 	errNameControl  = errors.New("holds a control character or is not UTF-8")
 )
 
+// checkName compares with the reserved names case-sensitively, because the
+// converter writes the files to a case-sensitive Linux file system where
+// Footer.html does not replace footer.html.
 func checkName(name string) error {
 	switch {
 	case name == "":

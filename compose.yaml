@@ -189,9 +189,9 @@ services:
 
   # Prints the report page that web sends to a PDF with Chromium. It reads
   # only the files of the request and reaches nothing: its only network is
-  # the internal network "pdf", and Chromium may open only file:// addresses
-  # under /tmp, where Gotenberg writes the files of each request. See
-  # decision 0043.
+  # the internal network "pdf", and Chromium may open only the files that
+  # Gotenberg wrote for the request, in /tmp/<uuid>/<uuid>/. See decision
+  # 0043.
   pdf: &pdf
     # 9.9.1-chromium, the Chromium-only image; the digest is the multi-arch
     # index (linux/amd64 and linux/arm64 among others).
@@ -204,10 +204,13 @@ services:
       - --pdf-disable-stages=true
       # No script runs in the page.
       - --chromium-disable-javascript=true
-      # Chromium opens only the files of a request. Every other address,
-      # file:// elsewhere and any http(s), is refused; the IP rules refuse
-      # any host even if an address slips past the list.
-      - --chromium-allow-list=^file:///tmp/
+      # Chromium opens only files directly in a request folder,
+      # /tmp/<uuid>/<uuid>/<name>. Every other address, file:// elsewhere
+      # (Chromium's profile and caches under /tmp included) and any
+      # http(s), is refused. Gotenberg also refuses, by itself, a file://
+      # address outside the folder of the request being printed. The IP
+      # rules refuse any host even if an address slips past the list.
+      - --chromium-allow-list=^file:///tmp/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[^/]+$$
       - --chromium-deny-private-ips=true
       - --chromium-deny-public-ips=true
       # Gotenberg itself fetches and calls nothing.
@@ -228,8 +231,13 @@ services:
       - pdf
     read_only: true
     tmpfs:
-      # The files of each request and Chromium's profile.
-      - /tmp:size=512m
+      # The files of each request and Chromium's profile; a report request
+      # is about 5 MB. It counts against mem_limit.
+      - /tmp:size=256m
+    # Chromium on a page too large for it is killed inside this limit, and
+    # the conversion fails, instead of the host killing another service.
+    # A 3,000-row report peaks at about 530 MB with the tmpfs.
+    mem_limit: 1g
     cap_drop:
       - ALL
     security_opt:
@@ -242,7 +250,8 @@ services:
       retries: 30
 
   # The same converter for the integration tests, started only with
-  # --profile test, on the default network with a host port.
+  # --profile test. It is on the default network, not on "pdf", because the
+  # tests reach it from the host through the published port.
   pdf-test:
     <<: *pdf
     profiles: ["test"]
