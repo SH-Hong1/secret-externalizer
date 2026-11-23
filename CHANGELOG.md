@@ -13,7 +13,7 @@
 
 - 마이그레이션 `0009`: `finding.key`와 유일 제약 `(project_id, fingerprint, file_path, key)`
 - 스캔이 설정 키를 파일 원문에서 읽는 `internal/scan`의 `configKey`. 값이나 그 일부가 키에 들어가지 않도록 가려지는 범위와 겹치면 비운다
-- 사례 `rule-cases/conf/multi-env.properties`(한 파일 여러 환경)와 그 기대 결과
+- 사례 `rule-cases/conf/multi-env.properties`(한 파일 여러 환경)와 그 기대 결과. 실제 스캐너로 스캔한 `TestHandle_RealScannersKeysOfOneFile`(`internal/scan`)이 이 파일의 계정 셋과 비밀번호 셋이 키 여섯 개의 항목 여섯 개인지 확인한다. 통합 테스트는 한 값이 한 파일의 여러 키에 있는 자리(예제에서 두 파일의 JDBC URL 포트)를 확인한다
 - 결정 기록 0053 (설정 키로 항목을 나눈다)
 - 규칙 `maven-settings-server-username`(`settings.xml`의 `<server>` 안 `<username>`, 계정), `shell-sshpass-env-password`(`sshpass -e`가 읽는 `SSHPASS=` 값), `yaml-block-password`(`password: >`, `password: |` 아래 한 줄짜리 블록 스칼라)
 - 규칙 사례 예제 `internal/ruleset/testdata/rule-cases`와 그 기대 결과 `rule-cases.json`. 규칙이 찾아야 하는 모양과 건드리지 말아야 하는 모양을 하나씩 둔다. `TestRules_ExpectedFindings`가 `legacy-shop`과 함께 스캔한다

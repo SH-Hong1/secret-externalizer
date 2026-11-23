@@ -263,6 +263,28 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 	}
 	runScan(t, store, scanner, scanID, &f.logs)
 	first := findingsOf(scanID)
+	// A value under several keys of one file is one finding for each key.
+	// The example has two such files: the port of the two JDBC URLs in each.
+	keysOf := map[place][]string{}
+	for pl := range first {
+		k := place{pl.fingerprint, pl.file, ""}
+		keysOf[k] = append(keysOf[k], pl.key)
+	}
+	var splits []string
+	for pl, keys := range keysOf {
+		if len(keys) > 1 {
+			slices.Sort(keys)
+			splits = append(splits, pl.file+": "+strings.Join(keys, ", "))
+		}
+	}
+	slices.Sort(splits)
+	wantSplits := []string{
+		"src/main/resources/application-prod.yml: report.datasource.url, spring.datasource.url",
+		"src/main/webapp/WEB-INF/spring/pool-context.xml: legacyDataSource.url, reportPool.jdbcUrl",
+	}
+	if diff := cmp.Diff(wantSplits, splits); diff != "" {
+		t.Errorf("files holding one value under several keys (-want +got):\n%s", diff)
+	}
 	if len(first) == 0 {
 		t.Fatalf("FindingsByScan(%d) is empty, want the findings of the example", scanID)
 	}

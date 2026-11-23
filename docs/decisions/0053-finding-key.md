@@ -57,4 +57,4 @@ live.db.password=Shop!2020
 - 키를 읽지 못한 자리(Java 문자열 인자, shell의 위치 인자, 고객정보가 있을 수 있는 파일)는 파일마다 항목 하나다. YAML 목록의 여러 항목에 있는 같은 값도 나뉘지 않는다.
 - XML은 글자 수준으로 읽는다. 주석 안의 `<bean>`, 여러 줄에 걸친 태그에서 `id`가 다른 줄에 있는 경우는 키가 덜 정확할 수 있다. 틀린 키는 항목을 더 잘게 나누거나 덜 나눌 뿐 값을 드러내지 않는다. 지금 알려진 경우가 둘 있다. 태그의 `name="…"` 속성은 값이 같은 태그의 다른 속성에 있어도 키가 된다(`<bean id="ds" name="alias" p:password="…">`의 키는 `ds.alias`). 자기 닫힘 `<bean id="…"/>`가 바깥 bean 안에 있으면 그 id가 바깥 bean의 뒤쪽 속성 키에 붙는다.
 - 판을 올린 뒤 첫 스캔에서, 한 파일에 키가 여럿이던 판정된 묶음은 첫 키만 판정을 이어받는다. 나머지는 다시 판정해야 한다.
-- 통합 테스트 `TestIntegration_ScanApplyRescan`의 예제는 키를 읽은 뒤 첫 스캔의 항목이 86개에서 88개로 늘었다. 같은 파일에서 같은 값이 서로 다른 키에 있는 자리가 나뉜 결과다.
+- 통합 테스트 `TestIntegration_ScanApplyRescan`의 예제에서 키를 읽은 뒤 첫 스캔의 항목이 86개에서 88개로 늘었다. 늘어난 둘은 JDBC URL의 포트 `3306`이 한 파일의 두 키에 있는 자리가 나뉜 것이다. `application-prod.yml`의 `spring.datasource.url`과 `report.datasource.url`, `pool-context.xml`의 `legacyDataSource.url`과 `reportPool.jdbcUrl`이다. 테스트가 이 두 파일과 키를 그대로 확인한다.
