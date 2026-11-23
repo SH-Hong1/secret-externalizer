@@ -26,7 +26,7 @@ const (
 // the bundles the plan changes and Kept those it leaves alone. DBChecks are
 // the conditions the database shows before a check; Checks are those of
 // the shown run. Stale tells that the verdicts or the scan changed after
-// the newest check. CheckFailure is why the newest check failed, set only
+// the newest check, and StaleScan that it was the scan. CheckFailure is why the newest check failed, set only
 // when it failed before anyone confirmed it. Digest is set only when the
 // page offers the apply form.
 type applyPage struct {
@@ -42,6 +42,7 @@ type applyPage struct {
 	DBChecks     []applyCheck
 	CanCheck     bool
 	Stale        bool
+	StaleScan    bool
 	CheckFailure *blockerView
 	Run          *apply.Run
 	RunState     applyStateView

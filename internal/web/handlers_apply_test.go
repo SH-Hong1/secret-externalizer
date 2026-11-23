@@ -109,6 +109,9 @@ const (
 	// the apply page carries while a check runs.
 	refresh      = `<meta http-equiv="refresh"`
 	applyRefresh = `<meta http-equiv="refresh" content="3; url=/projects/1/apply">`
+	// staleNotice is the start of the notice that the newest check is no
+	// longer of the current plan.
+	staleNotice = `<p class="notice-soft">점검한 뒤`
 )
 
 func TestApplyPage_States(t *testing.T) {
@@ -120,6 +123,10 @@ func TestApplyPage_States(t *testing.T) {
 	}
 	stale := run(apply.StateReady)
 	stale.PlanDigest = digestOld
+	staleScan := run(apply.StateReady)
+	staleScan.PlanDigest, staleScan.ScanID = digestOld, 6
+	readyFollowed := summary(run(apply.StateReady))
+	readyFollowed.Blockers = []apply.Blocker{apply.BlockerScanNotLatest}
 	busy := summary(nil)
 	busy.ScanActive = true
 	busy.Blockers = []apply.Blocker{apply.BlockerScanNotLatest}
@@ -146,13 +153,19 @@ func TestApplyPage_States(t *testing.T) {
 			name:    "never checked",
 			summary: summary(nil),
 			want:    []string{checkForm, ">조건 점검</button>", "진행 중인 스캔이 없음", "판정별 항목"},
-			wantNot: []string{refresh, "점검한 뒤 판정이나 스캔이 바뀌었습니다", applyOff},
+			wantNot: []string{refresh, staleNotice, applyOff},
 		},
 		{
 			name:    "checked before the verdicts changed",
 			summary: summary(stale),
-			want:    []string{"점검한 뒤 판정이나 스캔이 바뀌었습니다", checkForm, ">다시 점검</button>"},
-			wantNot: []string{"적용하면 바뀌는 위치"},
+			want:    []string{staleNotice + " 판정이 바뀌었습니다. 지금 판정으로 다시 점검해 주세요.", checkForm, ">다시 점검</button>"},
+			wantNot: []string{"적용하면 바뀌는 위치", "새 스캔이 성공했습니다"},
+		},
+		{
+			name:    "checked before a newer scan succeeded",
+			summary: summary(staleScan),
+			want:    []string{staleNotice + "에 새 스캔이 성공했습니다. 새 스캔의 판정을 확인하고 다시 점검해 주세요.", checkForm, ">다시 점검</button>"},
+			wantNot: []string{"적용하면 바뀌는 위치", "판정이 바뀌었습니다"},
 		},
 		{
 			name:    "nothing to apply",
@@ -201,6 +214,13 @@ func TestApplyPage_States(t *testing.T) {
 			wantNot: []string{checkForm},
 		},
 		{
+			name:    "ready with a later scan that did not succeed",
+			summary: readyFollowed,
+			items:   readyItems(),
+			want:    []string{"지금은 적용할 수 없습니다.", applyOff, "마지막으로 성공한 스캔 뒤에 다른 스캔이 있습니다."},
+			wantNot: []string{checkForm, digestField},
+		},
+		{
 			name:    "apply queued",
 			summary: summary(run(apply.StateQueued)),
 			want:    []string{`href="/applies/5"`, "적용 #5 실행은 지금 적용 대기 중입니다."},
@@ -216,7 +236,7 @@ func TestApplyPage_States(t *testing.T) {
 			name:    "after an apply",
 			summary: summary(confirmed(apply.StateSucceeded)),
 			want:    []string{checkForm, `<a href="/applies/5">#5</a> 적용 완료`},
-			wantNot: []string{"점검한 뒤 판정이나 스캔이 바뀌었습니다"},
+			wantNot: []string{staleNotice},
 		},
 		{
 			name:    "after a failed apply",
@@ -657,7 +677,8 @@ func TestApply_Post(t *testing.T) {
 		status int
 		want   string
 	}{
-		{db.ErrPlanChanged, http.StatusConflict, "판정이나 스캔이 바뀌었습니다. 다시 점검해 주세요"},
+		{db.ErrPlanChanged, http.StatusConflict, `role="alert">판정이 바뀌었습니다. 다시 점검해 주세요.`},
+		{db.ErrScanFollowed, http.StatusConflict, `role="alert">점검한 뒤에 새 스캔이 있습니다. 스캔 결과와 판정을 확인한 뒤 다시 점검해 주세요.`},
 		{db.ErrScanActive, http.StatusConflict, "이 프로젝트의 스캔이 진행 중입니다."},
 		{db.ErrNotFound, http.StatusConflict, "다시 점검해 주세요."},
 	} {

@@ -51,7 +51,7 @@
 </section>
 {{if eq .View "before"}}<section class="flex flex-col gap-2.5">
 <h2 class="section-title mb-0">조건</h2>
-{{if .Stale}}<p class="notice-soft">점검한 뒤 판정이나 스캔이 바뀌었습니다. 지금 판정으로 다시 점검해 주세요.</p>
+{{if .Stale}}<p class="notice-soft">{{if .StaleScan}}점검한 뒤에 새 스캔이 성공했습니다. 새 스캔의 판정을 확인하고 다시 점검해 주세요.{{else}}점검한 뒤 판정이 바뀌었습니다. 지금 판정으로 다시 점검해 주세요.{{end}}</p>
 {{end}}{{with .CheckFailure}}<div class="card card-pad card-failed flex flex-col gap-2.5">
 <p class="failure"><strong>점검 실패 사유</strong> {{.Label}}{{with .Code}} <span class="mono">{{.}}</span>{{end}}</p>
 {{with .Action}}<p class="text-2">{{.}}</p>

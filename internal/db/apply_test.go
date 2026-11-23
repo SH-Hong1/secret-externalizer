@@ -170,23 +170,37 @@ func TestRequestApplyCheck_PlanLeavesOutUndecided(t *testing.T) {
 }
 
 func TestConfirmApply(t *testing.T) {
-	for _, allow := range []bool{true, false} {
-		t.Run("allow irreversible "+strconv.FormatBool(allow), func(t *testing.T) {
+	for _, tt := range []struct {
+		name          string
+		listed        []string
+		allow, stored bool
+	}{
+		{"consent to the listed files", []string{"logs/y.log"}, true, true},
+		{"no consent to the listed files", []string{"logs/y.log"}, false, false},
+		{"no consent and no listed file", []string{}, false, false},
+		{"consent the check did not ask for", []string{}, true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
 			s := newMigratedStore(t)
 			ctx := t.Context()
 			pid, _, _, _ := decidedProject(t, s, "shop")
 			r := readyRun(t, s, pid)
+			r.IrreversibleFiles, r.DirtyFiles = tt.listed, []string{}
+			if err := s.SetApplyRun(ctx, r); err != nil {
+				t.Fatalf("SetApplyRun(%d) error = %v", r.ID, err)
+			}
 			events, err := s.Count(ctx, "audit_event")
 			if err != nil {
 				t.Fatalf("Count(audit_event) error = %v", err)
 			}
 
-			if err := s.ConfirmApply(ctx, r.ID, r.PlanDigest, allow, tester); err != nil {
+			if err := s.ConfirmApply(ctx, r.ID, r.PlanDigest, tt.allow, tester); err != nil {
 				t.Fatalf("ConfirmApply(%d) error = %v", r.ID, err)
 			}
 			got := readRun(t, s, r.ID)
-			if got.State != apply.StateQueued || got.ConfirmedAt.IsZero() || got.AllowIrreversible != allow {
-				t.Errorf("ApplyRun(%d) after ConfirmApply = %+v, want queued, confirmed, allow irreversible %v", r.ID, got, allow)
+			if got.State != apply.StateQueued || got.ConfirmedAt.IsZero() || got.AllowIrreversible != tt.stored {
+				t.Errorf("ApplyRun(%d) after ConfirmApply(allow %v) with irreversible files %v = %+v, want queued, confirmed, allow irreversible %v",
+					r.ID, tt.allow, tt.listed, got, tt.stored)
 			}
 			if j, err := s.ApplyJob(ctx, int64(r.ID), "apply"); err != nil || j.State != "queued" {
 				t.Errorf("ApplyJob(%d, apply) = %+v, %v, want a queued job", r.ID, j, err)
@@ -201,7 +215,7 @@ func TestConfirmApply(t *testing.T) {
 			if err != nil {
 				t.Fatalf("LastAuditEvent() error = %v", err)
 			}
-			irreversible := map[bool]string{true: "yes", false: "no"}[allow]
+			irreversible := map[bool]string{true: "yes", false: "no"}[tt.stored]
 			want := audit.Event{
 				Actor: tester, Action: audit.ActionApply, ProjectID: pid,
 				Detail: map[string]string{
@@ -213,6 +227,43 @@ func TestConfirmApply(t *testing.T) {
 				t.Errorf("audit event of ConfirmApply(%d) mismatch (-want +got):\n%s", r.ID, diff)
 			}
 		})
+	}
+}
+
+func TestApplyActive(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, _, _, _ := decidedProject(t, s, "shop")
+	if active, err := s.ApplyActive(ctx, pid); err != nil || active {
+		t.Errorf("ApplyActive(%d) before any check = %v, %v, want false", pid, active, err)
+	}
+	id := requestCheck(t, s, pid)
+	for _, tt := range []struct {
+		state apply.State
+		want  bool
+	}{
+		{apply.StateChecking, true},
+		{apply.StateReady, false},
+		{apply.StateBlocked, false},
+		{apply.StateQueued, true},
+		{apply.StateRunning, true},
+		{apply.StateSucceeded, false},
+		{apply.StateFailed, false},
+		{apply.StateSuperseded, false},
+	} {
+		if err := s.MoveApplyRun(ctx, id, tt.state); err != nil {
+			t.Fatalf("MoveApplyRun(%d, %s) error = %v", id, tt.state, err)
+		}
+		if active, err := s.ApplyActive(ctx, pid); err != nil || active != tt.want {
+			t.Errorf("ApplyActive(%d) with a run %s = %v, %v, want %v", pid, tt.state, active, err, tt.want)
+		}
+	}
+	if err := s.MoveApplyRun(ctx, id, apply.StateRunning); err != nil {
+		t.Fatalf("MoveApplyRun(%d, running) error = %v", id, err)
+	}
+	other := newProject(t, s, "other")
+	if active, err := s.ApplyActive(ctx, other); err != nil || active {
+		t.Errorf("ApplyActive(%d) while another project applies = %v, %v, want false", other, active, err)
 	}
 }
 
@@ -266,7 +317,7 @@ func TestConfirmApply_PlanChanged(t *testing.T) {
 		pid, _, _, _ := decidedProject(t, s, "shop")
 		r := readyRun(t, s, pid)
 		save(t, s, pid, mixed()...)
-		assertRefused(t, s, r.ID, r.PlanDigest, db.ErrPlanChanged)
+		assertRefused(t, s, r.ID, r.PlanDigest, db.ErrScanFollowed)
 	})
 	t.Run("newer failed scan", func(t *testing.T) {
 		s := newMigratedStore(t)
@@ -276,7 +327,7 @@ func TestConfirmApply_PlanChanged(t *testing.T) {
 		if err := s.FailScan(t.Context(), j.ID, "worker-a", failed, "fake failure"); err != nil {
 			t.Fatalf("FailScan(%d) error = %v", failed, err)
 		}
-		assertRefused(t, s, r.ID, r.PlanDigest, db.ErrPlanChanged)
+		assertRefused(t, s, r.ID, r.PlanDigest, db.ErrScanFollowed)
 	})
 	for _, state := range []apply.State{apply.StateBlocked, apply.StateChecking, apply.StateSuperseded, apply.StateQueued} {
 		t.Run("run "+string(state), func(t *testing.T) {

@@ -183,7 +183,9 @@ func setScanHead(data *triagePage, sc scan.Scan, counts map[triage.Verdict]int) 
 }
 
 // fillTriagePage reads the list page and the selected detail of scan sc into
-// data. On failure it returns the status of the error page.
+// data. While an apply of the project is active, which is when the store
+// refuses every verdict and move, the detail offers none. On failure it
+// returns the status of the error page.
 func fillTriagePage(ctx context.Context, logger *slog.Logger, store TriageStore, suggester Suggester, data *triagePage, q triageQuery, sel selection, sc scan.Scan) (int, error) {
 	pid := data.Project.ID
 	page, err := store.Entries(ctx, pid, sc.ID, triage.Filter{Category: q.Category, Status: q.Status, Page: q.Page})
@@ -210,6 +212,9 @@ func fillTriagePage(ctx context.Context, logger *slog.Logger, store TriageStore,
 	applied, err := store.AppliedCount(ctx, pid)
 	if err != nil {
 		return http.StatusInternalServerError, fmt.Errorf("counting applied bundles: %w", err)
+	}
+	if data.Locked, err = store.ApplyActive(ctx, pid); err != nil {
+		return http.StatusInternalServerError, fmt.Errorf("reading active apply: %w", err)
 	}
 	data.ApplyHref = applyPath(pid)
 	setScanHead(data, sc, page.Counts)
@@ -243,6 +248,9 @@ func fillTriagePage(ctx context.Context, logger *slog.Logger, store TriageStore,
 			return http.StatusInternalServerError, fmt.Errorf("listing bundles of the same value: %w", err)
 		}
 		data.Bundle = newBundleDetail(pid, ret, b, s, same)
+		if data.Locked {
+			data.Bundle.lock()
+		}
 		switch {
 		case !data.User.Has(auth.RoleAdmin):
 		case hasOriginal(b):
@@ -290,6 +298,7 @@ func fillCustomerDetail(ctx context.Context, store TriageStore, data *triagePage
 		return bundleReadStatus(err), fmt.Errorf("reading bundle of customer data group: %w", err)
 	}
 	data.Customer = newCustomerDetail(pid, ret, g, first)
+	data.Customer.Form.Locked = data.Locked
 	return http.StatusOK, nil
 }
 

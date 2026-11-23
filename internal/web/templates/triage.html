@@ -88,6 +88,7 @@
 
 {{define "detail"}}<section class="triage-detail" id="detail" aria-label="상세">
 {{with .Error}}<p class="alert-error" role="alert">{{.}}{{with $.ErrorLink}} <a href="{{.}}">적용 화면 보기</a>{{end}}</p>
+{{end}}{{if and .Locked (not .Error)}}<p class="notice-soft">점검이나 적용이 진행 중이라 지금은 판정을 바꿀 수 없습니다. 끝난 뒤 이 화면을 다시 열어 주세요. <a href="{{.ApplyHref}}">적용 화면 보기</a></p>
 {{end}}{{with .Empty}}<div class="empty-state">
 <h2 class="empty-title">{{.Title}}</h2>
 <p class="text-2">{{.Text}}</p>
@@ -189,19 +190,19 @@ stored only by pressing its button. */}}
 
 {{define "note"}}<div class="field verdict-field">
 <label class="field-label" for="verdict-note">메모 <span class="optional">· 선택</span></label>
-<input class="input" id="verdict-note" name="note" value="{{.Note}}" maxlength="500" autocomplete="off">
+<input class="input" id="verdict-note" name="note" value="{{.Note}}" maxlength="500" autocomplete="off"{{if .Locked}} disabled{{end}}>
 </div>{{end}}
 
 {{define "verdict-buttons"}}<div class="verdict-actions">
-{{range .Buttons}}<button class="btn btn-lg btn-{{.Class}}{{if .Suggested}} btn-suggested{{end}}" type="submit" name="verdict" value="{{.Value}}"{{if $.Fixed}} disabled{{end}}>{{.Label}}{{if .Suggested}} · 제안{{end}}</button>
+{{range .Buttons}}<button class="btn btn-lg btn-{{.Class}}{{if .Suggested}} btn-suggested{{end}}" type="submit" name="verdict" value="{{.Value}}"{{if or $.Fixed $.Locked}} disabled{{end}}>{{.Label}}{{if .Suggested}} · 제안{{end}}</button>
 {{end}}<span class="verdict-divider" aria-hidden="true"></span>
 <label class="muted" for="verdict-reason">보류 사유</label>
-<select class="input verdict-reason" id="verdict-reason" name="hold_reason"{{if .Fixed}} disabled{{end}}>
+<select class="input verdict-reason" id="verdict-reason" name="hold_reason"{{if or .Fixed .Locked}} disabled{{end}}>
 {{range .Reasons}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
 {{end}}</select>
-{{with .Hold}}<button class="btn btn-lg btn-{{.Class}}{{if .Suggested}} btn-suggested{{end}}" type="submit" name="verdict" value="{{.Value}}"{{if $.Fixed}} disabled{{end}}>{{.Label}}{{if .Suggested}} · 제안{{end}}</button>
+{{with .Hold}}<button class="btn btn-lg btn-{{.Class}}{{if .Suggested}} btn-suggested{{end}}" type="submit" name="verdict" value="{{.Value}}"{{if or $.Fixed $.Locked}} disabled{{end}}>{{.Label}}{{if .Suggested}} · 제안{{end}}</button>
 {{end}}{{if .Fixed}}<span class="verdict-divider" aria-hidden="true"></span>
-<button class="btn btn-lg" type="submit" name="verdict" value="{{.Keep}}">메모 저장</button>
+<button class="btn btn-lg" type="submit" name="verdict" value="{{.Keep}}"{{if .Locked}} disabled{{end}}>메모 저장</button>
 {{end}}{{if .Cancel}}<span class="verdict-divider" aria-hidden="true"></span>
-<button class="btn btn-lg" type="submit" name="verdict" value="none">판정 취소</button>
+<button class="btn btn-lg" type="submit" name="verdict" value="none"{{if .Locked}} disabled{{end}}>판정 취소</button>
 {{end}}</div>{{end}}
