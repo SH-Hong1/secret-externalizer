@@ -278,6 +278,9 @@ func TestHandleDashboard_ScrollsInsideWrappers(t *testing.T) {
 	}
 	tables := strings.Count(res.body, "<table")
 	wraps := strings.Count(res.body, `<div class="table-wrap">`)
+	if got := strings.Count(res.body, `<table class="table table-nowrap`); got != tables {
+		t.Errorf("GET /dashboard has %d table-nowrap tables, want %d", got, tables)
+	}
 	if tables != wraps || tables != 3 {
 		t.Errorf("GET /dashboard has %d tables and %d table-wrap, want 3 and 3", tables, wraps)
 	}

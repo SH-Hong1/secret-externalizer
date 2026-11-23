@@ -265,9 +265,21 @@ func TestStaticCSS_NarrowScreen(t *testing.T) {
 			t.Errorf("app.css lacks %q", want)
 		}
 	}
-	for _, sel := range []string{".table th", ".table .num"} {
+	for _, sel := range []string{".table-nowrap th", ".table-nowrap .num"} {
 		if !regexp.MustCompile(`(?s)` + regexp.QuoteMeta(sel) + `[^{]*\{[^}]*white-space:\s*nowrap`).MatchString(css) {
 			t.Errorf("app.css: no rule for %q sets white-space: nowrap", sel)
+		}
+	}
+}
+
+// The no-wrap rule belongs to the dashboard tables alone: the other tables,
+// the printed report among them, keep their own layout.
+func TestStaticCSS_NoWrapIsScoped(t *testing.T) {
+	srv := newTestServer(t, io.Discard)
+	css := get(t, srv.URL+"/static/app.css").body
+	for _, sel := range []string{".table th", ".table .num"} {
+		if regexp.MustCompile(`(?s)` + regexp.QuoteMeta(sel) + `[^{]*\{[^}]*white-space:\s*nowrap`).MatchString(css) {
+			t.Errorf("app.css: rule for %q sets white-space: nowrap, want it only on .table-nowrap", sel)
 		}
 	}
 }

@@ -49,7 +49,7 @@
 <details class="chart-table">
 <summary>표로 보기</summary>
 <div class="table-wrap">
-<table class="table">
+<table class="table table-nowrap">
 <thead><tr><th>끝난 시각</th><th>프로젝트</th><th>스캔</th>{{range .Legend}}<th class="num">{{.Label}}</th>{{end}}<th class="num">합</th></tr></thead>
 <tbody>
 {{range .TrendRows}}<tr>
@@ -79,7 +79,7 @@
 <section class="dashboard-section">
 <h2 class="section-title">오탐이 많은 규칙</h2>
 {{if .Rules}}<div class="table-wrap">
-<table class="table">
+<table class="table table-nowrap">
 <thead><tr><th>도구</th><th>규칙</th><th class="num">오탐 묶음</th><th class="num">찾은 묶음</th><th class="num">비율</th></tr></thead>
 <tbody>
 {{range .Rules}}<tr>
@@ -99,7 +99,7 @@
 <section class="dashboard-section">
 <h2 class="section-title">프로젝트</h2>
 <div class="table-wrap">
-<table class="table min-w-[740px]">
+<table class="table table-nowrap min-w-[740px]">
 <thead><tr><th>이름</th><th>마지막 스캔</th><th class="num">남은 항목</th><th class="num">완료율</th><th class="num">보류</th><th></th></tr></thead>
 <tbody>
 {{range .Rows}}<tr{{if .Current}} aria-current="true"{{end}}>
