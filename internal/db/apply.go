@@ -27,6 +27,10 @@ var ErrApplyActive = errors.New("an apply of the project is being checked, queue
 // showed, or the plan changed since the check.
 var ErrPlanChanged = errors.New("the verdicts changed since the check")
 
+// ErrScanFollowed means a scan of the project, in any state, is newer than
+// the scan a check looked at.
+var ErrScanFollowed = errors.New("a scan followed the check")
+
 // The project's scans, verdicts, moves and applies exclude each other through
 // a lock on its project row. RequestApplyCheck and ConfirmApply hold it FOR
 // UPDATE; inserting a scan takes FOR KEY SHARE through the foreign key, and
@@ -48,19 +52,31 @@ func lockProject(ctx context.Context, tx pgx.Tx, projectID project.ID, clause st
 	return nil
 }
 
+// activeApplyQuery tells whether the project $1 has an apply that is being
+// checked, is queued or runs.
+const activeApplyQuery = "SELECT EXISTS (SELECT 1 FROM apply_run WHERE project_id = $1 AND state IN ('checking', 'queued', 'running'))"
+
 // refuseActiveApply returns ErrApplyActive when the project has an apply
 // that is being checked, is queued or runs.
 func refuseActiveApply(ctx context.Context, tx pgx.Tx, projectID project.ID) error {
 	var active bool
-	if err := tx.QueryRow(ctx,
-		"SELECT EXISTS (SELECT 1 FROM apply_run WHERE project_id = $1 AND state IN ('checking', 'queued', 'running'))",
-		projectID).Scan(&active); err != nil {
+	if err := tx.QueryRow(ctx, activeApplyQuery, projectID).Scan(&active); err != nil {
 		return fmt.Errorf("reading active apply of project %d: %w", projectID, err)
 	}
 	if active {
 		return fmt.Errorf("project %d: %w", projectID, ErrApplyActive)
 	}
 	return nil
+}
+
+// ApplyActive reports whether the project has an apply that is being
+// checked, is queued or runs. A project that does not exist has none.
+func (s *Store) ApplyActive(ctx context.Context, projectID project.ID) (bool, error) {
+	var active bool
+	if err := s.pool.QueryRow(ctx, activeApplyQuery, projectID).Scan(&active); err != nil {
+		return false, fmt.Errorf("reading active apply of project %d: %w", projectID, err)
+	}
+	return active, nil
 }
 
 // refuseActiveScan returns ErrScanActive when the project has a queued or
@@ -159,10 +175,11 @@ func (s *Store) RequestApplyCheck(ctx context.Context, projectID project.ID, by 
 // ConfirmApply moves a ready run to queued, creates its apply job, and
 // records the audit event, in one transaction. allowIrreversible is the
 // user's consent to redact customer data in the untracked files the check
-// listed. It returns ErrPlanChanged when digest is not the run's or not the
-// current plan's, or when any scan of the project, in any state, is newer
-// than the checked one; ErrNotFound when the run is not ready; ErrScanActive when
-// the project has a queued or running scan.
+// listed; it counts, in the run and in the audit event, only when the check
+// listed such a file. It returns ErrPlanChanged when digest is not the run's
+// or not the current plan's; ErrScanFollowed when any scan of the project,
+// in any state, is newer than the checked one; ErrNotFound when the run is
+// not ready; ErrScanActive when the project has a queued or running scan.
 func (s *Store) ConfirmApply(ctx context.Context, id apply.ID, digest string, allowIrreversible bool, by audit.Actor) (err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
@@ -185,9 +202,11 @@ func (s *Store) ConfirmApply(ctx context.Context, id apply.ID, digest string, al
 		state      apply.State
 		scanID     scan.ID
 		planDigest string
+		asked      bool
 	)
-	if err := tx.QueryRow(ctx, "SELECT state, scan_id, plan_digest FROM apply_run WHERE id = $1 FOR UPDATE", id).
-		Scan(&state, &scanID, &planDigest); err != nil {
+	if err := tx.QueryRow(ctx, `
+		SELECT state, scan_id, plan_digest, cardinality(irreversible_files) > 0 FROM apply_run WHERE id = $1 FOR UPDATE`, id).
+		Scan(&state, &scanID, &planDigest, &asked); err != nil {
 		return fmt.Errorf("reading apply run %d: %w", id, err)
 	}
 	if state != apply.StateReady {
@@ -207,7 +226,7 @@ func (s *Store) ConfirmApply(ctx context.Context, id apply.ID, digest string, al
 		return fmt.Errorf("reading scans after scan %d: %w", scanID, err)
 	}
 	if newer {
-		return fmt.Errorf("confirming apply %d: a scan followed the check: %w", id, ErrPlanChanged)
+		return fmt.Errorf("confirming apply %d: %w", id, ErrScanFollowed)
 	}
 	latest, err := latestScanID(ctx, tx, projectID)
 	if err != nil {
@@ -225,6 +244,7 @@ func (s *Store) ConfirmApply(ctx context.Context, id apply.ID, digest string, al
 		return fmt.Errorf("confirming apply %d: %w", id, ErrPlanChanged)
 	}
 
+	allowIrreversible = allowIrreversible && asked
 	if _, err := tx.Exec(ctx, `
 		UPDATE apply_run SET state = 'queued', confirmed_at = now(), allow_irreversible = $2 WHERE id = $1`,
 		id, allowIrreversible); err != nil {

@@ -437,6 +437,10 @@ func (b *blockingStore) AppliedBundles(ctx context.Context, _ project.ID, _ int)
 	return triage.AppliedPage{}, b.wait(ctx)
 }
 
+func (b *blockingStore) ApplyActive(ctx context.Context, _ project.ID) (bool, error) {
+	return false, b.wait(ctx)
+}
+
 func (b *blockingStore) AppliedCount(ctx context.Context, _ project.ID) (int, error) {
 	return 0, b.wait(ctx)
 }
@@ -464,6 +468,9 @@ type fakeTriage struct {
 	pastErr    error
 	decideErr  error
 	moveErr    error
+	activeErr  error
+	// applyActive is what ApplyActive returns.
+	applyActive bool
 	// moveNew is the bundle MoveFinding returns for a move to a new bundle.
 	moveNew triage.BundleID
 
@@ -518,6 +525,10 @@ func (f *fakeTriage) putApplied(id project.ID, applied ...triage.Applied) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.applied[id] = applied
+}
+
+func (f *fakeTriage) ApplyActive(_ context.Context, _ project.ID) (bool, error) {
+	return f.applyActive, f.activeErr
 }
 
 func (f *fakeTriage) AppliedCount(_ context.Context, projectID project.ID) (int, error) {

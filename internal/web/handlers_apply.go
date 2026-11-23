@@ -17,7 +17,8 @@ import (
 // The reasons a check or an apply is refused, shown at the top of the apply
 // page.
 const (
-	msgPlanChanged      = "판정이나 스캔이 바뀌었습니다. 다시 점검해 주세요."
+	msgPlanChanged      = "판정이 바뀌었습니다. 다시 점검해 주세요."
+	msgScanFollowed     = "점검한 뒤에 새 스캔이 있습니다. 스캔 결과와 판정을 확인한 뒤 다시 점검해 주세요."
 	msgApplyScanActive  = "이 프로젝트의 스캔이 진행 중입니다. 스캔이 끝난 뒤 다시 점검해 주세요."
 	msgApplyAlready     = "이 프로젝트의 점검이나 적용이 이미 진행 중입니다."
 	msgApplyNotPossible = "지금은 적용할 수 없습니다."
@@ -97,9 +98,9 @@ func handleApplyCheck(aw applyWriter) http.Handler {
 // only when the check listed such files. A run of another project is
 // unknown. A run that is not ready is not confirmed: a confirmed one sends
 // the browser to its page, so a second submit lands where the first did,
-// and any other shows the apply page with status 409. A plan that changed
-// or a scan in the way shows the apply page again with the reason and
-// status 409, and nothing is stored.
+// and any other shows the apply page with status 409. A plan that changed,
+// a scan after the checked one, or a scan in the way shows the apply page
+// again with the reason and status 409, and nothing is stored.
 func handleApplyConfirm(aw applyWriter) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		n, ok := pathID(r, "id")
@@ -139,6 +140,8 @@ func handleApplyConfirm(aw applyWriter) http.Handler {
 			http.Redirect(w, r, runPath(run.ID), http.StatusSeeOther)
 		case errors.Is(err, db.ErrPlanChanged):
 			aw.show(w, r, pid, http.StatusConflict, msgPlanChanged)
+		case errors.Is(err, db.ErrScanFollowed):
+			aw.show(w, r, pid, http.StatusConflict, msgScanFollowed)
 		case errors.Is(err, db.ErrScanActive):
 			aw.show(w, r, pid, http.StatusConflict, msgApplyScanActive)
 		case errors.Is(err, db.ErrNotFound):
@@ -251,7 +254,7 @@ func (aw applyWriter) build(ctx context.Context, pid project.ID) (applyPage, int
 		page.View, page.CanCheck = applyViewApplying, false
 	case apply.StateReady, apply.StateBlocked:
 		if c.PlanDigest != sum.Digest {
-			page.Stale = true
+			page.Stale, page.StaleScan = true, c.ScanID != sum.Scan.ID
 			return page, 0, nil
 		}
 		items, err := aw.store.ApplyItems(ctx, c.ID)

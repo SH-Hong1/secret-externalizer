@@ -62,6 +62,7 @@ type triagePage struct {
 	Error     string
 	ErrorLink string
 	ApplyHref string
+	Locked    bool
 	Applied   *appliedTable
 	User      auth.User
 	Project   project.Project

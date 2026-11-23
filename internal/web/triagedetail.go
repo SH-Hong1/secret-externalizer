@@ -24,6 +24,7 @@ type reasonOption struct {
 // the reason select with it. Cancel offers to clear the current verdict.
 // Fixed disables every verdict and offers only to save the note with the
 // verdict and name the bundle has, which is all an applied bundle allows.
+// Locked disables the whole form, the note included.
 type verdictForm struct {
 	Action  string
 	Return  string
@@ -34,6 +35,7 @@ type verdictForm struct {
 	Text    string
 	Cancel  bool
 	Fixed   bool
+	Locked  bool
 	Keep    triage.Verdict
 }
 
@@ -283,6 +285,18 @@ func newBundleDetail(id project.ID, ret string, b triage.Bundle, s triage.Sugges
 		}
 	}
 	return d
+}
+
+// lock takes away everything of d that changes the bundle: the verdict form
+// and the name are disabled, and no member offers a move.
+func (d *bundleDetail) lock() {
+	d.Form.Locked, d.Form.Text, d.Targets = true, "", nil
+	if d.Name != nil {
+		d.Name.Fixed, d.Name.Suggested = true, false
+	}
+	for i := range d.Members {
+		d.Members[i].Split = false
+	}
 }
 
 // newMoveTargets labels the bundles a member can move to with their number

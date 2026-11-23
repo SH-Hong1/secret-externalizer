@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -9,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
@@ -617,4 +619,73 @@ func TestTriage_NoOriginalNotice(t *testing.T) {
 	e.triage.putBundle(b)
 	res = e.do(t, http.MethodGet, "/projects/1/triage?sel=b101&status=all", nil, e.admin(t))
 	wantNotIn(t, "false-positive detail", section(res.body, "section", "detail"), "보관된 원본이 없습니다", "원본 보기")
+}
+
+func TestTriage_LockedWhileApplying(t *testing.T) {
+	const notice = "점검이나 적용이 진행 중이라 지금은 판정을 바꿀 수 없습니다."
+	submit := regexp.MustCompile(`<button[^>]*type="submit"[^>]*>`)
+	for _, tt := range []struct {
+		name string
+		sel  string
+	}{
+		{"bundle", "b101"},
+		{"customer data", "c.none.phone.logs/sample.log"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := triageEnv(t)
+			e.triage.same[passwordBundle] = []triage.Entry{{Bundle: 104, File: "conf/other.xml", FirstLine: 3}}
+			query := url.Values{"sel": {tt.sel}}
+
+			open := section(e.getTriage(t, query, nil).body, "section", "detail")
+			wantNotIn(t, "detail of sel="+tt.sel+" with no apply", open, notice)
+			if !strings.Contains(open, `name="verdict" value="false-positive">`) {
+				t.Fatalf("detail of sel=%s with no apply lacks an enabled verdict button:\n%s", tt.sel, open)
+			}
+
+			e.triage.applyActive = true
+			res := e.getTriage(t, query, nil)
+			if res.status != http.StatusOK {
+				t.Fatalf("GET triage sel=%s while applying status = %d, want 200", tt.sel, res.status)
+			}
+			detail := section(res.body, "section", "detail")
+			wantIn(t, "detail of sel="+tt.sel+" while applying", detail, notice, `<a href="/projects/1/apply">적용 화면 보기</a>`,
+				`id="verdict-note" name="note" value="" maxlength="500" autocomplete="off" disabled>`)
+			wantNotIn(t, "detail of sel="+tt.sel+" while applying", detail, `class="move-form"`, `id="verdict-name" name="name"`)
+			buttons := submit.FindAllString(detail, -1)
+			if len(buttons) < 3 {
+				t.Fatalf("detail of sel=%s while applying has %d submit buttons, want the verdict buttons:\n%s", tt.sel, len(buttons), detail)
+			}
+			for _, b := range buttons {
+				if !strings.Contains(b, " disabled") {
+					t.Errorf("detail of sel=%s while applying has the enabled button %s", tt.sel, b)
+				}
+			}
+		})
+	}
+	t.Run("decided bundle", func(t *testing.T) {
+		e := triageEnv(t)
+		b := e.triage.stored(passwordBundle)
+		b.Decision = triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}
+		e.triage.putBundle(b)
+		e.triage.applyActive = true
+		detail := section(e.getTriage(t, url.Values{"sel": {"b101"}, "status": {"all"}}, nil).body, "section", "detail")
+		wantIn(t, "decided detail while applying", detail, notice, `name="verdict" value="none" disabled>판정 취소</button>`,
+			`id="verdict-name" value="db.main.password" disabled`)
+	})
+	t.Run("refused verdict", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.applyActive = true
+		e.triage.decideErr = fmt.Errorf("deciding: %w", db.ErrApplyActive)
+		res := e.post(t, verdictPath, verdictForm("false-positive", "", "", "", "status=undecided"), nil)
+		detail := section(res.body, "section", "detail")
+		wantIn(t, "refused verdict detail", detail, "적용 중에는 판정을 바꿀 수 없습니다")
+		wantNotIn(t, "refused verdict detail", detail, notice)
+	})
+	t.Run("store error", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.activeErr = errors.New("fake failure")
+		if res := e.getTriage(t, nil, nil); res.status != http.StatusInternalServerError {
+			t.Errorf("GET triage when ApplyActive fails status = %d, want 500", res.status)
+		}
+	})
 }
