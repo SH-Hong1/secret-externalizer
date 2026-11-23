@@ -157,7 +157,7 @@ func TestApplyPage_States(t *testing.T) {
 		{
 			name:    "nothing to apply",
 			summary: nothing,
-			want:    []string{"외부화나 삭제·마스킹으로 판정한 항목이 없습니다.", "판정 화면에서 항목을 판정해 주세요.", `type="button" disabled>조건 점검</button>`},
+			want:    []string{"적용할 수 있는 항목이 없습니다.", "판정 화면에서 항목을 외부화나 삭제·마스킹으로 판정해 주세요. 판정한 항목이 있다면 모두 적용이 건너뛰는 항목입니다.", `type="button" disabled>조건 점검</button>`},
 			wantNot: []string{checkForm},
 		},
 		{
@@ -281,7 +281,7 @@ func TestApplyPage_Blockers(t *testing.T) {
 		{apply.BlockerDirty, "변경을 커밋하거나 stash한 뒤 다시 점검해 주세요.", false},
 		{apply.BlockerScanNotLatest, "마지막으로 성공한 스캔 뒤에 다른 스캔이 있습니다.", false},
 		{apply.BlockerManifestUnreadable, "secrets-manifest.yml을 읽을 수 없습니다.", false},
-		{apply.BlockerNothingToApply, "판정 화면에서 항목을 판정해 주세요.", false},
+		{apply.BlockerNothingToApply, "판정 화면에서 항목을 외부화나 삭제·마스킹으로 판정해 주세요. 판정한 항목이 있다면 모두 적용이 건너뛰는 항목입니다.", false},
 		{"made-up-blocker", "알 수 없는 조건입니다. <span class=\"mono\">made-up-blocker</span>", false},
 	}
 	for _, tt := range tests {

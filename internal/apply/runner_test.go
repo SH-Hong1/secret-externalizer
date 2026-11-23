@@ -562,6 +562,41 @@ func TestCheck_Blockers(t *testing.T) {
 	}
 }
 
+// TestCheck_NothingPlanned checks that a check whose every location turns
+// out skipped once the files are read is blocked like one with no verdict
+// to apply, and that customer data in an untracked file, which an apply
+// redacts with the user's consent, counts as something to apply.
+func TestCheck_NothingPlanned(t *testing.T) {
+	tests := []struct {
+		name  string
+		setup func(f *fixture)
+		want  bool
+	}{
+		{"every location skipped", func(f *fixture) {
+			f.secret("db.vendor.password", vendorValue, vendorFile)
+			f.keyFile("ssh.notes.key", notesFile)
+		}, true},
+		{"a skipped and a planned location", func(f *fixture) {
+			f.secret("db.vendor.password", vendorValue, vendorFile)
+			f.secret("db.yaml.password", ymlValue, ymlFile)
+		}, false},
+		{"customer data in an untracked file", func(f *fixture) { f.phoneNumber(untrackLog) }, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newShop(t, inRepository)
+			tt.setup(f)
+
+			saved := f.mustCheck()
+
+			if got := slices.Contains(saved.Blockers, apply.BlockerNothingToApply); got != tt.want {
+				t.Errorf("SaveCheck blockers = %v, items %v; want %q among them: %v",
+					saved.Blockers, outcomes(saved.Items), apply.BlockerNothingToApply, tt.want)
+			}
+		})
+	}
+}
+
 func TestCheck_DirtyTree(t *testing.T) {
 	t.Run("sixty tracked files", func(t *testing.T) {
 		f := newShop(t, inRepository)

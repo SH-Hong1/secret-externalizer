@@ -426,7 +426,10 @@ func (p *prepared) block(b Blocker) {
 // The records the project's runs left open are reconciled with the disk
 // first, before anything is planned. A condition that keeps the project
 // from being applied becomes a blocker; for an apply, preparing stops at
-// the first stage that found one. The caller closes the result.
+// the first stage that found one. A check whose every location turned out
+// skipped, with no applied value waiting for the manifest, is blocked as
+// nothing-to-apply; an apply in that state closes with what it skipped. The
+// caller closes the result.
 func (r *Runner) prepare(ctx context.Context, j job.Job, phase job.Kind) (_ *prepared, err error) {
 	id := ID(j.ApplyID)
 	if err := r.store.StartApply(ctx, id, phase); err != nil {
@@ -479,7 +482,23 @@ func (r *Runner) prepare(ctx context.Context, j job.Job, phase job.Kind) (_ *pre
 	}
 	takeWholeFiles(p)
 	r.markUntracked(p, phase)
+	if phase == job.KindApplyCheck && !p.anyPlanned() && len(p.in.Unlisted) == 0 {
+		p.block(BlockerNothingToApply)
+	}
 	return p, nil
+}
+
+// anyPlanned reports whether a location is left that an apply would change:
+// one that reading the files gave no reason to skip.
+func (p *prepared) anyPlanned() bool {
+	for _, f := range p.files {
+		for _, t := range f.targets {
+			if t.status == "" && t.reason == "" {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // openFolder resolves and opens the project folder under the workspace
