@@ -471,6 +471,13 @@ func (s *Store) SetScan(ctx context.Context, id scan.ID, status scan.Status, at 
 	return err
 }
 
+// SetScanFinished stores at, nil for NULL, as the finish time of the scan
+// with the given ID.
+func (s *Store) SetScanFinished(ctx context.Context, id scan.ID, at *time.Time) error {
+	_, err := s.pool.Exec(ctx, "UPDATE scan SET finished_at = $2 WHERE id = $1", id, at)
+	return err
+}
+
 // SetApplyRunTimes stores started and finished, nil for NULL, as the start
 // and finish times of the apply run with the given ID.
 func (s *Store) SetApplyRunTimes(ctx context.Context, id apply.ID, started, finished *time.Time) error {
