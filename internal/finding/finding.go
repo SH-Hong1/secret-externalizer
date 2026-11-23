@@ -116,6 +116,9 @@ type Finding struct {
 	ID          ID
 	Fingerprint string
 	File        string
+	// Key is the configuration key the value is assigned to in the file, or
+	// the empty string when there is none. It never holds a value.
+	Key         string
 	Category    Category
 	Kind        Kind
 	Preview     string

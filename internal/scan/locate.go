@@ -28,6 +28,10 @@ type spot struct {
 	// value is the bytes that are fingerprinted and kept as the original:
 	// the span of Text, or the file's bytes on disk for a whole-file result.
 	value Value
+	// keyAt is the byte offset in the file's Text at which the configuration
+	// key of the value is looked for. The components of a split URL share
+	// the offset of the URL, which is the value assigned to the key.
+	keyAt int
 }
 
 // placedFile is a file that has at least one placed result.
@@ -138,7 +142,7 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 			dropped++
 			continue
 		}
-		pf.spots = append(pf.spots, spot{raw: raw, span: span, value: Value(pf.file.Text[span.Start:span.End])})
+		pf.spots = append(pf.spots, spot{raw: raw, span: span, value: Value(pf.file.Text[span.Start:span.End]), keyAt: span.Start})
 	}
 	return pf, dropped
 }
@@ -172,6 +176,7 @@ func splitConnections(placed []*placedFile) []*placedFile {
 			}
 			for _, p := range parts {
 				c := s
+				c.keyAt = s.span.Start
 				c.raw.Kind = p.Kind
 				c.span = finding.Span{Start: s.span.Start + p.Span.Start, End: s.span.Start + p.Span.End}
 				c.value = s.value[p.Span.Start:p.Span.End]

@@ -44,7 +44,7 @@ func TestHandle_MergesTools(t *testing.T) {
 	}
 	got := e.result(t)
 	want := []finding.Finding{{
-		Fingerprint: fingerprintOf(password), File: propsFile,
+		Fingerprint: fingerprintOf(password), File: propsFile, Key: "jdbc.password",
 		// storage-credential comes before other-secret, and the kind comes
 		// from the detection that gave the category.
 		Category: finding.CategoryStorage, Kind: finding.KindPassword,
@@ -100,7 +100,7 @@ func TestHandle_SameValueTwoFiles(t *testing.T) {
 }
 
 func TestHandle_SameValueTwiceInFile(t *testing.T) {
-	e := newEnv(t, map[string]string{propsFile: "a=" + password + "\n#\nb=" + password + "\n"})
+	e := newEnv(t, map[string]string{propsFile: "a=" + password + "\n#\na=" + password + "\n"})
 	if err := e.handle(t.Context(), passwordBL(), passwordOG()); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
@@ -108,10 +108,88 @@ func TestHandle_SameValueTwiceInFile(t *testing.T) {
 	if len(got) != 1 || len(got[0].Locations) != 2 {
 		t.Fatalf("Handle() findings = %+v, want one finding with two locations", got)
 	}
+	if got[0].Key != "a" {
+		t.Errorf("Handle() key = %q, want %q", got[0].Key, "a")
+	}
 	for i, line := range []int{1, 3} {
 		l := got[0].Locations[i]
 		if l.StartLine != line || l.StartCol != 3 || len(l.Detections) != 2 {
 			t.Errorf("location %d = %+v, want line %d column 3 found by both tools", i, l, line)
+		}
+	}
+}
+
+func TestHandle_SameValueDifferentKeys(t *testing.T) {
+	content := "local.db.password=" + password + "\ndev.db.password=" + password + "\nlive.db.password=" + password + "\n"
+	e := newEnv(t, map[string]string{propsFile: content})
+	if err := e.handle(t.Context(), passwordBL(), passwordOG()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t).Findings
+	if len(got) != 3 {
+		t.Fatalf("Handle() findings = %+v, want three", got)
+	}
+	for i, key := range []string{"local.db.password", "dev.db.password", "live.db.password"} {
+		if got[i].Key != key || len(got[i].Locations) != 1 || got[i].Fingerprint != fingerprintOf(password) {
+			t.Errorf("finding %d = %+v, want key %q, one location, the password's fingerprint", i, got[i], key)
+		}
+	}
+	if e.orig.puts != 1 {
+		t.Errorf("Handle() put %d pending values, want 1 for one fingerprint", e.orig.puts)
+	}
+}
+
+func TestHandle_KeyInCRLFAndEUCKR(t *testing.T) {
+	text := "# 주문 설정\r\ndb.password=" + password + "\r\n"
+	euckr, err := korean.EUCKR.NewEncoder().String(text)
+	if err != nil {
+		t.Fatalf("encoding EUC-KR: %v", err)
+	}
+	e := newEnv(t, map[string]string{"crlf/a.properties": text, "euckr/a.properties": euckr})
+	if err := e.handle(t.Context(), passwordOG()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t).Findings
+	if len(got) != 2 {
+		t.Fatalf("Handle() findings = %+v, want two", got)
+	}
+	for _, f := range got {
+		if f.Key != "db.password" {
+			t.Errorf("Handle() key in %s = %q, want %q", f.File, f.Key, "db.password")
+		}
+	}
+}
+
+func TestHandle_URLComponentsShareKey(t *testing.T) {
+	const url = "jdbc:mysql://shop_app:dev-only-fake-pw@db.invalid:3306/shop" //nolint:gosec // G101: an obviously fake fixture value
+	e := newEnv(t, map[string]string{propsFile: "live.jdbc.url=" + url + "\n"})
+	scanner := &needleScanner{tool: "opengrep", rule: "properties-url", category: finding.CategoryStorage, kind: finding.KindURL, needle: url}
+	if err := e.handle(t.Context(), scanner); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t).Findings
+	if len(got) != 4 {
+		t.Fatalf("Handle() findings = %+v, want four components", got)
+	}
+	for _, f := range got {
+		if f.Key != "live.jdbc.url" {
+			t.Errorf("Handle() %s key = %q, want %q", f.Kind, f.Key, "live.jdbc.url")
+		}
+	}
+}
+
+func TestHandle_KeyNeverHoldsValueFoundElsewhere(t *testing.T) {
+	e := newEnv(t, map[string]string{
+		"a.properties": "acct=shopadmin\n",
+		"b.properties": "shopadmin.password=" + password + "\n",
+	})
+	user := &needleScanner{tool: "opengrep", rule: "properties-user", category: finding.CategoryStorage, kind: finding.KindAccount, needle: "shopadmin"}
+	if err := e.handle(t.Context(), passwordOG(), user); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	for _, f := range e.result(t).Findings {
+		if f.File == "b.properties" && f.Fingerprint == fingerprintOf(password) && f.Key != "" {
+			t.Errorf("Handle() key of the password in b.properties = %q, want none", f.Key)
 		}
 	}
 }
@@ -202,7 +280,7 @@ func TestHandle_CRLFAndEUCKR(t *testing.T) {
 }
 
 func TestHandle_BOM(t *testing.T) {
-	content := "\uFEFFdb.password=" + password + "\r\nb=" + password + "\r\n"
+	content := "\uFEFFdb.password=" + password + "\r\ndb.password=" + password + "\r\n"
 	e := newEnv(t, map[string]string{propsFile: content})
 	if err := e.handle(t.Context(), passwordBL(), passwordOG()); err != nil {
 		t.Fatalf("Handle() error = %v", err)
@@ -211,7 +289,7 @@ func TestHandle_BOM(t *testing.T) {
 	if got.Dropped != 0 || len(got.Findings) != 1 || len(got.Findings[0].Locations) != 2 {
 		t.Fatalf("Handle() = %+v, want one finding at two locations and nothing dropped", got)
 	}
-	for i, want := range [][2]int{{1, 13}, {2, 3}} {
+	for i, want := range [][2]int{{1, 13}, {2, 13}} {
 		l := got.Findings[0].Locations[i]
 		if l.StartLine != want[0] || l.StartCol != want[1] || len(l.Detections) != 2 {
 			t.Errorf("location %d = %+v, want line %d column %d found by both tools", i, l, want[0], want[1])
