@@ -567,7 +567,7 @@ PR 1을 만들고, 전체 검토를 거쳐 병합한다.
 - [x] **Step 3:** 확인에서 나온 결함은 실패하는 테스트를 먼저 쓰고 고친다. 고치지 않고 넘기는 것은 `docs/next-steps.md`에 적는다.
 - [x] **Step 4:** 결정 기록 0044를 쓴다(0041의 형식: 정한 것, 이유, 틀렸을 때). 검토 항목 16개를 권고안으로 확정한 것과 구현하면서 바꾼 것을 모은다.
 - [x] **Step 5:** `docs/next-steps.md`를 고친다. 표의 계획 6을 완료로 바꾸고, "지금 상태" 줄을 계획 7로 옮기고, "계획 6에서 남은 일" 절에 넘긴 것을 적는다(적어도: 리포트는 저장되지 않아 지난 스캔의 판정을 그때의 것으로 볼 수 없다, 절마다 100줄 한도, 바닥글에 프로젝트 이름이 없다, PDF 변환의 동시 요청 한도가 없다, pdf 말고는 네트워크가 나뉘지 않았다, 계획 7이 추이를 그리려면 스캔별 건수의 스냅숏이 필요한지 정해야 한다). `CHANGELOG.md`를 마무리한다.
-- [x] **Step 6:** `make check`와 `make test-integration`이 통과한 뒤 커밋한다(`docs: close plan 6`).
+- [x] **Step 6:** `make check`와 `make test-integration`이 통과한 뒤 커밋한다(`docs: close plan 6`). (Task 6은 `make check`만 돌렸다. `make test-integration`은 `cd63dc6`(Task 5)에서 마지막으로 통과했고, Task 6은 `internal/web/static_test.go`와 문서만 바꿨다.)
 
 PR 2를 만들고, 전체 검토를 거쳐 병합한다.
 

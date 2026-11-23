@@ -89,7 +89,7 @@ tmpfs의 실제 사용량은 리포트 요청 하나에 6MB쯤이었다(`df -h /
 ### 네트워크
 
 - `internal: true`인 `pdf` 네트워크에만 붙은 임시 컨테이너에서 `pdf:3000/health`는 200이었고, `example.com`, `postgres`, `openbao`, `valkey`, `keycloak`, `host.docker.internal`은 이름을 찾지 못했으며(curl 종료 코드 6), `1.1.1.1`, 이 네트워크의 게이트웨이(`172.19.0.1:8080`, `:15432`), colima 호스트 주소(`192.168.5.2:8080`)는 연결되지 않았다(종료 코드 7). `pdf` 컨테이너 안에서도 같았다.
-- web 컨테이너의 네트워크 이름공간에서 `http://pdf:3000/health`는 200이었다. web은 `PDF_URL`과 `pdf` 네트워크를 더한 채로 지금의 바이너리로 뜨고 기존 화면이 그대로 동작했다(아직 `PDF_URL`을 읽지 않는다).
+- web 컨테이너의 네트워크 이름공간에서 `http://pdf:3000/health`는 200이었다. web은 `PDF_URL`과 `pdf` 네트워크를 더한 채로 지금의 바이너리로 뜨고 기존 화면이 그대로 동작했다(이 확인은 web이 `PDF_URL`을 읽기 전의 것이다).
 - Chromium은 뜰 때 `update.googleapis.com`에 닿으려 하는데 Gotenberg의 프록시가 허용 목록으로 막는다(로그 `CONNECT blocked`).
 - `<script>`가 바꾸려던 글자는 바뀌지 않았고, `file:///etc/passwd` 스타일시트, `file:///etc/hostname` iframe, 바깥 주소의 `<img>`는 모두 `outbound request blocked by the Chromium filters`로 막힌 채 PDF가 나왔다.
 
@@ -130,7 +130,7 @@ compose의 `pdf` 서비스는 다음과 같다. 통합 테스트용 `pdf-test`(`
 - 이미지에 Noto Sans CJK KR이 있어 보낸 글꼴을 읽지 못해도 한글이 깨지지 않고 다른 글꼴로 조용히 그려진다. 그래서 확인은 화면이 아니라 PDF의 글꼴 이름으로 한다.
 - "자기 요청의 폴더"는 Gotenberg의 `file-prefix` 규칙이 지킨다. 허용 목록은 그 위에 한 겹을 더해, 요청 폴더 모양이 아닌 `/tmp`의 모든 것(`HOME=/tmp` 때문에 생기는 Chromium 프로필, 캐시, 소켓)과 하위 폴더를 막는다. Chromium의 사용자 데이터 폴더는 요청 폴더와 모양이 같아 정규식만으로는 가를 수 없고, 그 바로 아래의 파일(`Local State` 등)은 `file-prefix` 규칙이 막는다.
 - 메모리 한도는 `--chromium-max-memory`가 아니라 cgroup 한도로 둔다. 실험에서 `--chromium-max-memory`는 큰 문서를 더 오래 붙잡고 응답 없이 끊었고, cgroup 한도만 둔 쪽은 몇 초 안에 400으로 답했다.
-- 계획의 최대 크기(절마다 1,000줄)를 모두 채운 리포트는 이 기계(Docker VM 2GB)에서 1GB 한도로 인쇄되지 않는다. 한도를 없애도 인쇄되지 않고 다른 서비스를 위험하게 했으므로 한도를 높이지 않는다. 그런 리포트는 화면으로 보고, PDF는 실패 화면을 보인다.
+- 리포트가 가질 수 있는 크기는 `docs/decisions/0042-what-a-scan-report-shows.md`의 "PDF로 인쇄할 수 있는 크기"가 정한다. 한도를 없애도 큰 문서가 인쇄되지 않고 다른 서비스를 위험하게 했으므로 메모리 한도를 높이지 않는다.
 - 503을 `ErrUnavailable`로 두는 것은 Gotenberg가 제한 시간 초과와 Chromium 재시작 중을 503으로 알리기 때문이다. 사용자에게는 "잠시 뒤 다시 시도"가 맞는 안내다.
 
 ## 검토한 다른 방법
