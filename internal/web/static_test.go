@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -87,6 +88,7 @@ func TestLayoutNavigation(t *testing.T) {
 			wantContains(t, res.body,
 				tt.user.Name,
 				`<a class="nav-link" href="/projects" aria-current="page">프로젝트</a>`,
+				`<a class="nav-link" href="/dashboard">대시보드</a>`,
 				`<form method="post" action="/logout">`,
 				`<link rel="stylesheet" href="/static/app.css?v=`,
 				`<script src="/static/htmx.min.js?v=`,
@@ -94,6 +96,17 @@ func TestLayoutNavigation(t *testing.T) {
 			)
 			if got := strings.Contains(res.body, `href="/audit"`); got != tt.wantAudit {
 				t.Errorf("GET /projects as %s has the audit link = %v, want %v", tt.user.Name, got, tt.wantAudit)
+			}
+			want := []string{"/dashboard", "/projects"}
+			if tt.wantAudit {
+				want = append(want, "/audit")
+			}
+			var got []string
+			for _, m := range regexp.MustCompile(`<a class="nav-link" href="([^"]+)"`).FindAllStringSubmatch(res.body, -1) {
+				got = append(got, m[1])
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("GET /projects as %s menu = %v, want %v", tt.user.Name, got, want)
 			}
 		})
 	}
@@ -238,5 +251,35 @@ func TestWithoutFooterStyle(t *testing.T) {
 				t.Errorf("withoutFooterStyle(%q) = %q, %d, want %q, %d", tt.in, got, styles, tt.want, tt.styles)
 			}
 		})
+	}
+}
+
+// The dashboard chart keeps a minimum width and the cells of a table keep
+// to one line, so a narrow screen scrolls them instead of squeezing them.
+func TestStaticCSS_NarrowScreen(t *testing.T) {
+	srv := newTestServer(t, io.Discard)
+	css := get(t, srv.URL+"/static/app.css").body
+	compact := strings.ReplaceAll(css, " ", "")
+	for _, want := range []string{".chart-scroll", "min-width:780px"} {
+		if !strings.Contains(compact, want) {
+			t.Errorf("app.css lacks %q", want)
+		}
+	}
+	for _, sel := range []string{".table-nowrap th", ".table-nowrap .num"} {
+		if !regexp.MustCompile(`(?s)(?:^|[,}\s])` + regexp.QuoteMeta(sel) + `[^{]*\{[^}]*white-space:\s*nowrap`).MatchString(css) {
+			t.Errorf("app.css: no rule for %q sets white-space: nowrap", sel)
+		}
+	}
+}
+
+// The no-wrap rule belongs to the dashboard tables alone: the other tables,
+// the printed report among them, keep their own layout.
+func TestStaticCSS_NoWrapIsScoped(t *testing.T) {
+	srv := newTestServer(t, io.Discard)
+	css := get(t, srv.URL+"/static/app.css").body
+	for _, sel := range []string{".table th", ".table .num"} {
+		if regexp.MustCompile(`(?s)(?:^|[,}\s])` + regexp.QuoteMeta(sel) + `[^{]*\{[^}]*white-space:\s*nowrap`).MatchString(css) {
+			t.Errorf("app.css: rule for %q sets white-space: nowrap, want it only on .table-nowrap", sel)
+		}
 	}
 }

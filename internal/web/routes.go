@@ -40,6 +40,7 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	mux.Handle("POST /logout", handleLogout(logger, authn, sessions))
 	mux.Handle("/logout", handlePostOnly(logger, rd))
 	mux.Handle("GET /{$}", signedIn(handleHome(logger, rd)))
+	mux.Handle("GET /dashboard", usesStore(handleDashboard(logger, rd, stores.Dashboards, time.Now)))
 	mux.Handle("GET /audit", adminStore(handleAudit(logger, rd, audits)))
 	mux.Handle("GET /projects", usesStore(handleProjectList(logger, rd, projects)))
 	mux.Handle("GET /projects/new", signedIn(handleProjectNew(logger, rd)))

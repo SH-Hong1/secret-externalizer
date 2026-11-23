@@ -14,7 +14,6 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
-	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 const (
@@ -195,12 +194,12 @@ func handleProject(logger *slog.Logger, rd *renderer, projects ProjectStore, sca
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading latest scan: %w", err))
 			return
 		default:
-			page, err := store.Entries(r.Context(), p.ID, sc.ID, triage.Filter{Status: triage.StatusUndecided, Page: 1})
+			counts, err := store.VerdictCounts(r.Context(), p.ID, sc.ID)
 			if err != nil {
 				rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("counting verdicts: %w", err))
 				return
 			}
-			tiles = newVerdictTiles(p.ID, page.Counts)
+			tiles = newVerdictTiles(p.ID, counts)
 		}
 		// One more than the rows, since the active check is listed but not shown.
 		runs, err := applies.ApplyHistory(r.Context(), p.ID, maxApplyRows+1)

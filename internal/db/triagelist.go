@@ -182,9 +182,7 @@ func (s *Store) Entries(ctx context.Context, projectID project.ID, scanID scan.I
 	if err != nil {
 		return triage.Page{}, fmt.Errorf("listing entries: %w", err)
 	}
-	p := triage.Page{Counts: map[triage.Verdict]int{
-		"": 0, triage.VerdictExternalize: 0, triage.VerdictRedact: 0, triage.VerdictFalsePositive: 0, triage.VerdictHold: 0,
-	}}
+	p := triage.Page{Counts: zeroCounts()}
 	err = s.readOnly(ctx, func(tx pgx.Tx) error {
 		if err := readCounts(ctx, tx, projectID, scanID, p.Counts); err != nil {
 			return err
@@ -205,6 +203,26 @@ func (s *Store) Entries(ctx context.Context, projectID project.ID, scanID scan.I
 		return triage.Page{}, err
 	}
 	return p, nil
+}
+
+// zeroCounts returns verdict counts with a key for each verdict, all zero.
+func zeroCounts() map[triage.Verdict]int {
+	return map[triage.Verdict]int{
+		"": 0, triage.VerdictExternalize: 0, triage.VerdictRedact: 0, triage.VerdictFalsePositive: 0, triage.VerdictHold: 0,
+	}
+}
+
+// VerdictCounts returns the number of bundles of each verdict that the
+// scan found, as the Counts of Entries has it. The key of the bundles
+// without a verdict is the empty verdict.
+func (s *Store) VerdictCounts(ctx context.Context, projectID project.ID, scanID scan.ID) (map[triage.Verdict]int, error) {
+	counts := zeroCounts()
+	if err := s.readOnly(ctx, func(tx pgx.Tx) error {
+		return readCounts(ctx, tx, projectID, scanID, counts)
+	}); err != nil {
+		return nil, err
+	}
+	return counts, nil
 }
 
 // readCounts adds to counts the number of bundles of each verdict that

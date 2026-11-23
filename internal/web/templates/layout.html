@@ -12,6 +12,7 @@
 <header class="site-header">
 <a class="brand" href="/projects">secret-externalizer</a>
 {{with .User}}{{if .Subject}}<nav class="site-nav" aria-label="주 메뉴">
+<a class="nav-link" href="/dashboard"{{if eq section "dashboard"}} aria-current="page"{{end}}>대시보드</a>
 <a class="nav-link" href="/projects"{{if eq section "projects"}} aria-current="page"{{end}}>프로젝트</a>
 {{if .Has "admin"}}<a class="nav-link" href="/audit"{{if eq section "audit"}} aria-current="page"{{end}}>감사 로그</a>
 {{end}}</nav>

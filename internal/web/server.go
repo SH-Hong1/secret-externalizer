@@ -12,6 +12,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
+	"github.com/SH-Hong1/secret-externalizer/internal/dashboard"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
@@ -70,8 +71,9 @@ type ScanStore interface {
 // TriageStore keeps the bundles of a project and the verdicts users give them.
 // LatestScan returns the project's newest succeeded scan, or an error matching
 // db.ErrNotFound. Entries returns one page of the triage list of a scan; a
-// page past the last gives the last. Bundle returns a bundle with the members
-// the scan found, or an error matching db.ErrNotFound. CustomerGroup returns
+// page past the last gives the last. VerdictCounts returns the number of
+// bundles of each verdict that a scan found. Bundle returns a bundle with the
+// members the scan found, or an error matching db.ErrNotFound. CustomerGroup returns
 // the customer data a key names, with no bundles when it names nothing.
 // SameValueBundles returns the other bundles of a bundle's value that the scan
 // found. AppliedBundles returns one page of the project's applied bundles,
@@ -84,6 +86,7 @@ type ScanStore interface {
 type TriageStore interface {
 	LatestScan(ctx context.Context, projectID project.ID) (scan.Scan, error)
 	Entries(ctx context.Context, projectID project.ID, scanID scan.ID, f triage.Filter) (triage.Page, error)
+	VerdictCounts(ctx context.Context, projectID project.ID, scanID scan.ID) (map[triage.Verdict]int, error)
 	Bundle(ctx context.Context, projectID project.ID, scanID scan.ID, id triage.BundleID) (triage.Bundle, error)
 	CustomerGroup(ctx context.Context, projectID project.ID, scanID scan.ID, key triage.GroupKey) (triage.Group, error)
 	SameValueBundles(ctx context.Context, projectID project.ID, scanID scan.ID, id triage.BundleID) ([]triage.Entry, error)
@@ -146,6 +149,12 @@ type ReportStore interface {
 	Report(ctx context.Context, id scan.ID) (report.Data, error)
 }
 
+// DashboardStore reads what the dashboard shows. Dashboard fails with an
+// error matching db.ErrNotFound when the filter names an unknown project.
+type DashboardStore interface {
+	Dashboard(ctx context.Context, f dashboard.Filter) (dashboard.Data, error)
+}
+
 // Converter turns a document into a PDF. Convert fails with an error
 // matching pdf.ErrUnavailable when the converter cannot be reached or is
 // too slow, and pdf.ErrRejected when it does not return a PDF.
@@ -168,12 +177,13 @@ type printer struct {
 
 // Stores holds the stores the server reads and writes.
 type Stores struct {
-	Projects ProjectStore
-	Scans    ScanStore
-	Triage   TriageStore
-	Audits   AuditStore
-	Applies  ApplyStore
-	Reports  ReportStore
+	Projects   ProjectStore
+	Scans      ScanStore
+	Triage     TriageStore
+	Audits     AuditStore
+	Applies    ApplyStore
+	Reports    ReportStore
+	Dashboards DashboardStore
 }
 
 // NewServer returns the complete handler, including middleware. From the
