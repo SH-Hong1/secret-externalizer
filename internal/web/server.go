@@ -4,6 +4,8 @@ package web
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"time"
@@ -163,16 +165,37 @@ type Converter interface {
 }
 
 // Limits bounds the calls one request makes: Store the database and the
-// secret store, PDF one conversion.
+// secret store, PDF one conversion together with its wait for a free
+// conversion. Conversions is how many conversions run at one time; a value
+// below one means one.
 type Limits struct {
-	Store, PDF time.Duration
+	Store, PDF  time.Duration
+	Conversions int
 }
 
-// printer is what the PDF export needs: the converter and the files every
-// document sends beside its page, made once.
+// printer is what the PDF export needs: the converter, the files every
+// document sends beside its page, made once, and slots, which holds one
+// value for every conversion that is running.
 type printer struct {
 	converter Converter
 	files     []pdf.File
+	slots     chan struct{}
+}
+
+// errPDFBusy means no conversion became free before the context ended.
+var errPDFBusy = errors.New("every pdf conversion is taken")
+
+// convert converts doc once fewer conversions are running than slots
+// holds. The wait and the conversion share the deadline of ctx. It fails
+// with an error matching errPDFBusy when ctx ends during the wait.
+func (p printer) convert(ctx context.Context, doc pdf.Document) ([]byte, error) {
+	select {
+	case p.slots <- struct{}{}:
+	case <-ctx.Done():
+		return nil, fmt.Errorf("%w: %w", errPDFBusy, ctx.Err())
+	}
+	defer func() { <-p.slots }()
+	return p.converter.Convert(ctx, doc)
 }
 
 // Stores holds the stores the server reads and writes.
@@ -192,7 +215,8 @@ type Stores struct {
 // that calls the stores or the originals runs under a deadline limits.Store
 // from the moment it is reached; the session is read before that deadline
 // starts. The PDF export reads the store under limits.Store and converts
-// under limits.PDF. NewServer panics when the stylesheet names a font the
+// under limits.PDF, at most limits.Conversions documents at one time.
+// NewServer panics when the stylesheet names a font the
 // binary does not hold.
 func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, attempts AttemptStore,
 	stores Stores, suggester Suggester, originals Originals, converter Converter, limits Limits,
@@ -200,7 +224,7 @@ func NewServer(logger *slog.Logger, authn Authenticator, sessions SessionStore, 
 	mux := http.NewServeMux()
 	a := loadAssets(staticFiles())
 	rd := newRenderer(a)
-	addRoutes(mux, logger, rd, a, authn, sessions, attempts, stores, suggester, originals, printer{converter, printFiles(a)}, limits)
+	addRoutes(mux, logger, rd, a, authn, sessions, attempts, stores, suggester, originals, printer{converter, printFiles(a), make(chan struct{}, max(1, limits.Conversions))}, limits)
 
 	return chain(mux,
 		recoverPanic(logger, rd),

@@ -388,17 +388,82 @@ func TestHandleReportPDF_Document(t *testing.T) {
 	}
 }
 
+// linkedReport is fullReport with everything that makes the report link to
+// another screen: a later scan, files the scan could not look at, and an
+// apply run in the history.
+func linkedReport() report.Data {
+	d := fullReport()
+	d.Latest = 9
+	d.Scan.Skipped = 2
+	return d
+}
+
+var (
+	plainLink = regexp.MustCompile(` <a href="[^"]*">[^<]*</a>`)
+	badgeLink = regexp.MustCompile(`<a class="(badge badge-[a-z-]+)" href="[^"]*">([^<]*)</a>`)
+)
+
+// withoutLinks returns the report block as the PDF page draws it: a link
+// after a sentence is left out, and a badge that links is a plain badge.
+func withoutLinks(article string) string {
+	article = plainLink.ReplaceAllString(article, "")
+	return badgeLink.ReplaceAllString(article, `<span class="$1">$2</span>`)
+}
+
 func TestHandleReportPDF_SameAsPage(t *testing.T) {
 	e := newTestEnv(t)
-	e.reports.put(fullReport())
+	e.reports.put(linkedReport())
 	page := e.getReport(t)
 	if res := e.getReportPDF(t); res.status != http.StatusOK {
 		t.Fatalf("GET /scans/7/report.pdf status = %d, want 200; body:\n%s", res.status, res.body)
 	}
-	want := reportArticle(t, "GET /scans/7/report", page.body)
+	screen := reportArticle(t, "GET /scans/7/report", page.body)
+	wantIn(t, "GET /scans/7/report", screen, `href="/scans/9/report"`, `href="/scans/7#unchecked"`, `href="/applies/2"`)
+	want := withoutLinks(screen)
 	got := reportArticle(t, "the PDF page", string(e.lastDocument(t).Index))
 	if diff := cmp.Diff(want, got); diff != "" {
-		t.Errorf("the PDF page's report differs from the screen's (-screen +pdf):\n%s", diff)
+		t.Errorf("the PDF page's report differs from the screen's without its links (-screen +pdf):\n%s", diff)
+	}
+}
+
+func TestHandleReportPDF_NoLinks(t *testing.T) {
+	e := newTestEnv(t)
+	e.reports.put(linkedReport())
+	if res := e.getReportPDF(t); res.status != http.StatusOK {
+		t.Fatalf("GET /scans/7/report.pdf status = %d, want 200; body:\n%s", res.status, res.body)
+	}
+	index := string(e.lastDocument(t).Index)
+	wantIn(t, "the PDF page", index, "프로젝트의 마지막 성공한 스캔은 #9입니다.", `<span class="badge badge-queued">적용 #2</span>`)
+	wantNotIn(t, "the PDF page", index, "<a ", `href="/`, "스캔 화면에서 보기")
+}
+
+func TestHandleReportPDF_OneAtATime(t *testing.T) {
+	e := newTestEnvWith(t, web.Limits{Store: time.Minute, PDF: 50 * time.Millisecond, Conversions: 1}, nil)
+	e.reports.put(fullReport())
+	e.converter.hold = make(chan struct{})
+	e.converter.entered = make(chan struct{}, 2)
+	user := e.user(t)
+
+	first := make(chan result, 1)
+	go func() { first <- e.do(t, http.MethodGet, "/scans/7/report.pdf", nil, user) }()
+	<-e.converter.entered
+
+	res := e.do(t, http.MethodGet, "/scans/7/report.pdf", nil, user)
+	if res.status != http.StatusServiceUnavailable {
+		t.Errorf("GET /scans/7/report.pdf during another conversion status = %d, want 503", res.status)
+	}
+	wantIn(t, "GET /scans/7/report.pdf during another conversion", res.body,
+		"다른 PDF를 만드는 중입니다. 잠시 뒤 다시 시도해 주세요.")
+	if docs, _ := e.converter.calls(); len(docs) != 1 {
+		t.Errorf("the converter was called %d times while one conversion ran, want 1", len(docs))
+	}
+
+	close(e.converter.hold)
+	if res := <-first; res.status != http.StatusOK {
+		t.Errorf("GET /scans/7/report.pdf of the first request status = %d, want 200", res.status)
+	}
+	if res := e.do(t, http.MethodGet, "/scans/7/report.pdf", nil, user); res.status != http.StatusOK {
+		t.Errorf("GET /scans/7/report.pdf after the first conversion ended status = %d, want 200", res.status)
 	}
 }
 

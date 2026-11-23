@@ -1,6 +1,7 @@
 package web
 
 import (
+	"slices"
 	"strconv"
 	"strings"
 
@@ -131,6 +132,17 @@ type eventRow struct {
 	Name        string
 	Reason      string
 	Note        string
+}
+
+// printed returns v as the PDF document draws it: with no address of
+// another screen, so the template block draws the same text without links.
+func (v reportView) printed() reportView {
+	v.LaterHref, v.UncheckedHref = "", ""
+	v.History.Rows = slices.Clone(v.History.Rows)
+	for i := range v.History.Rows {
+		v.History.Rows[i].RunHref = ""
+	}
+	return v
 }
 
 // newReportView shapes r for its template block.

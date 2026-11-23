@@ -127,7 +127,7 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 
 	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store,
 		web.Stores{Projects: database, Scans: database, Triage: database, Audits: database, Applies: database, Reports: database, Dashboards: database},
-		web.NewHistorySuggester(database), originals, converter, web.Limits{Store: databaseLimit, PDF: pdfLimit}))
+		web.NewHistorySuggester(database), originals, converter, web.Limits{Store: databaseLimit, PDF: pdfLimit, Conversions: pdfConversions}))
 }
 
 // pdfLimit bounds one conversion of a report to a PDF. With databaseLimit
@@ -135,9 +135,13 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 // is longer than the converter's own limit, so the converter's answer to a
 // slow page normally arrives first. pdfClientLimit is the client's own
 // bound, a little longer, for a call made without a deadline.
+// pdfConversions is how many conversions run at one time: the converter's
+// memory limit holds one report filled to every cap, so a second request
+// waits inside its own pdfLimit.
 const (
 	pdfLimit       = 20 * time.Second
 	pdfClientLimit = 25 * time.Second
+	pdfConversions = 1
 )
 
 // databaseLimit bounds the database and secret store calls of one request,

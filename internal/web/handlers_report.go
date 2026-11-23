@@ -19,6 +19,7 @@ import (
 // The error page texts of the PDF export.
 const (
 	msgPDFUnavailable = "PDF 변환 서비스에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요."
+	msgPDFBusy        = "다른 PDF를 만드는 중입니다. 잠시 뒤 다시 시도해 주세요."
 	msgPDFRejected    = "PDF를 만들지 못했습니다. 리포트가 너무 커서 변환기가 인쇄하지 못했을 수 있습니다."
 )
 
@@ -58,7 +59,9 @@ func handleReport(logger *slog.Logger, rd *renderer, reports ReportStore, now fu
 // handleReportPDF sends the report of one succeeded scan as a PDF file. It
 // reads the store under limits.Store and converts under limits.PDF, each
 // from the moment it starts, so a slow database does not shorten the
-// conversion. The PDF is written only once the converter has returned all
+// conversion. The wait for a free conversion counts toward limits.PDF. The
+// printed document links nowhere, because a link in it would point into the
+// folder the converter prints from. The PDF is written only once the converter has returned all
 // of it; otherwise the browser gets an error page and no partial file.
 func handleReportPDF(logger *slog.Logger, rd *renderer, reports ReportStore, p printer, limits Limits, now func() time.Time) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +71,7 @@ func handleReportPDF(logger *slog.Logger, rd *renderer, reports ReportStore, p p
 		if !ok {
 			return
 		}
-		view := newReportView(report.Build(d, now()))
+		view := newReportView(report.Build(d, now())).printed()
 		index, err := rd.render("report.html", "print", view)
 		if err != nil {
 			rd.fail(w, r, logger, http.StatusInternalServerError, err)
@@ -82,8 +85,11 @@ func handleReportPDF(logger *slog.Logger, rd *renderer, reports ReportStore, p p
 
 		pdfCtx, cancel := context.WithTimeout(r.Context(), limits.PDF)
 		defer cancel()
-		out, err := p.converter.Convert(pdfCtx, pdf.Document{Index: index, Footer: footer, Files: p.files})
+		out, err := p.convert(pdfCtx, pdf.Document{Index: index, Footer: footer, Files: p.files})
 		switch {
+		case errors.Is(err, errPDFBusy):
+			rd.errorPage(w, r, logger, http.StatusServiceUnavailable, msgPDFBusy, false, fmt.Errorf("converting report: %w", err))
+			return
 		case errors.Is(err, pdf.ErrUnavailable):
 			rd.errorPage(w, r, logger, http.StatusServiceUnavailable, msgPDFUnavailable, false, fmt.Errorf("converting report: %w", err))
 			return
