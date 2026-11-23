@@ -264,10 +264,64 @@ func TestHandle_KeyNeverHoldsValueFoundElsewhere(t *testing.T) {
 	if err := e.handle(t.Context(), passwordOG(), user); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
+	found := false
 	for _, f := range e.result(t).Findings {
-		if f.File == "b.properties" && f.Fingerprint == fingerprintOf(password) && f.Key != "" {
+		if f.File != "b.properties" || f.Fingerprint != fingerprintOf(password) {
+			continue
+		}
+		found = true
+		if f.Key != "" {
 			t.Errorf("Handle() key of the password in b.properties = %q, want none", f.Key)
 		}
+	}
+	if !found {
+		t.Errorf("Handle() found no password in b.properties, want one with no key")
+	}
+}
+
+func TestHandle_NoKeyWhereCustomerDataMayBe(t *testing.T) {
+	const token = "dev-only-fake-bearer-token" //nolint:gosec // G101: an obviously fake fixture value
+	tests := []struct {
+		name, rel, text string
+	}{
+		{"customer data path", "logs/app.log", "api.token=" + token + "\n"},
+		{"file with customer data", "conf/app.properties", "api.token=" + token + "\nsupport.phone=" + phone + "\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{tt.rel: tt.text})
+			tok := &needleScanner{tool: "opengrep", rule: "properties-token", category: finding.CategoryOther, kind: finding.KindOther, needle: token}
+			cust := &needleScanner{tool: "betterleaks", rule: "customer-phone", category: finding.CategoryCustomerData, kind: finding.KindPhone, needle: phone, lineCol: true}
+			if err := e.handle(t.Context(), tok, cust); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+			found := false
+			for _, f := range e.result(t).Findings {
+				if f.Fingerprint != fingerprintOf(token) {
+					continue
+				}
+				found = true
+				if f.Key != "" {
+					t.Errorf("Handle() key of the token in %s = %q, want none", tt.rel, f.Key)
+				}
+			}
+			if !found {
+				t.Errorf("Handle() found no token in %s, want one with no key", tt.rel)
+			}
+		})
+	}
+}
+
+func TestHandle_NoKeyForValueOverLines(t *testing.T) {
+	const value = "dev-only-fake-first-line\ndev-only-fake-second-line"
+	e := newEnv(t, map[string]string{propsFile: "db.password=" + value + "\n"})
+	s := &needleScanner{tool: "opengrep", rule: "properties-password", category: finding.CategoryStorage, kind: finding.KindPassword, needle: value}
+	if err := e.handle(t.Context(), s); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t).Findings
+	if len(got) != 1 || got[0].Key != "" {
+		t.Errorf("Handle() findings = %+v, want one with no key", got)
 	}
 }
 
@@ -365,6 +419,9 @@ func TestHandle_BOM(t *testing.T) {
 	got := e.result(t)
 	if got.Dropped != 0 || len(got.Findings) != 1 || len(got.Findings[0].Locations) != 2 {
 		t.Fatalf("Handle() = %+v, want one finding at two locations and nothing dropped", got)
+	}
+	if got.Findings[0].Key != "db.password" {
+		t.Errorf("Handle() key = %q, want %q", got.Findings[0].Key, "db.password")
 	}
 	for i, want := range [][2]int{{1, 13}, {2, 13}} {
 		l := got.Findings[0].Locations[i]

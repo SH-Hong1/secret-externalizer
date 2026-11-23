@@ -1211,6 +1211,54 @@ func TestSaveResult_KeylessAfterKeyed(t *testing.T) {
 	}
 }
 
+func TestSaveResult_NewKeyBesideKeylessAndKeyed(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, pwKey("alpha.db.password"))
+	alpha := findingIDOfKey(t, s, pid, fpA, keysFile, "alpha.db.password")
+	save(t, s, pid, password(keysFile))
+	keyless := findingID(t, s, pid, fpA, keysFile)
+	keylessBundle := bundleOf(t, s, pid, fpA, keysFile)
+
+	save(t, s, pid, pwKey("beta.db.password"))
+	beta := findingIDOfKey(t, s, pid, fpA, keysFile, "beta.db.password")
+	if beta == keyless || beta == alpha {
+		t.Errorf("finding of beta.db.password = %d, want a new row beside keyless %d and alpha %d", beta, keyless, alpha)
+	}
+	if got := findingID(t, s, pid, fpA, keysFile); got != keyless {
+		t.Errorf("keyless finding after the beta scan = %d, want %d with no key", got, keyless)
+	}
+	b := bundleOfKey(t, s, pid, fpA, keysFile, "beta.db.password")
+	if b == keylessBundle || b == bundleOfKey(t, s, pid, fpA, keysFile, "alpha.db.password") {
+		t.Errorf("bundle of beta.db.password = %d, want a bundle of its own", b)
+	}
+	if n, err := s.Count(ctx, "finding"); err != nil || n != 3 {
+		t.Errorf("rows in finding = %d, %v, want 3", n, err)
+	}
+}
+
+func TestSaveResult_LegacyFoundKeylessInSameScanIsNotAdopted(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, password(keysFile))
+	legacy := findingID(t, s, pid, fpA, keysFile)
+
+	keylessAgain := password(keysFile)
+	withKey := keyed(fnd(fpA, keysFile, finding.CategoryStorage, finding.KindPassword, 5), "live.db.password")
+	save(t, s, pid, keylessAgain, withKey)
+	if got := findingID(t, s, pid, fpA, keysFile); got != legacy {
+		t.Errorf("keyless finding after the scan = %d, want the legacy finding %d", got, legacy)
+	}
+	if got := findingIDOfKey(t, s, pid, fpA, keysFile, "live.db.password"); got == legacy {
+		t.Errorf("finding of live.db.password = %d, want a new row, not the legacy finding", got)
+	}
+	if n, err := s.Count(ctx, "finding"); err != nil || n != 2 {
+		t.Errorf("rows in finding = %d, %v, want 2", n, err)
+	}
+}
+
 // assertLegacyAdopts stores legacy, a finding with no key, decides its bundle
 // with d, and rescans its file with keys local, dev and live. It checks that
 // local takes over the finding with its bundle and decision and that dev and
