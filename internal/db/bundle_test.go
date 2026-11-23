@@ -1263,3 +1263,32 @@ func TestSaveResult_LegacyOwnBundleAdopts(t *testing.T) {
 	assertLegacyAdopts(t, host(keysFile),
 		triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"})
 }
+
+func TestBundle_MembersCarryKey(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	sid := save(t, s, pid, pwKey("live.db.password"), password("conf/other.properties"))
+	b := bundleOfKey(t, s, pid, fpA, keysFile, "live.db.password")
+	decide(t, s, pid, externalizeDB, b)
+
+	keys := func(bundle triage.Bundle) map[string]string {
+		out := map[string]string{}
+		for _, m := range bundle.Members {
+			out[m.File] = m.Key
+		}
+		return out
+	}
+	want := map[string]string{keysFile: "live.db.password", "conf/other.properties": ""}
+
+	if diff := cmp.Diff(want, keys(readBundle(t, s, pid, sid, b))); diff != "" {
+		t.Errorf("Bundle(%d) member keys (-want +got):\n%s", b, diff)
+	}
+	id := requestCheck(t, s, pid)
+	in := applyInput(t, s, id)
+	if len(in.Bundles) != 1 {
+		t.Fatalf("ApplyInput(%d) has %d bundles, want 1", id, len(in.Bundles))
+	}
+	if diff := cmp.Diff(want, keys(in.Bundles[0])); diff != "" {
+		t.Errorf("ApplyInput(%d) member keys (-want +got):\n%s", id, diff)
+	}
+}

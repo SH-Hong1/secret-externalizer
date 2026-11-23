@@ -71,7 +71,7 @@ func (s *Store) Bundle(ctx context.Context, projectID project.ID, scanID scan.ID
 // sets b's category, kind and preview from the member with the lowest ID.
 func readMembers(ctx context.Context, tx pgx.Tx, scanID scan.ID, b *triage.Bundle) error {
 	rows, err := tx.Query(ctx, `
-		SELECT f.id, f.file_path, f.category, f.kind, f.preview, f.has_original,
+		SELECT f.id, f.file_path, f.key, f.category, f.kind, f.preview, f.has_original,
 			`+locationColumns+`
 		FROM finding f JOIN location l ON l.finding_id = f.id
 		WHERE f.bundle_id = $1 AND l.scan_id = $2
@@ -88,7 +88,7 @@ func readMembers(ctx context.Context, tx pgx.Tx, scanID scan.ID, b *triage.Bundl
 			k       finding.Kind
 			preview string
 		)
-		dest := []any{&m.FindingID, &m.File, &c, &k, &preview, &m.HasOriginal}
+		dest := []any{&m.FindingID, &m.File, &m.Key, &c, &k, &preview, &m.HasOriginal}
 		l, err := scanLocation(rows, dest...)
 		if err != nil {
 			return err

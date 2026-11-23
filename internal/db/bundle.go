@@ -136,7 +136,7 @@ func lockBundle(ctx context.Context, tx pgx.Tx, projectID project.ID, id triage.
 	}
 	b.AppliedAt = timeOf(appliedAt)
 	rows, err := tx.Query(ctx, `
-		SELECT id, file_path, category, kind, preview, has_original,
+		SELECT id, file_path, key, category, kind, preview, has_original,
 			coalesce(last_scan_id = (
 				SELECT id FROM scan WHERE project_id = $2 AND status = 'succeeded' ORDER BY id DESC LIMIT 1
 			), false)
@@ -153,7 +153,7 @@ func lockBundle(ctx context.Context, tx pgx.Tx, projectID project.ID, id triage.
 			preview string
 			current bool
 		)
-		if err := rows.Scan(&m.FindingID, &m.File, &c, &k, &preview, &m.HasOriginal, &current); err != nil {
+		if err := rows.Scan(&m.FindingID, &m.File, &m.Key, &c, &k, &preview, &m.HasOriginal, &current); err != nil {
 			return lockedBundle{}, fmt.Errorf("reading member row: %w", err)
 		}
 		lb.findings++

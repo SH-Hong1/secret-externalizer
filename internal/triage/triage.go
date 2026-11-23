@@ -60,10 +60,12 @@ type Decision struct {
 }
 
 // Member is one finding of a bundle: the value in one file, with the
-// locations of one scan.
+// locations of one scan. Key is the configuration key the value is assigned
+// to, or empty when the scan found none.
 type Member struct {
 	FindingID   finding.ID
 	File        string
+	Key         string
 	HasOriginal bool
 	Locations   []finding.Location
 }
