@@ -689,3 +689,43 @@ func TestTriage_LockedWhileApplying(t *testing.T) {
 		}
 	})
 }
+
+func TestTriageDetail_ShowsKey(t *testing.T) {
+	e := triageEnv(t)
+	loc := []finding.Location{{StartLine: 3, EndLine: 3}}
+	e.triage.putBundle(triage.Bundle{
+		ID: passwordBundle, ProjectID: 1, Fingerprint: fpPassword,
+		Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "Sh0p****",
+		Members: []triage.Member{
+			{FindingID: 1001, File: "conf/app.properties", Key: "local.db.password", Locations: loc},
+			{FindingID: 1002, File: "conf/app.properties", Locations: loc},
+		},
+	})
+	res := e.getTriage(t, nil, nil)
+	detail := section(res.body, "section", "detail")
+	wantIn(t, "detail of a bundle with a keyed member", detail,
+		`<span class="muted">키</span> <span class="mono">local.db.password</span>`)
+	if n := strings.Count(detail, "local.db.password"); n != 1 {
+		t.Errorf("detail shows the key %d times, want once", n)
+	}
+	if n := strings.Count(detail, `<span class="muted">키</span>`); n != 1 {
+		t.Errorf("detail has %d key marks, want one: the member without a key shows none", n)
+	}
+}
+
+func TestTriageDetail_MoveTargetShowsKey(t *testing.T) {
+	e := triageEnv(t)
+	e.triage.same[passwordBundle] = []triage.Entry{
+		{
+			Bundle: 17, Name: "db.shop.password", Verdict: triage.VerdictExternalize, Key: "live.db.password",
+			Category: finding.CategoryStorage, Kind: finding.KindPassword, File: "conf/other.yml", FirstLine: 4, Count: 1, Bundles: 1,
+		},
+		{
+			Bundle: 18, Category: finding.CategoryStorage, Kind: finding.KindPassword, File: "conf/third.yml", FirstLine: 5, Count: 1, Bundles: 1,
+		},
+	}
+	res := e.getTriage(t, nil, nil)
+	detail := section(res.body, "section", "detail")
+	wantIn(t, "detail with move targets", detail,
+		"묶음 #17 · ", " · live.db.password</option>", "conf/third.yml:5</option>")
+}

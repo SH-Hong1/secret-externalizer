@@ -1292,3 +1292,25 @@ func TestBundle_MembersCarryKey(t *testing.T) {
 		t.Errorf("ApplyInput(%d) member keys (-want +got):\n%s", id, diff)
 	}
 }
+
+func TestSameValueBundles_ReadsKeyOfFirstMember(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	sid := save(t, s, pid,
+		pwKey("local.db.password"), pwKey("dev.db.password"),
+		keyed(password("conf/other.properties"), "db.password"))
+	local := bundleOfKey(t, s, pid, fpA, keysFile, "local.db.password")
+	dev := bundleOfKey(t, s, pid, fpA, keysFile, "dev.db.password")
+
+	got, err := s.SameValueBundles(t.Context(), pid, sid, dev)
+	if err != nil {
+		t.Fatalf("SameValueBundles(%d, %d, %d) error = %v", pid, sid, dev, err)
+	}
+	want := []triage.Entry{{
+		Bundle: local, Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "****",
+		File: keysFile, Key: "local.db.password", FirstLine: 3, Count: 2, Bundles: 1,
+	}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("SameValueBundles(%d, %d, %d) (-want +got):\n%s", pid, sid, dev, diff)
+	}
+}
