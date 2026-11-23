@@ -156,7 +156,7 @@ func handleTriage(logger *slog.Logger, rd *renderer, projects ProjectStore, stor
 // with the counts of the status filters for scan sc.
 func fillAppliedPage(ctx context.Context, store TriageStore, data *triagePage, q triageQuery, sc scan.Scan) error {
 	pid := data.Project.ID
-	counts, err := store.Entries(ctx, pid, sc.ID, triage.Filter{Status: triage.StatusUndecided, Page: 1})
+	counts, err := store.VerdictCounts(ctx, pid, sc.ID)
 	if err != nil {
 		return fmt.Errorf("counting verdicts: %w", err)
 	}
@@ -164,8 +164,8 @@ func fillAppliedPage(ctx context.Context, store TriageStore, data *triagePage, q
 	if err != nil {
 		return fmt.Errorf("listing applied bundles: %w", err)
 	}
-	setScanHead(data, sc, counts.Counts)
-	data.Statuses = newStatusChips(pid, q, counts.Counts, applied.Total)
+	setScanHead(data, sc, counts)
+	data.Statuses = newStatusChips(pid, q, counts, applied.Total)
 	data.Applied = newAppliedTable(pid, applied)
 	return nil
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
-	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 // msgScanWhileApplying is the refusal of a scan requested while an apply of
@@ -115,12 +114,12 @@ func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans 
 			rd.page(w, r, logger, http.StatusOK, "scan.html", page)
 			return
 		}
-		list, err := store.Entries(r.Context(), p.ID, sc.ID, triage.Filter{Status: triage.StatusUndecided, Page: 1})
+		verdicts, err := store.VerdictCounts(r.Context(), p.ID, sc.ID)
 		if err != nil {
 			rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("counting verdicts: %w", err))
 			return
 		}
-		page.Undecided = list.Counts[""]
+		page.Undecided = verdicts[""]
 		rd.page(w, r, logger, http.StatusOK, "scan.html", page)
 	})
 }

@@ -528,6 +528,55 @@ func TestEntries(t *testing.T) {
 	})
 }
 
+func TestVerdictCounts(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	var findings []finding.Finding
+	for i := range 4 {
+		findings = append(findings, fnd(fmt.Sprintf("%064x", i+1), "conf/app.yml", finding.CategoryStorage, finding.KindPassword, i+1))
+	}
+	for i := range 3 {
+		findings = append(findings, fnd(fmt.Sprintf("%064x", 1000+i), "logs/app.log", finding.CategoryCustomerData, finding.KindPhone, i+1))
+	}
+	first := save(t, s, pid, findings...)
+	decide(t, s, pid, externalizeDB, bundleOf(t, s, pid, findings[0].Fingerprint, "conf/app.yml"))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive}, bundleOf(t, s, pid, findings[1].Fingerprint, "conf/app.yml"))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive}, bundleOf(t, s, pid, findings[5].Fingerprint, "logs/app.log"))
+	// The second scan finds only the first two values, so the others do not count.
+	second := save(t, s, pid, findings[:2]...)
+
+	for _, tt := range []struct {
+		name string
+		sid  scan.ID
+		want map[triage.Verdict]int
+	}{
+		{"first scan", first, map[triage.Verdict]int{
+			"": 4, triage.VerdictExternalize: 1, triage.VerdictRedact: 0, triage.VerdictFalsePositive: 2, triage.VerdictHold: 0,
+		}},
+		{"second scan", second, map[triage.Verdict]int{
+			"": 0, triage.VerdictExternalize: 1, triage.VerdictRedact: 0, triage.VerdictFalsePositive: 1, triage.VerdictHold: 0,
+		}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := s.VerdictCounts(ctx, pid, tt.sid)
+			if err != nil {
+				t.Fatalf("VerdictCounts(%d, %d) error = %v", pid, tt.sid, err)
+			}
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("VerdictCounts(%d, %d) (-want +got):\n%s", pid, tt.sid, diff)
+			}
+			p, err := s.Entries(ctx, pid, tt.sid, triage.Filter{Status: triage.StatusAll, Page: 1})
+			if err != nil {
+				t.Fatalf("Entries(%d, %d) error = %v", pid, tt.sid, err)
+			}
+			if diff := cmp.Diff(p.Counts, got); diff != "" {
+				t.Errorf("VerdictCounts differs from Entries().Counts (-entries +counts):\n%s", diff)
+			}
+		})
+	}
+}
+
 func TestBundle(t *testing.T) {
 	s := newMigratedStore(t)
 	pid := newProject(t, s, "shop")

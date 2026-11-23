@@ -70,8 +70,9 @@ type ScanStore interface {
 // TriageStore keeps the bundles of a project and the verdicts users give them.
 // LatestScan returns the project's newest succeeded scan, or an error matching
 // db.ErrNotFound. Entries returns one page of the triage list of a scan; a
-// page past the last gives the last. Bundle returns a bundle with the members
-// the scan found, or an error matching db.ErrNotFound. CustomerGroup returns
+// page past the last gives the last. VerdictCounts returns the number of
+// bundles of each verdict that a scan found. Bundle returns a bundle with the
+// members the scan found, or an error matching db.ErrNotFound. CustomerGroup returns
 // the customer data a key names, with no bundles when it names nothing.
 // SameValueBundles returns the other bundles of a bundle's value that the scan
 // found. AppliedBundles returns one page of the project's applied bundles,
@@ -84,6 +85,7 @@ type ScanStore interface {
 type TriageStore interface {
 	LatestScan(ctx context.Context, projectID project.ID) (scan.Scan, error)
 	Entries(ctx context.Context, projectID project.ID, scanID scan.ID, f triage.Filter) (triage.Page, error)
+	VerdictCounts(ctx context.Context, projectID project.ID, scanID scan.ID) (map[triage.Verdict]int, error)
 	Bundle(ctx context.Context, projectID project.ID, scanID scan.ID, id triage.BundleID) (triage.Bundle, error)
 	CustomerGroup(ctx context.Context, projectID project.ID, scanID scan.ID, key triage.GroupKey) (triage.Group, error)
 	SameValueBundles(ctx context.Context, projectID project.ID, scanID scan.ID, id triage.BundleID) ([]triage.Entry, error)

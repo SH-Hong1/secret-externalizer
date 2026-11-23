@@ -412,6 +412,10 @@ func (b *blockingStore) Entries(ctx context.Context, _ project.ID, _ scan.ID, _ 
 	return triage.Page{}, b.wait(ctx)
 }
 
+func (b *blockingStore) VerdictCounts(ctx context.Context, _ project.ID, _ scan.ID) (map[triage.Verdict]int, error) {
+	return nil, b.wait(ctx)
+}
+
 func (b *blockingStore) Bundle(ctx context.Context, _ project.ID, _ scan.ID, _ triage.BundleID) (triage.Bundle, error) {
 	return triage.Bundle{}, b.wait(ctx)
 }
@@ -454,6 +458,7 @@ func (b *blockingStore) PastDecision(ctx context.Context, _ string, _ triage.Bun
 type fakeTriage struct {
 	latestErr  error
 	entriesErr error
+	countsErr  error
 	bundleErr  error
 	pastErr    error
 	decideErr  error
@@ -470,10 +475,12 @@ type fakeTriage struct {
 	past    map[string]triage.Decision
 	used    []triage.Name
 	filters []triage.Filter
-	same    map[triage.BundleID][]triage.Entry
-	decides []decideCall
-	moves   []moveCall
-	applied map[project.ID][]triage.Applied
+	// entriesCalls is the number of Entries calls.
+	entriesCalls int
+	same         map[triage.BundleID][]triage.Entry
+	decides      []decideCall
+	moves        []moveCall
+	applied      map[project.ID][]triage.Applied
 }
 
 // decideCall is the arguments of one Decide call.
@@ -549,6 +556,7 @@ func (f *fakeTriage) Entries(_ context.Context, projectID project.ID, _ scan.ID,
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.filters = append(f.filters, filter)
+	f.entriesCalls++
 	var match []triage.Entry
 	for _, e := range f.entries[projectID] {
 		if filter.Category != "" && e.Category != filter.Category {
@@ -576,6 +584,30 @@ func (f *fakeTriage) Entries(_ context.Context, projectID project.ID, _ scan.ID,
 	start := (p.Page - 1) * triage.PageSize
 	p.Entries = slices.Clone(match[start:min(start+triage.PageSize, len(match))])
 	return p, nil
+}
+
+// VerdictCounts returns the counts given to setScan, as the database does,
+// with a key for each verdict.
+func (f *fakeTriage) VerdictCounts(_ context.Context, projectID project.ID, _ scan.ID) (map[triage.Verdict]int, error) {
+	if f.countsErr != nil {
+		return nil, f.countsErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := map[triage.Verdict]int{
+		"": 0, triage.VerdictExternalize: 0, triage.VerdictRedact: 0, triage.VerdictFalsePositive: 0, triage.VerdictHold: 0,
+	}
+	for v, n := range f.counts[projectID] {
+		out[v] = n
+	}
+	return out, nil
+}
+
+// entryCalls returns the number of Entries calls.
+func (f *fakeTriage) entryCalls() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.entriesCalls
 }
 
 func (f *fakeTriage) Bundle(_ context.Context, projectID project.ID, _ scan.ID, id triage.BundleID) (triage.Bundle, error) {

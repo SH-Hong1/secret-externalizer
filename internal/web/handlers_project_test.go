@@ -380,6 +380,18 @@ func TestProject_ShowsVerdictCounts(t *testing.T) {
 	)
 }
 
+func TestHandleProject_CountsOnly(t *testing.T) {
+	e := triageEnv(t)
+	res := e.do(t, http.MethodGet, "/projects/1", nil, e.user(t))
+	if res.status != http.StatusOK {
+		t.Fatalf("GET /projects/1 status = %d, want 200", res.status)
+	}
+	wantIn(t, "project page", res.body, "판정하기 · 미판정 3", ">18<")
+	if n := e.triage.entryCalls(); n != 0 {
+		t.Errorf("GET /projects/1 called Entries %d times, want 0", n)
+	}
+}
+
 func TestProject_NoVerdictCountsWithoutScan(t *testing.T) {
 	e := newTestEnv(t)
 	if _, err := e.projects.CreateProject(t.Context(), project.Project{Name: "shop", Path: "shop"}); err != nil {

@@ -422,7 +422,7 @@ func TestScan_StoreFailures(t *testing.T) {
 	}{
 		{"counts", func(e *testEnv) { e.scans.countsErr = errors.New("fake store failure") }},
 		{"latest scan", func(e *testEnv) { e.triage.latestErr = errors.New("fake store failure") }},
-		{"entries", func(e *testEnv) { e.triage.entriesErr = errors.New("fake store failure") }},
+		{"verdict counts", func(e *testEnv) { e.triage.countsErr = errors.New("fake store failure") }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -597,5 +597,14 @@ func TestHandleScan_ReportLink(t *testing.T) {
 				wantNotIn(t, "GET /scans/7 of a "+string(tt.status)+" scan", res.body, link)
 			}
 		})
+	}
+}
+
+func TestHandleScan_CountsOnly(t *testing.T) {
+	e := newTestEnv(t)
+	body := e.succeeded(t, scan.Scan{})
+	wantContains(t, body, "96")
+	if n := e.triage.entryCalls(); n != 0 {
+		t.Errorf("GET /scans/5 called Entries %d times, want 0", n)
 	}
 }
