@@ -234,8 +234,8 @@ func blockerOf(b apply.Blocker) blockerView {
 		}
 	case apply.BlockerNothingToApply:
 		return blockerView{
-			Label:  "외부화나 삭제·마스킹으로 판정한 항목이 없습니다.",
-			Action: "판정 화면에서 항목을 판정해 주세요.",
+			Label:  "적용할 수 있는 항목이 없습니다.",
+			Action: "판정 화면에서 항목을 외부화나 삭제·마스킹으로 판정해 주세요. 판정한 항목이 있다면 모두 적용이 건너뛰는 항목입니다.",
 		}
 	}
 	return blockerView{Label: "알 수 없는 조건입니다.", Code: string(b)}
