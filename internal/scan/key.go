@@ -115,6 +115,7 @@ func leafPiece(text []byte, ls, at int) (finding.Span, byte, bool) {
 			i--
 		}
 	case '(':
+		// A call's first argument: the key is the name of the method called.
 	default:
 		return finding.Span{}, 0, false
 	}
@@ -198,7 +199,7 @@ func xmlPieces(text []byte, ls, at int) []finding.Span {
 		for e < at && isKeyChar(text[e]) {
 			e++
 		}
-		if e > s && e < at && (isBlank(text[e]) || text[e] == '>' || text[e] == '/') {
+		if e > s && e < at && endsTagName(text[e]) {
 			leaf, ok = finding.Span{Start: s, End: e}, true
 		}
 	}
@@ -206,22 +207,56 @@ func xmlPieces(text []byte, ls, at int) []finding.Span {
 		return nil
 	}
 
-	b := bytes.LastIndex(text[:at], []byte("<bean"))
-	if b < 0 || bytes.Contains(text[b:at], []byte("</bean>")) {
+	b, tagEnd, found := openBean(text, at)
+	if !found {
 		return []finding.Span{leaf}
-	}
-	after := b + len("<bean")
-	if after >= len(text) || !endsTagName(text[after]) {
-		return []finding.Span{leaf}
-	}
-	tagEnd := len(text)
-	if i := bytes.IndexByte(text[b:], '>'); i >= 0 {
-		tagEnd = b + i
 	}
 	if id, found := xmlAttr(text, b, tagEnd, "id"); found {
 		return []finding.Span{id, leaf}
 	}
 	return []finding.Span{leaf}
+}
+
+// openBean finds the nearest bean element that is still open at byte at:
+// the start tag that holds at, or else the last start tag before at whose
+// element has not been closed by then. It walks the tags backwards,
+// counting each </bean> against the next start tag, and passes over a
+// self-closed <bean .../> that ends before at. It returns the offset of the
+// start tag's '<' and of its '>', or of the end of text when the tag is not
+// closed. A prefixed element such as <beans:bean> is not a bean here.
+func openBean(text []byte, at int) (start, tagEnd int, ok bool) {
+	depth := 0
+	for pos := at; pos > 0; {
+		lt := bytes.LastIndexByte(text[:pos], '<')
+		if lt < 0 {
+			break
+		}
+		pos = lt
+		switch {
+		case isTag(text, lt, "</bean"):
+			depth++
+		case isTag(text, lt, "<bean"):
+			end := len(text)
+			if i := bytes.IndexByte(text[lt:], '>'); i >= 0 {
+				end = lt + i
+			}
+			if end < at && text[end-1] == '/' {
+				continue
+			}
+			if depth == 0 {
+				return lt, end, true
+			}
+			depth--
+		}
+	}
+	return 0, 0, false
+}
+
+// isTag reports whether text holds the tag opening name at byte i, followed
+// by a byte that ends an element name.
+func isTag(text []byte, i int, name string) bool {
+	after := i + len(name)
+	return bytes.HasPrefix(text[i:], []byte(name)) && after < len(text) && endsTagName(text[after])
 }
 
 // xmlAttr finds the attribute name="value" in text[from:to] and returns the

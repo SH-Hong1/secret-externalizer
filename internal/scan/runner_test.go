@@ -178,6 +178,83 @@ func TestHandle_URLComponentsShareKey(t *testing.T) {
 	}
 }
 
+// URLs holding password, as a query parameter and as the user information.
+const (
+	queryURL    = "jdbc:mysql://db.invalid/shop?user=shop_app&password=" + password
+	userInfoURL = "jdbc:mysql://shop_app:" + password + "@db.invalid:3306/shop"
+)
+
+func TestHandle_URLKeyIndependentOfScannerOrder(t *testing.T) {
+	files := []struct {
+		name, rel string
+		text      func(url string) string
+	}{
+		{"properties", "conf/db.properties", func(url string) string {
+			return "dev.jdbc.url=" + url + "\nlive.jdbc.url=" + url + "\n"
+		}},
+		{"yaml", "conf/application.yml", func(url string) string {
+			return "dev:\n  jdbc:\n    url: " + url + "\nlive:\n  jdbc:\n    url: " + url + "\n"
+		}},
+	}
+	for _, url := range []struct{ name, value string }{{"query", queryURL}, {"user info", userInfoURL}} {
+		for _, file := range files {
+			for _, urlFirst := range []bool{false, true} {
+				name := fmt.Sprintf("%s/%s/url rule first %t", url.name, file.name, urlFirst)
+				t.Run(name, func(t *testing.T) {
+					e := newEnv(t, map[string]string{file.rel: file.text(url.value)})
+					direct := passwordBL()
+					urlRule := &needleScanner{tool: "opengrep", rule: "properties-url", category: finding.CategoryStorage, kind: finding.KindURL, needle: url.value}
+					scanners := []scan.Scanner{direct, urlRule}
+					if urlFirst {
+						scanners = []scan.Scanner{urlRule, direct}
+					}
+					if err := e.handle(t.Context(), scanners...); err != nil {
+						t.Fatalf("Handle() error = %v", err)
+					}
+					var keys []string
+					for _, f := range e.result(t).Findings {
+						if f.Fingerprint != fingerprintOf(password) {
+							continue
+						}
+						if len(f.Locations) != 1 {
+							t.Errorf("Handle() password finding with key %q has %d locations, want 1", f.Key, len(f.Locations))
+						}
+						keys = append(keys, f.Key)
+					}
+					if diff := cmp.Diff([]string{"dev.jdbc.url", "live.jdbc.url"}, keys); diff != "" {
+						t.Errorf("Handle() keys of the password (-want +got):\n%s", diff)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestHandle_ValueInUnsplitURLTakesKeyOfURL(t *testing.T) {
+	tests := []struct {
+		name, rel, text, want string
+	}{
+		{"properties user info", "conf/db.properties", "db.url=jdbc:mysql://shopadmin:" + password + "@db.invalid/shop\n", "db.url"},
+		{"properties query", "conf/db.properties", "db.url=jdbc:mysql://db.invalid/shop?password=" + password + "\n", "db.url"},
+		{"yaml user info", "conf/application.yml", "db:\n  url: jdbc:mysql://shopadmin:" + password + "@db.invalid/shop\n", "db.url"},
+		{"yaml quoted", "conf/application.yml", "db:\n  url: \"jdbc:mysql://shopadmin:" + password + "@db.invalid/shop\"\n", "db.url"},
+		{"properties colon", "conf/db.properties", "db.url:jdbc:mysql://shopadmin:" + password + "@db.invalid/shop\n", "db.url"},
+		{"ssh scheme", "conf/db.properties", "repo.url=ssh://deploy:" + password + "@git.invalid/shop.git\n", "repo.url"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{tt.rel: tt.text})
+			if err := e.handle(t.Context(), passwordBL()); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+			got := e.result(t).Findings
+			if len(got) != 1 || got[0].Key != tt.want {
+				t.Errorf("Handle(%q) findings = %+v, want one with key %q", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestHandle_KeyNeverHoldsValueFoundElsewhere(t *testing.T) {
 	e := newEnv(t, map[string]string{
 		"a.properties": "acct=shopadmin\n",

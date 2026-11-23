@@ -25,7 +25,12 @@ type findingKey struct {
 // mergedLocation is the results that found one value at one place.
 type mergedLocation struct {
 	spot     spot
+	fp       string
 	detected []classified
+	// keyAt is where the location's key is read: the smallest offset that
+	// placedFile.keyAt gives any of its results, so that the key does not
+	// depend on the order the scanners reported them in.
+	keyAt int
 }
 
 // merge turns the placed results into findings. Results in the same file,
@@ -44,7 +49,8 @@ type mergedLocation struct {
 //
 // A location's end is the line and column of the value's last character.
 // Findings are ordered by file, first location, fingerprint, and key; locations
-// by position. A key is empty in a file without surrounding lines, for a
+// by position. A value inside a URL takes the key of the URL
+// (placedFile.keyAt). A key is empty in a file without surrounding lines, for a
 // whole-file result, for customer data, for a value that spans lines, and
 // when a piece of the key overlaps a range masked in surrounding lines, so
 // that a key never holds a value found in the scan.
@@ -57,25 +63,31 @@ func merge(placed []*placedFile, fingerprints map[string]string, elsewhere value
 			fp    string
 		}
 		locations := map[locationKey]*mergedLocation{}
-		byFinding := map[findingKey][]*mergedLocation{}
+		var order []*mergedLocation
 		var spans []finding.Span
 		if pf.showsContext() {
 			spans = append(pf.spans(), elsewhere.find(pf.file.Text)...)
 		}
 		for _, s := range pf.spots {
 			fp := fingerprints[string(s.value)]
-			key := locationKey{start: s.span.Start, fp: fp}
-			ml, ok := locations[key]
+			lk := locationKey{start: s.span.Start, fp: fp}
+			at := pf.keyAt(s)
+			ml, ok := locations[lk]
 			if !ok {
-				ml = &mergedLocation{spot: s}
-				locations[key] = ml
-				fk := findingKey{fp: fp, key: spotKey(pf, s, spans)}
-				byFinding[fk] = append(byFinding[fk], ml)
+				ml = &mergedLocation{spot: s, fp: fp, keyAt: at}
+				locations[lk] = ml
+				order = append(order, ml)
 			}
+			ml.keyAt = min(ml.keyAt, at)
 			ml.detected = append(ml.detected, classified{
 				Detection: finding.Detection{Tool: s.raw.Tool, Rule: s.raw.Rule},
 				category:  s.raw.Category, kind: s.raw.Kind,
 			})
+		}
+		byFinding := map[findingKey][]*mergedLocation{}
+		for _, ml := range order {
+			fk := findingKey{fp: ml.fp, key: spotKey(pf, ml.spot, ml.keyAt, spans)}
+			byFinding[fk] = append(byFinding[fk], ml)
 		}
 
 		for fk, mls := range byFinding {
@@ -98,15 +110,15 @@ func merge(placed []*placedFile, fingerprints map[string]string, elsewhere value
 	return findings, originals
 }
 
-// spotKey returns the configuration key of s in pf, or "" when s gets none.
-// spans are the ranges masked in the file's surrounding lines; a key that
-// overlaps one of them holds a value and is dropped.
-func spotKey(pf *placedFile, s spot, spans []finding.Span) string {
+// spotKey returns the configuration key of s in pf, read at byte at, or ""
+// when s gets none. spans are the ranges masked in the file's surrounding
+// lines; a key that overlaps one of them holds a value and is dropped.
+func spotKey(pf *placedFile, s spot, at int, spans []finding.Span) string {
 	if !pf.showsContext() || s.raw.wholeFile() || s.raw.Category == finding.CategoryCustomerData ||
 		bytes.IndexByte(s.value, '\n') >= 0 {
 		return ""
 	}
-	key, pieces := configKey(pf.rel, pf.file.Text, s.keyAt)
+	key, pieces := configKey(pf.rel, pf.file.Text, at)
 	for _, p := range pieces {
 		for _, m := range spans {
 			if p.Start < m.End && m.Start < p.End {
