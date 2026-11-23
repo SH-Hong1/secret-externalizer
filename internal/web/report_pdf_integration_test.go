@@ -120,3 +120,28 @@ func TestReportPDF_PrintsAtEveryCap(t *testing.T) {
 	}
 	t.Logf("a report at every cap printed in %v: %d bytes, %d pages", elapsed, len(out), len(pdfPage.FindAll(out, -1)))
 }
+
+// pdfLink matches a link annotation or its target in a PDF. The converter
+// does not compress annotation dictionaries.
+var pdfLink = regexp.MustCompile(`/Subtype\s*/Link\b|/URI\b`)
+
+func TestReportPDF_NoLinkAnnotations(t *testing.T) {
+	baseURL := os.Getenv("TEST_PDF_URL")
+	if baseURL == "" {
+		t.Skip("TEST_PDF_URL is not set; start the compose pdf-test service with --profile test and set TEST_PDF_URL=http://127.0.0.1:13000")
+	}
+	client, err := pdf.New(baseURL, &http.Client{Timeout: 25 * time.Second})
+	if err != nil {
+		t.Fatalf("pdf.New(%q) error = %v", baseURL, err)
+	}
+	e := newTestEnvWith(t, web.Limits{Store: 5 * time.Second, PDF: 20 * time.Second}, client)
+	e.reports.put(linkedReport())
+
+	res := e.getReportPDF(t)
+	if res.status != http.StatusOK {
+		t.Fatalf("GET /scans/7/report.pdf status = %d, want 200; log:\n%s", res.status, e.log)
+	}
+	if found := pdfLink.FindAllString(res.body, -1); len(found) != 0 {
+		t.Errorf("the PDF of a report that links to other screens holds %d link annotation marks %q, want none", len(found), found)
+	}
+}

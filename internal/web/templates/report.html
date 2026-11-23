@@ -33,7 +33,9 @@ body { margin: 0; padding: 0 0.6in; width: 100%; box-sizing: border-box; font-fa
 </html>
 {{end}}
 {{/* The report itself, drawn by the screen and by the PDF document. It
-takes a reportView and calls no function, so both draw the same thing. */}}
+takes a reportView and calls no function, so both draw the same thing. A
+link to another screen is drawn only when the view gives its address, which
+the view of the PDF document does not. */}}
 {{define "report"}}<article id="report" class="report">
 <header class="report-head">
 <h1 class="page-title">리포트 · 스캔 #{{.ScanID}}</h1>
@@ -46,8 +48,8 @@ takes a reportView and calls no function, so both draw the same thing. */}}
 <div><dt>만든 시각</dt><dd class="mono">{{.GeneratedAt}}</dd></div>
 </dl>
 <p class="notice-soft">이 리포트에는 값, 미리보기, 주변 코드가 없습니다. 판정은 리포트를 만든 시각의 것이고, 외부화·삭제한 항목은 이 스캔이 요청되기 전에 적용된 것입니다.</p>
-{{if .Later}}<p class="notice-warn">이후 스캔이 있습니다. 프로젝트의 마지막 성공한 스캔은 #{{.Later}}입니다. <a href="{{.LaterHref}}">스캔 #{{.Later}}의 리포트</a></p>
-{{end}}{{with .Unchecked}}<p class="notice">{{.}} <a href="{{$.UncheckedHref}}">스캔 화면에서 보기</a></p>
+{{if .Later}}<p class="notice-warn">이후 스캔이 있습니다. 프로젝트의 마지막 성공한 스캔은 #{{.Later}}입니다.{{with .LaterHref}} <a href="{{.}}">스캔 #{{$.Later}}의 리포트</a>{{end}}</p>
+{{end}}{{with .Unchecked}}<p class="notice">{{.}}{{with $.UncheckedHref}} <a href="{{.}}">스캔 화면에서 보기</a>{{end}}</p>
 {{end}}</header>
 
 <section class="report-section">

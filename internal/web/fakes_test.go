@@ -1140,11 +1140,15 @@ func (f *fakeReports) put(d report.Data) {
 // fakeConverter remembers the documents it is given and whether their
 // context had a deadline. It returns out, or err when that is set. When wait
 // is true it waits until the context ends and returns its error wrapped in
-// pdf.ErrUnavailable, as the real client does.
+// pdf.ErrUnavailable, as the real client does. When hold is not nil, the
+// first call sends on entered and then waits until hold is closed, whatever
+// its context says.
 type fakeConverter struct {
-	out  []byte
-	err  error
-	wait bool
+	out     []byte
+	err     error
+	wait    bool
+	hold    chan struct{}
+	entered chan struct{}
 
 	mu        sync.Mutex
 	docs      []pdf.Document
@@ -1156,7 +1160,12 @@ func (f *fakeConverter) Convert(ctx context.Context, doc pdf.Document) ([]byte, 
 	f.mu.Lock()
 	f.docs = append(f.docs, doc)
 	f.deadlines = append(f.deadlines, hasDeadline)
+	first := len(f.docs) == 1
 	f.mu.Unlock()
+	if f.hold != nil && first {
+		f.entered <- struct{}{}
+		<-f.hold
+	}
 	if f.wait {
 		<-ctx.Done()
 		return nil, fmt.Errorf("%w: %w", pdf.ErrUnavailable, ctx.Err())
