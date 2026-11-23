@@ -126,7 +126,7 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	}
 
 	return serve(ctx, logger, cfg.addr, web.NewServer(logger, authn, store, store,
-		web.Stores{Projects: database, Scans: database, Triage: database, Audits: database, Applies: database, Reports: database},
+		web.Stores{Projects: database, Scans: database, Triage: database, Audits: database, Applies: database, Reports: database, Dashboards: database},
 		web.NewHistorySuggester(database), originals, converter, web.Limits{Store: databaseLimit, PDF: pdfLimit}))
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
+	"github.com/SH-Hong1/secret-externalizer/internal/dashboard"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
@@ -148,6 +149,12 @@ type ReportStore interface {
 	Report(ctx context.Context, id scan.ID) (report.Data, error)
 }
 
+// DashboardStore reads what the dashboard shows. Dashboard fails with an
+// error matching db.ErrNotFound when the filter names an unknown project.
+type DashboardStore interface {
+	Dashboard(ctx context.Context, f dashboard.Filter) (dashboard.Data, error)
+}
+
 // Converter turns a document into a PDF. Convert fails with an error
 // matching pdf.ErrUnavailable when the converter cannot be reached or is
 // too slow, and pdf.ErrRejected when it does not return a PDF.
@@ -170,12 +177,13 @@ type printer struct {
 
 // Stores holds the stores the server reads and writes.
 type Stores struct {
-	Projects ProjectStore
-	Scans    ScanStore
-	Triage   TriageStore
-	Audits   AuditStore
-	Applies  ApplyStore
-	Reports  ReportStore
+	Projects   ProjectStore
+	Scans      ScanStore
+	Triage     TriageStore
+	Audits     AuditStore
+	Applies    ApplyStore
+	Reports    ReportStore
+	Dashboards DashboardStore
 }
 
 // NewServer returns the complete handler, including middleware. From the

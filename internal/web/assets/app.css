@@ -92,6 +92,14 @@
   --color-danger-ink: #7a1d12;
   --color-suggest-ring: #a9bdf3;
 
+  /* The categories in the dashboard chart. They are told apart by the
+     legend, the tooltip and the table as well, never by colour alone. */
+  --color-category-storage: #00876a;
+  --color-category-ssh: #d0560f;
+  --color-category-partner: #3e6ed2;
+  --color-category-other: #b33b86;
+  --color-category-customer: #7a7a00;
+
   --font-sans: "IBM Plex Sans KR", system-ui, sans-serif;
   --font-mono: "D2Coding", ui-monospace, monospace;
 
@@ -1430,6 +1438,131 @@
   .report-actions {
     display: flex;
     justify-content: flex-end;
+  }
+
+  /* The dashboard: the filter, the tiles, the trend chart drawn as inline
+     SVG, and two sections side by side on a wide screen. The colour of a
+     segment comes from its class; a 1px stroke of the surface colour
+     keeps a gap between the segments of a bar. */
+  .dashboard-filter {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+  }
+  .dashboard-filter .input {
+    padding-top: 7px;
+    padding-bottom: 7px;
+  }
+  .dashboard-filter .btn {
+    margin-right: 8px;
+  }
+  .dashboard-tiles {
+    grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+  }
+  .tile-sub {
+    display: block;
+    margin-top: 2px;
+    color: var(--color-ink-muted);
+    font-size: var(--text-xs);
+  }
+  .dashboard-section {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+  }
+  .dashboard-section .section-title {
+    margin: 0;
+  }
+  .dashboard-pair {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr));
+    gap: 24px;
+  }
+  .dashboard-pair .bar-label {
+    flex-basis: 200px;
+  }
+  .chart-card {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .chart-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 16px;
+    margin: 0;
+    padding: 0;
+    color: var(--color-ink-2);
+    font-size: var(--text-sm);
+    list-style: none;
+  }
+  .chart-legend li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .chart-key {
+    width: 12px;
+    height: 12px;
+    border-radius: 2px;
+  }
+  .chart {
+    display: block;
+    width: 100%;
+    height: auto;
+  }
+  .chart rect {
+    stroke: var(--color-surface);
+    stroke-width: 1px;
+  }
+  .chart-grid {
+    stroke: var(--color-line-soft);
+    stroke-width: 1px;
+  }
+  .chart-tick,
+  .chart-label {
+    fill: var(--color-ink-muted);
+    font-family: var(--font-mono);
+    font-size: 12px;
+  }
+  .chart-tick {
+    text-anchor: end;
+  }
+  .chart-label {
+    text-anchor: middle;
+  }
+  .chart-storage-credential {
+    background: var(--color-category-storage);
+    fill: var(--color-category-storage);
+  }
+  .chart-ssh-credential {
+    background: var(--color-category-ssh);
+    fill: var(--color-category-ssh);
+  }
+  .chart-partner-session {
+    background: var(--color-category-partner);
+    fill: var(--color-category-partner);
+  }
+  .chart-other-secret {
+    background: var(--color-category-other);
+    fill: var(--color-category-other);
+  }
+  .chart-customer-data {
+    background: var(--color-category-customer);
+    fill: var(--color-category-customer);
+  }
+  .chart-table summary {
+    cursor: pointer;
+    color: var(--color-accent);
+    font-size: var(--text-sm);
+  }
+  .chart-table .table-wrap {
+    margin-top: 8px;
+  }
+  .table tr[aria-current] td {
+    background: var(--color-accent-soft);
   }
 
   /* The report on a printed sheet. body.print is the page the PDF converter

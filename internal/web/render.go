@@ -79,9 +79,9 @@ func partialsOf(name string) []string {
 //
 // Templates may call two functions. asset returns the versioned address of
 // a static file in a. section returns the text of the page's "section"
-// template, which names the menu entry the page belongs to ("projects" or
-// "audit"), or "" when the page defines none; the layout marks that entry
-// as the current one.
+// template, which names the menu entry the page belongs to ("dashboard",
+// "projects" or "audit"), or "" when the page defines none; the layout
+// marks that entry as the current one.
 func parseTemplates(fsys fs.FS, a *assets) *renderer {
 	files, err := fs.Glob(fsys, "templates/*.html")
 	if err != nil {

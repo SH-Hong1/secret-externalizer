@@ -1,0 +1,115 @@
+{{define "title"}}대시보드{{end}}
+{{define "section"}}dashboard{{end}}
+{{define "body"}}<main class="page">
+<div class="page-head">
+<h1 class="page-title">대시보드</h1>
+</div>
+{{if .NoProjects}}<div class="card card-pad flex flex-col gap-2.5">
+<p class="notice">등록된 프로젝트가 없습니다.</p>
+<div><a class="btn btn-primary" href="/projects/new">프로젝트 등록</a></div>
+</div>
+{{else}}<form class="dashboard-filter" method="get" action="/dashboard">
+<label class="muted" for="filter-project">프로젝트</label>
+<select class="input" id="filter-project" name="project">
+{{range .Projects}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
+{{end}}</select>
+<label class="muted" for="filter-period">기간</label>
+<select class="input" id="filter-period" name="period">
+{{range .Periods}}<option value="{{.Value}}"{{if .Selected}} selected{{end}}>{{.Label}}</option>
+{{end}}</select>
+<button class="btn" type="submit">보기</button>
+<span class="muted">기간은 추이에만 적용됩니다.</span>
+</form>
+{{if .NoScans}}<p class="notice">성공한 스캔이 없습니다. 프로젝트를 스캔하면 숫자가 보입니다.</p>
+{{else}}<section class="tiles dashboard-tiles" aria-label="지금 상태">
+{{range .Tiles}}{{if .Href}}<a class="tile tile-{{.Class}}" href="{{.Href}}">{{else}}<div class="tile tile-{{.Class}}">{{end}}
+<span class="tile-label">{{.Label}}</span>
+<span class="tile-figure">{{.Figure}}</span>
+{{with .Sub}}<span class="tile-sub">{{.}}</span>
+{{end}}{{with .Delta}}<span class="tile-sub">{{.}}</span>
+{{end}}{{if .Href}}</a>{{else}}</div>{{end}}
+{{end}}</section>
+
+<section class="dashboard-section">
+<h2 class="section-title">남은 항목 추이</h2>
+{{if .Trend}}<div class="card card-pad chart-card">
+<ul class="chart-legend" aria-label="분류">
+{{range .Legend}}<li><span class="chart-key {{.Class}}" aria-hidden="true"></span>{{.Label}}</li>
+{{end}}</ul>
+<svg class="chart" viewBox="0 0 {{.Chart.Width}} {{.Chart.Height}}" role="img" aria-label="스캔별 남은 항목">
+{{range .Chart.Ticks}}<line class="chart-grid" x1="48" x2="952" y1="{{.Y}}" y2="{{.Y}}"></line>
+<text class="chart-tick" x="42" y="{{.Y}}" dy="4">{{.Label}}</text>
+{{end}}{{range .Chart.Bars}}<svg x="{{.X}}" width="{{.Width}}" overflow="visible"><title>{{.Title}}</title>
+{{range .Segments}}<rect class="{{.Class}}" x="0" y="{{.Y}}" width="100%" height="{{.Height}}"></rect>
+{{end}}{{with .Label}}<text class="chart-label" x="50%" y="292">{{.}}</text>
+{{end}}</svg>
+{{end}}</svg>
+<details class="chart-table">
+<summary>표로 보기</summary>
+<div class="table-wrap">
+<table class="table">
+<thead><tr><th>끝난 시각</th><th>프로젝트</th><th>스캔</th>{{range .Legend}}<th class="num">{{.Label}}</th>{{end}}<th class="num">합</th></tr></thead>
+<tbody>
+{{range .TrendRows}}<tr>
+<td class="mono">{{.At}}</td>
+<td>{{.Project}}</td>
+<td><a href="{{.Report}}">{{.Scan}}</a></td>
+{{range .Counts}}<td class="num">{{.}}</td>{{end}}
+<td class="num">{{.Total}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</div>
+</details>
+{{with .TrendMore}}<p class="report-more">{{.}}</p>
+{{end}}</div>
+{{else}}<p class="notice">이 기간에 끝난 스캔이 없습니다.</p>
+{{end}}</section>
+
+<div class="dashboard-pair">
+<section class="dashboard-section">
+<h2 class="section-title">분류별 남은 항목</h2>
+<div class="card bars">
+{{range .Categories}}<div class="bar-row"><span class="bar-label" id="left-{{.ID}}">{{.Label}}<span class="report-sub">{{.Split}}</span></span><meter class="bar" min="0" max="{{$.CategoryMax}}" value="{{.N}}" aria-labelledby="left-{{.ID}}"></meter><span class="bar-count">{{.N}}</span></div>
+{{end}}</div>
+</section>
+
+<section class="dashboard-section">
+<h2 class="section-title">오탐이 많은 규칙</h2>
+{{if .Rules}}<div class="table-wrap">
+<table class="table">
+<thead><tr><th>도구</th><th>규칙</th><th class="num">오탐 묶음</th><th class="num">찾은 묶음</th><th class="num">비율</th></tr></thead>
+<tbody>
+{{range .Rules}}<tr>
+<td class="mono">{{.Tool}}</td>
+<td class="mono report-path">{{.Rule}}</td>
+<td class="num">{{.FalsePositive}}</td>
+<td class="num">{{.Bundles}}</td>
+<td class="num">{{.Share}}</td>
+</tr>
+{{end}}</tbody>
+</table>
+</div>
+{{else}}<p class="notice">오탐으로 판정한 항목이 없습니다.</p>
+{{end}}</section>
+</div>
+{{end}}
+<section class="dashboard-section">
+<h2 class="section-title">프로젝트</h2>
+<div class="table-wrap">
+<table class="table min-w-[740px]">
+<thead><tr><th>이름</th><th>마지막 스캔</th><th class="num">남은 항목</th><th class="num">완료율</th><th class="num">보류</th><th></th></tr></thead>
+<tbody>
+{{range .Rows}}<tr{{if .Current}} aria-current="true"{{end}}>
+<td><a class="row-link" href="{{.Href}}">{{.Name}}</a></td>
+<td>{{if .Last}}<span class="mono">{{.Last}}</span> <span class="badge badge-{{.Status}}">{{.StatusLabel}}</span>{{else}}<span class="muted">스캔한 적 없음</span>{{end}}</td>
+<td class="num">{{.Remaining}}</td>
+<td class="num">{{.Rate}}</td>
+<td class="num">{{.Hold}}</td>
+<td><a href="{{.Open}}">프로젝트 열기</a></td>
+</tr>
+{{end}}</tbody>
+</table>
+</div>
+</section>
+{{end}}</main>{{end}}

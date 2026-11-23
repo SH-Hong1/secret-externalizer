@@ -12,6 +12,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
+	"github.com/SH-Hong1/secret-externalizer/internal/dashboard"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
@@ -1172,4 +1173,31 @@ func (f *fakeConverter) calls() ([]pdf.Document, []bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return slices.Clone(f.docs), slices.Clone(f.deadlines)
+}
+
+// fakeDashboards returns data, or err when that is set, and records the
+// filters it is given.
+type fakeDashboards struct {
+	data dashboard.Data
+	err  error
+
+	mu      sync.Mutex
+	filters []dashboard.Filter
+}
+
+func (f *fakeDashboards) Dashboard(_ context.Context, filter dashboard.Filter) (dashboard.Data, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.filters = append(f.filters, filter)
+	if f.err != nil {
+		return dashboard.Data{}, f.err
+	}
+	return f.data, nil
+}
+
+// calls returns the filters Dashboard was given.
+func (f *fakeDashboards) calls() []dashboard.Filter {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.filters)
 }

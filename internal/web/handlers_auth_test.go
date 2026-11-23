@@ -22,20 +22,21 @@ const fakeCode = "fake-auth-code-0000"
 
 // testEnv is a server built on fakes, with its log captured.
 type testEnv struct {
-	handler   http.Handler
-	log       *bytes.Buffer
-	authn     *fakeAuthenticator
-	sessions  *fakeSessions
-	attempts  *fakeAttempts
-	projects  *fakeProjects
-	scans     *fakeScans
-	triage    *fakeTriage
-	calls     *callLog
-	audits    *fakeAudit
-	originals *fakeOriginals
-	applies   *fakeApplies
-	reports   *fakeReports
-	converter *fakeConverter
+	handler    http.Handler
+	log        *bytes.Buffer
+	authn      *fakeAuthenticator
+	sessions   *fakeSessions
+	attempts   *fakeAttempts
+	projects   *fakeProjects
+	scans      *fakeScans
+	triage     *fakeTriage
+	calls      *callLog
+	audits     *fakeAudit
+	originals  *fakeOriginals
+	applies    *fakeApplies
+	reports    *fakeReports
+	dashboards *fakeDashboards
+	converter  *fakeConverter
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -48,17 +49,18 @@ func newTestEnv(t *testing.T) *testEnv {
 func newTestEnvWith(t *testing.T, limits web.Limits, converter web.Converter) *testEnv {
 	t.Helper()
 	e := &testEnv{
-		log:       &bytes.Buffer{},
-		authn:     &fakeAuthenticator{user: auth.User{Subject: "fake-subject", Name: "Fake User", Roles: []auth.Role{auth.RoleUser}}},
-		sessions:  newFakeSessions(),
-		attempts:  newFakeAttempts(),
-		projects:  newFakeProjects(),
-		scans:     newFakeScans(),
-		triage:    newFakeTriage(),
-		calls:     &callLog{},
-		applies:   newFakeApplies(),
-		reports:   newFakeReports(),
-		converter: &fakeConverter{out: []byte("%PDF-1.7 dev-only-fake-pdf")},
+		log:        &bytes.Buffer{},
+		authn:      &fakeAuthenticator{user: auth.User{Subject: "fake-subject", Name: "Fake User", Roles: []auth.Role{auth.RoleUser}}},
+		sessions:   newFakeSessions(),
+		attempts:   newFakeAttempts(),
+		projects:   newFakeProjects(),
+		scans:      newFakeScans(),
+		triage:     newFakeTriage(),
+		calls:      &callLog{},
+		applies:    newFakeApplies(),
+		reports:    newFakeReports(),
+		dashboards: &fakeDashboards{},
+		converter:  &fakeConverter{out: []byte("%PDF-1.7 dev-only-fake-pdf")},
 	}
 	e.audits = &fakeAudit{log: e.calls}
 	e.originals = &fakeOriginals{log: e.calls}
@@ -67,7 +69,7 @@ func newTestEnvWith(t *testing.T, limits web.Limits, converter web.Converter) *t
 	}
 	logger := slog.New(slog.NewJSONHandler(e.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts,
-		web.Stores{Projects: e.projects, Scans: e.scans, Triage: e.triage, Audits: e.audits, Applies: e.applies, Reports: e.reports},
+		web.Stores{Projects: e.projects, Scans: e.scans, Triage: e.triage, Audits: e.audits, Applies: e.applies, Reports: e.reports, Dashboards: e.dashboards},
 		web.NewHistorySuggester(e.triage), e.originals, converter, limits)
 	return e
 }
