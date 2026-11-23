@@ -1,6 +1,7 @@
 [
-  {"file": "build.xml", "line": 3, "category": "storage-credential", "kind": "password", "value": "dev-only-fake-ant-password"},
-  {"file": "build.xml", "line": 7, "category": "storage-credential", "kind": "password", "value": "dev-only-fake-scp-password"},
+  {"file": "build.xml", "line": 3, "category": "ssh-credential", "kind": "password", "value": "dev-only-fake-ant-password"},
+  {"file": "build.xml", "line": 7, "category": "ssh-credential", "kind": "password", "value": "dev-only-fake-scp-password"},
+  {"file": "build.xml", "line": 8, "category": "storage-credential", "kind": "password", "value": "dev-only-fake-sql-password"},
   {"file": "conf/partner.pem", "line": 1, "category": "ssh-credential", "kind": "key-file", "value": ""},
   {"file": "conf/partner.pem", "line": 1, "category": "ssh-credential", "kind": "private-key", "value": "-----BEGIN RSA PRIVATE KEY-----\nFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\nFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\nFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\nFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\nFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKEFAKE\n-----END RSA PRIVATE KEY-----"},
   {"file": "local/dev.properties", "line": 1, "category": "other-secret", "kind": "other", "value": "JIHGFEDCBA5432109876"},
