@@ -180,8 +180,8 @@ func runScan(t *testing.T, store *db.Store, scanner *scan.Runner, id scan.ID, lo
 	}
 }
 
-// place names a finding by its value and file.
-type place struct{ fingerprint, file string }
+// place names a finding by its value, file and configuration key.
+type place struct{ fingerprint, file, key string }
 
 // TestIntegration_ScanApplyRescan takes the example project through what a
 // user does with it, with the real scanners, database, OpenBao and git: a
@@ -251,7 +251,7 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 		}
 		out := map[place]finding.Finding{}
 		for _, fd := range list {
-			out[place{fd.Fingerprint, fd.File}] = fd
+			out[place{fd.Fingerprint, fd.File, fd.Key}] = fd
 		}
 		return out
 	}
@@ -346,7 +346,7 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 		if !ok {
 			t.Fatalf("item in %s line %d names finding %d, which the scan did not store", it.File, it.StartLine, it.FindingID)
 		}
-		p := place{fd.Fingerprint, fd.File}
+		p := place{fd.Fingerprint, fd.File, fd.Key}
 		if it.Status == apply.StatusApplied {
 			changed[p] = true
 			continue
@@ -523,7 +523,7 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 // bundlesByPlace returns the bundle of every finding of the project.
 func bundlesByPlace(t *testing.T, admin *pgxpool.Pool, schema string, projectID project.ID) map[place]triage.BundleID {
 	t.Helper()
-	rows, err := admin.Query(t.Context(), "SELECT fingerprint, file_path, bundle_id FROM "+schema+".finding WHERE project_id = $1", projectID)
+	rows, err := admin.Query(t.Context(), "SELECT fingerprint, file_path, key, bundle_id FROM "+schema+".finding WHERE project_id = $1", projectID)
 	if err != nil {
 		t.Fatalf("reading the findings: %v", err)
 	}
@@ -534,7 +534,7 @@ func bundlesByPlace(t *testing.T, admin *pgxpool.Pool, schema string, projectID 
 			p  place
 			id triage.BundleID
 		)
-		if err := rows.Scan(&p.fingerprint, &p.file, &id); err != nil {
+		if err := rows.Scan(&p.fingerprint, &p.file, &p.key, &id); err != nil {
 			t.Fatalf("reading a finding: %v", err)
 		}
 		out[p] = id

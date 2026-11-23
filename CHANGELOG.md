@@ -4,8 +4,17 @@
 
 ## [Unreleased]
 
+### 변경
+
+- 항목을 "프로젝트, 지문, 파일 경로"가 아니라 "프로젝트, 지문, 파일 경로, 설정 키"로 식별한다. 한 파일에서 같은 값이 서로 다른 설정 키에 있으면(`local.db.password`, `dev.db.password`, `live.db.password`) 키마다 항목이 따로 생기고, 값이 고유한 종류의 새 항목은 같은 파일의 다른 키 항목이 든 `shared`, `frontend` 묶음에 들어가지 않고 자기만의 묶음으로 시작해 추천 이름도 따로 나온다. 키가 같거나 읽지 못한 자리는 전과 같이 파일마다 항목 하나다. 이 변경 전에 저장된 항목은 한 파일의 그 지문에 키 없는 항목이 하나뿐이면 첫 키를 읽은 자리가 이어 쓴다(`docs/decisions/0053-finding-key.md`)
+- 판정 화면의 구성원 줄과 옮기기 양식의 대상 목록에 설정 키를 보인다. 추천 이름은 저장된 키를 먼저 쓴다
+
 ### 추가
 
+- 마이그레이션 `0009`: `finding.key`와 유일 제약 `(project_id, fingerprint, file_path, key)`
+- 스캔이 설정 키를 파일 원문에서 읽는 `internal/scan`의 `configKey`. 값이나 그 일부가 키에 들어가지 않도록 가려지는 범위와 겹치면 비운다
+- 사례 `rule-cases/conf/multi-env.properties`(한 파일 여러 환경)와 그 기대 결과
+- 결정 기록 0053 (설정 키로 항목을 나눈다)
 - 규칙 `maven-settings-server-username`(`settings.xml`의 `<server>` 안 `<username>`, 계정), `shell-sshpass-env-password`(`sshpass -e`가 읽는 `SSHPASS=` 값), `yaml-block-password`(`password: >`, `password: |` 아래 한 줄짜리 블록 스칼라)
 - 규칙 사례 예제 `internal/ruleset/testdata/rule-cases`와 그 기대 결과 `rule-cases.json`. 규칙이 찾아야 하는 모양과 건드리지 말아야 하는 모양을 하나씩 둔다. `TestRules_ExpectedFindings`가 `legacy-shop`과 함께 스캔한다
 - 결정 기록 0052 (스캔 규칙의 알려진 누락과 오탐 가운데 고친 것)
