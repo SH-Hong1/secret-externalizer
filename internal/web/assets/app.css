@@ -1427,6 +1427,125 @@
     color: var(--color-ink-muted);
     font-size: var(--text-sm);
   }
+  .report-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  /* The report on a printed sheet. body.print is the page the PDF converter
+     prints; @media print covers a browser printing the report screen. The
+     sheet is white, the report as wide as the sheet, and its sections are
+     blocks so that Chromium can break them between sheets: a table row, a
+     tile or a notice is never cut in two, and a section title never ends
+     a sheet alone. Links lead nowhere on paper, so they read as text. */
+  html:has(> body.print),
+  body.print {
+    min-height: 0;
+    background: var(--color-white);
+  }
+  .print .report-places li {
+    display: inline;
+  }
+  .print .report-places li + li::before {
+    content: " · ";
+  }
+  .print .report,
+  .print .report-head,
+  .print .report-section {
+    display: block;
+  }
+  .print .report-head > * + *,
+  .print .report-section > * + * {
+    margin-top: 10px;
+  }
+  .print .report-section {
+    margin-top: 22px;
+  }
+  .print .table-wrap {
+    overflow: visible;
+    box-decoration-break: clone;
+  }
+  .print .report-table th,
+  .print .report-table td {
+    padding: 4px 8px;
+  }
+  /* A long path would otherwise take the whole width and leave the other
+     columns one character wide: headings and labels keep their words, and
+     Korean breaks between words. */
+  .print .report-table th,
+  .print .report-table .badge {
+    white-space: nowrap;
+  }
+  .print .report-table td {
+    overflow-wrap: normal;
+    word-break: keep-all;
+  }
+  .print .report-table .report-path,
+  .print .report-table .report-note,
+  .print .report-table .report-places,
+  .print .report-table .report-name,
+  .print .report-table .report-sub {
+    overflow-wrap: anywhere;
+  }
+  .print .report-table td:has(> .report-name) {
+    min-width: 160px;
+  }
+  .print .report-table tr,
+  .print .tile,
+  .print .facts > div,
+  .print .notice,
+  .print .notice-soft,
+  .print .notice-warn,
+  .print .report-more {
+    break-inside: avoid;
+  }
+  .print .report-section .section-title,
+  .print .report-table thead {
+    break-after: avoid;
+  }
+  .print .report-table thead {
+    display: table-header-group;
+  }
+  .print a,
+  .print a:hover,
+  .print a.badge {
+    color: inherit;
+    text-decoration: none;
+  }
+  @media print {
+    html,
+    body {
+      min-height: 0;
+      background: var(--color-white);
+    }
+    .site-header,
+    .crumbs,
+    .report-actions {
+      display: none;
+    }
+    .page {
+      max-width: none;
+      padding: 0;
+    }
+    .report-table tr,
+    .tile,
+    .facts > div,
+    .notice,
+    .notice-soft,
+    .notice-warn {
+      break-inside: avoid;
+    }
+    .report-section .section-title {
+      break-after: avoid;
+    }
+    .table-wrap {
+      overflow: visible;
+    }
+    .report a {
+      color: inherit;
+      text-decoration: none;
+    }
+  }
 }
 
 @keyframes progress-slide {

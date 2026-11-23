@@ -20,8 +20,8 @@ import (
 
 // The caps that keep a report small enough to draw and to convert.
 const (
-	MaxRows   = 1000 // the most lines a section lists
-	MaxPlaces = 50   // the most places an externalized entry lists
+	MaxRows   = 100 // the most lines a section lists
+	MaxPlaces = 50  // the most places an externalized entry lists
 )
 
 // Count is a number of bundles and of their locations.

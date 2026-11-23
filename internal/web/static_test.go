@@ -134,6 +134,37 @@ func TestLayoutNavigation_ErrorPageKeepsMenu(t *testing.T) {
 // event handler attribute.
 var inlineCode = regexp.MustCompile(`(?is)<script\b[^>]*>\s*[^<\s]|\sstyle\s*=|<style\b|\son[a-z]+\s*=`)
 
+// footerDefine matches the define of the PDF footer up to its first end
+// action; the footer holds no other action that ends with {{end}}.
+var footerDefine = regexp.MustCompile(`(?s)\{\{define "print-footer"\}\}.*?\{\{end\}\}`)
+
+// styleElement matches one style element.
+var styleElement = regexp.MustCompile(`<style>[^<]*</style>`)
+
+// withoutFooterStyle returns b with the style elements inside the define of
+// the PDF footer removed, and how many it removed. The converter draws the
+// footer apart from the page and reads no stylesheet for it, and the footer
+// is never served, so the CSP does not apply to it. A style element outside
+// that define stays.
+func withoutFooterStyle(b []byte) ([]byte, int) {
+	n := 0
+	out := footerDefine.ReplaceAllFunc(b, func(def []byte) []byte {
+		n += len(styleElement.FindAll(def, -1))
+		return styleElement.ReplaceAll(def, nil)
+	})
+	return out, n
+}
+
+// footerStyles returns how many style elements the print-footer define of
+// the template file holds: one in report.html, which draws the footer, and
+// none elsewhere.
+func footerStyles(file string) int {
+	if file == "report.html" {
+		return 1
+	}
+	return 0
+}
+
 func TestNoInlineScriptOrStyle(t *testing.T) {
 	templates := os.DirFS("templates")
 	files, err := fs.Glob(templates, "*.html")
@@ -144,6 +175,10 @@ func TestNoInlineScriptOrStyle(t *testing.T) {
 		b, err := fs.ReadFile(templates, file)
 		if err != nil {
 			t.Fatalf("ReadFile(%q) error = %v", file, err)
+		}
+		b, styles := withoutFooterStyle(b)
+		if want := footerStyles(file); styles != want {
+			t.Errorf("%s holds %d style elements in its print-footer define, want %d", file, styles, want)
 		}
 		if m := inlineCode.Find(b); m != nil {
 			t.Errorf("%s contains %q, want no inline script, style or event handler", file, m)
@@ -169,5 +204,39 @@ func TestNoInlineScriptOrStyle_Pattern(t *testing.T) {
 		if got := inlineCode.MatchString(tt.in); got != tt.want {
 			t.Errorf("inlineCode.MatchString(%q) = %v, want %v", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestWithoutFooterStyle(t *testing.T) {
+	tests := []struct {
+		name   string
+		in     string
+		want   string
+		styles int
+	}{
+		{
+			name:   "style in the footer",
+			in:     `{{define "print-footer"}}<style>b{}</style><b>x</b>{{end}}`,
+			want:   `{{define "print-footer"}}<b>x</b>{{end}}`,
+			styles: 1,
+		},
+		{
+			name: "style after a footer without one",
+			in:   `{{define "print-footer"}}<b>x</b>{{end}}{{define "report"}}<style>p{}</style>{{end}}`,
+			want: `{{define "print-footer"}}<b>x</b>{{end}}{{define "report"}}<style>p{}</style>{{end}}`,
+		},
+		{
+			name: "style with no footer",
+			in:   `{{define "page"}}<style>p{}</style>{{end}}`,
+			want: `{{define "page"}}<style>p{}</style>{{end}}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, styles := withoutFooterStyle([]byte(tt.in))
+			if string(got) != tt.want || styles != tt.styles {
+				t.Errorf("withoutFooterStyle(%q) = %q, %d, want %q, %d", tt.in, got, styles, tt.want, tt.styles)
+			}
+		})
 	}
 }

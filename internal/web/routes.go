@@ -11,9 +11,13 @@ import (
 // addRoutes registers every route of the server. Only the routes that need a
 // signed-in user read the session, so /healthz answers and logout works even
 // when the session store is down. The routes that call the stores or the
-// originals get a deadline of storeLimit. The
+// originals get a deadline of limits.Store. The PDF export sets its own
+// deadlines, one for reading the store and one for the conversion. The
 // static files need no session.
-func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets, authn Authenticator, sessions SessionStore, attempts AttemptStore, stores Stores, suggester Suggester, originals Originals, storeLimit time.Duration) {
+func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets, authn Authenticator, sessions SessionStore,
+	attempts AttemptStore, stores Stores, suggester Suggester, originals Originals, p printer, limits Limits,
+) {
+	storeLimit := limits.Store
 	projects, scans, triage, audits := stores.Projects, stores.Scans, stores.Triage, stores.Audits
 	signedIn := func(h http.Handler) http.Handler {
 		return chain(h, loadSession(logger, rd, sessions), requireLogin(logger, rd))
@@ -61,5 +65,6 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	mux.Handle("POST /projects/{id}/scans", usesStore(handleScanCreate(logger, rd, scans)))
 	mux.Handle("GET /scans/{id}", usesStore(handleScan(logger, rd, projects, scans, triage, stores.Applies)))
 	mux.Handle("GET /scans/{id}/report", usesStore(handleReport(logger, rd, stores.Reports, time.Now)))
+	mux.Handle("GET /scans/{id}/report.pdf", signedIn(handleReportPDF(logger, rd, stores.Reports, p, limits, time.Now)))
 	mux.Handle("/", handleNotFound(logger, rd))
 }

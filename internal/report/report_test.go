@@ -154,14 +154,14 @@ func TestBuild_Caps(t *testing.T) {
 		d.Changes = append(d.Changes, report.Change{Item: apply.Item{BundleID: 1, Name: "ext.a.b", File: fmt.Sprintf("f%03d", i), Line: 1}})
 	}
 	d.Events = make([]report.Event, report.MaxRows)
-	d.EventTotal = 2400
+	d.EventTotal = report.MaxRows + 1400
 	r := report.Build(d, now)
 
 	if got := len(r.Remaining.Rows); got != report.MaxRows {
 		t.Errorf("len(Remaining.Rows) = %d, want %d", got, report.MaxRows)
 	}
-	if r.Remaining.Total != 1005 || r.Remaining.More() != 5 {
-		t.Errorf("Remaining Total, More() = %d, %d, want 1005, 5", r.Remaining.Total, r.Remaining.More())
+	if r.Remaining.Total != report.MaxRows+5 || r.Remaining.More() != 5 {
+		t.Errorf("Remaining Total, More() = %d, %d, want %d, 5", r.Remaining.Total, r.Remaining.More(), report.MaxRows+5)
 	}
 	e := r.Externalized.Rows[0]
 	if len(e.Places) != report.MaxPlaces || e.PlaceTotal != 53 {

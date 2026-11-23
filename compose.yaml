@@ -1,5 +1,5 @@
-# Local development stack: postgres, valkey, keycloak, openbao, web, and
-# worker.
+# Local development stack: postgres, valkey, keycloak, openbao, pdf, web,
+# and worker.
 #
 # Every password and secret in this file, in deploy/postgres/init.sql, and in
 # deploy/keycloak/realm.json is a fake value for local development only. Do
@@ -12,9 +12,11 @@
 #                                     by a locally installed redis)
 #   postgres  127.0.0.1:15432        (for integration tests)
 #   openbao-test 127.0.0.1:18200     (profile "test", for integration tests)
+#   pdf-test  127.0.0.1:13000        (profile "test", for integration tests)
 #
 # openbao publishes no port: only the worker and web reach it, on the compose
-# network.
+# network. pdf publishes no port either and sits alone with web on the
+# internal network "pdf", which has no way out; see decision 0043.
 
 name: secret-externalizer
 
@@ -185,6 +187,82 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  # Prints the report page that web sends to a PDF with Chromium. It reads
+  # only the files of the request and reaches nothing: its only network is
+  # the internal network "pdf", and Chromium may open only the files that
+  # Gotenberg wrote for the request, in /tmp/<uuid>/<uuid>/. See decision
+  # 0043.
+  pdf: &pdf
+    # 9.9.1-chromium, the Chromium-only image; the digest is the multi-arch
+    # index (linux/amd64 and linux/arm64 among others).
+    image: gotenberg/gotenberg:9.9.1-chromium@sha256:d722dfb3105c00f775125f13e3613ecbdb0040b12a7b8245c1d98ebafaefedd4
+    command:
+      - gotenberg
+      # The PDF routes (merge, split, sign, ...) and the PDF stages of the
+      # Chromium route are off; only the HTML and URL print routes stay.
+      - --pdf-disable-routes=true
+      - --pdf-disable-stages=true
+      # No script runs in the page.
+      - --chromium-disable-javascript=true
+      # Chromium opens only files directly in a request folder,
+      # /tmp/<uuid>/<uuid>/<name>. Every other address, file:// elsewhere
+      # (Chromium's profile and caches under /tmp included) and any
+      # http(s), is refused. Gotenberg also refuses, by itself, a file://
+      # address outside the folder of the request being printed. The IP
+      # rules refuse any host even if an address slips past the list.
+      - --chromium-allow-list=^file:///tmp/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/[^/]+$$
+      - --chromium-deny-private-ips=true
+      - --chromium-deny-public-ips=true
+      # Gotenberg itself fetches and calls nothing.
+      - --webhook-disable=true
+      - --api-disable-download-from=true
+      # Shorter than web's 20 second limit for one conversion, so Gotenberg
+      # answers 503 before web gives up.
+      - --api-timeout=15s
+      # A report with its stylesheet and fonts is about 5 MB.
+      - --api-body-limit=32MB
+      # Chromium starts with the container, not on the first export.
+      - --chromium-auto-start=true
+    environment:
+      # Chromium writes its profile and crash database under HOME, and the
+      # image's home folder is on the read-only root.
+      HOME: /tmp
+    networks:
+      - pdf
+    read_only: true
+    tmpfs:
+      # The files of each request and Chromium's profile; a report request
+      # is about 5 MB. It counts against mem_limit.
+      - /tmp:size=256m
+    # Chromium on a page too large for it is killed inside this limit, and
+    # the conversion fails, instead of the host killing another service.
+    # 3,000 plain table rows peaked at 525 MB (decision 0043); a report
+    # filled to its caps (100 rows in each section, 50 places an entry)
+    # peaked at 480-582 MiB (decision 0042).
+    mem_limit: 1g
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--output", "/dev/null", "http://127.0.0.1:3000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  # The same converter for the integration tests, started only with
+  # --profile test. It is on the default network, not on "pdf", because the
+  # tests reach it from the host through the published port.
+  pdf-test:
+    <<: *pdf
+    profiles: ["test"]
+    networks:
+      - default
+    ports:
+      - "127.0.0.1:13000:3000"
+    restart: "no"
+
   web:
     build:
       context: .
@@ -204,6 +282,7 @@ services:
       BAO_ADDR: http://openbao:8200
       BAO_ROLE_ID: se-web
       BAO_SECRET_ID_FILE: /run/secrets/openbao/secret-id
+      PDF_URL: http://pdf:3000
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
@@ -222,6 +301,10 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 15s
+    # default for everything else, pdf for the converter only.
+    networks:
+      - default
+      - pdf
     depends_on:
       postgres:
         condition: service_healthy
@@ -233,6 +316,10 @@ services:
       # written web's secret-id, and web starts and serves every other page
       # while OpenBao is not ready.
       openbao:
+        condition: service_started
+      # Started, not healthy: web serves every page but the PDF export
+      # while the converter is not ready.
+      pdf:
         condition: service_started
 
   worker:
@@ -291,6 +378,12 @@ services:
         condition: service_healthy
       openbao:
         condition: service_healthy
+
+networks:
+  # Has no route out of the host's container network: only web and pdf are
+  # on it.
+  pdf:
+    internal: true
 
 volumes:
   postgres-data:

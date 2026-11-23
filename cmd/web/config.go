@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 )
 
 // config holds the settings read once at start-up. Its fields are
@@ -24,6 +26,7 @@ type config struct {
 	oidc       auth.Config
 	baoAddr    string
 	baoCreds   bao.Credentials
+	pdfURL     string
 }
 
 // String returns every setting with the client secret, the database URL and
@@ -32,8 +35,8 @@ func (c config) String() string {
 	// c.dsn, c.oidc and the secret-id are passed as arguments of their own,
 	// so fmt calls the Format methods of db.DSN, of the ClientSecret field and
 	// of bao.SecretID.
-	return fmt.Sprintf("{addr:%s valkey_addr:%s database_url:%v oidc:%+v bao_addr:%s bao_role_id:%s bao_secret_id:%v}",
-		c.addr, c.valkeyAddr, c.dsn, c.oidc, c.baoAddr, c.baoCreds.RoleID, c.baoCreds.SecretID)
+	return fmt.Sprintf("{addr:%s valkey_addr:%s database_url:%v oidc:%+v bao_addr:%s bao_role_id:%s bao_secret_id:%v pdf_url:%s}",
+		c.addr, c.valkeyAddr, c.dsn, c.oidc, c.baoAddr, c.baoCreds.RoleID, c.baoCreds.SecretID, c.pdfURL)
 }
 
 // Format prints the form String returns for every fmt verb, including %#v,
@@ -53,6 +56,7 @@ func (c config) LogValue() slog.Value {
 		slog.String("bao_addr", c.baoAddr),
 		slog.String("bao_role_id", c.baoCreds.RoleID),
 		slog.Any("bao_secret_id", c.baoCreds.SecretID),
+		slog.String("pdf_url", c.pdfURL),
 	)
 }
 
@@ -80,6 +84,7 @@ func loadConfig(_ []string, getenv func(string) string) (config, error) {
 	baoAddr := required("BAO_ADDR")
 	roleID := required("BAO_ROLE_ID")
 	secretIDFile := required("BAO_SECRET_ID_FILE")
+	pdfURL := required("PDF_URL")
 	if len(missing) > 0 {
 		return config{}, fmt.Errorf("missing required environment variables: %s", strings.Join(missing, ", "))
 	}
@@ -91,6 +96,7 @@ func loadConfig(_ []string, getenv func(string) string) (config, error) {
 	cfg := config{
 		addr: ":8080", valkeyAddr: valkeyAddr, dsn: dsn,
 		baoAddr: baoAddr, baoCreds: bao.Credentials{RoleID: roleID, SecretID: secretID},
+		pdfURL: pdfURL,
 	}
 	if v := getenv("WEB_ADDR"); v != "" {
 		cfg.addr = v
@@ -100,6 +106,12 @@ func loadConfig(_ []string, getenv func(string) string) (config, error) {
 	}
 	if _, _, err := net.SplitHostPort(valkeyAddr); err != nil {
 		return config{}, fmt.Errorf("checking VALKEY_ADDR: %w", err)
+	}
+
+	// pdf.New checks the address and contacts nothing; run builds the
+	// client it keeps.
+	if _, err := pdf.New(pdfURL, &http.Client{}); err != nil {
+		return config{}, fmt.Errorf("checking PDF_URL: %w", err)
 	}
 
 	base, err := parseBaseURL(baseURL)

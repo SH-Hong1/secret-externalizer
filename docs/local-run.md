@@ -1,6 +1,6 @@
 # 로컬에서 띄우기
 
-`compose.yaml`은 postgres, valkey, Keycloak, OpenBao, web, worker를 한 번에 띄워 Keycloak으로 로그인해 볼 수 있게 한다. 이 파일과 `deploy/` 아래의 비밀번호와 시크릿은 모두 `dev-only-…` 형태의 가짜 값이며 로컬 개발에만 쓴다. 공유하거나 배포하는 환경에 그대로 쓰지 않는다.
+`compose.yaml`은 postgres, valkey, Keycloak, OpenBao, web, worker, PDF 변환기(`pdf`)를 한 번에 띄워 Keycloak으로 로그인해 볼 수 있게 한다. 이 파일과 `deploy/` 아래의 비밀번호와 시크릿은 모두 `dev-only-…` 형태의 가짜 값이며 로컬 개발에만 쓴다. 공유하거나 배포하는 환경에 그대로 쓰지 않는다.
 
 ## 띄우고 내리기
 
@@ -121,6 +121,19 @@ docker compose exec -e BAO_ADDR=http://127.0.0.1:8200 openbao sh -c '
 4. OpenBao에 원본이 없으면 "보관된 원본이 없습니다. 다시 스캔하면 보관됩니다.", OpenBao에 닿지 않으면 "비밀 저장소에 연결할 수 없습니다.", OpenBao가 읽기를 거부했으면 "비밀 저장소에서 원본을 읽지 못했습니다."가 보인다. 두 경우에도 열람 시도는 감사 기록에 남는다. web은 OpenBao가 없어도 기동하고 다른 화면은 그대로 쓸 수 있다.
 5. 머리 띠의 "감사 로그"(`/audit`)에서 판정, 묶음 옮기기, 원본 보기가 최신순으로 한 쪽에 100줄씩 보인다. 시각은 UTC이고, 내용에는 묶음과 항목 번호, 판정한 묶음의 종류(고객정보는 파일 경로도), 이름(`ext.…`), 보류 사유, 메모만 있고 값은 없다. "더 보기"가 다음 쪽(`/audit?before=<마지막 줄의 ID>`)을 연다.
 
+## 리포트와 PDF
+
+1. 성공한 스캔의 화면, 프로젝트 화면의 스캔 목록, 적용 결과 화면의 확인 스캔 옆에 "리포트" 링크가 있다(`/scans/{id}/report`). `user`와 `admin` 모두 볼 수 있다. 성공하지 않은 스캔의 리포트 주소는 스캔 화면으로 돌아간다.
+2. 리포트는 열 때마다 만든다. 판정은 리포트를 만든 시각의 것이고, 외부화·삭제한 항목은 그 스캔이 요청되기 전에 적용된 것이다. 그래서 적용 뒤의 확인 스캔 리포트에 방금 외부화한 항목이 실린다. 지난 스캔의 리포트는 머리에 "이후 스캔이 있습니다"와 마지막 스캔 리포트의 링크를 보인다.
+3. 리포트에는 값, 미리보기, 지문, 주변 줄이 없다. 절마다 100줄까지만 싣고 "외 N줄"을 적는다. 건수는 언제나 전체를 센다. 판정 화면에서 전체 목록을 볼 수 있다.
+4. "PDF로 내보내기"를 누르면 같은 내용의 A4 PDF(`report-project-<프로젝트 ID>-scan-<스캔 ID>.pdf`)를 받는다. 예제 프로젝트에서 13~14쪽이고 1초 안팎이 걸린다. `pdf`가 멈춰 있으면 503 "PDF 변환 서비스에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요." 화면이 나오고, 다른 화면은 그대로 쓸 수 있다. `docker compose start pdf` 뒤 다시 된다.
+5. 바닥글은 `secret-externalizer | scan #N | 쪽 / 전체`이고 왼쪽에 붙는다. 프로젝트 이름은 본문 첫머리에 있다.
+
+## 이미지를 다시 빌드할 때
+
+- web과 worker는 같은 마이그레이션 파일을 가지고 뜰 때 스키마를 확인한다. 새 마이그레이션이 든 web이 먼저 뜨면, 그 파일이 없는 이전 worker 이미지는 다시 시작할 때 `schema_migration records versions [N] that this binary has no migration file for`로 뜨지 않는다(이미 떠 있던 worker는 계속 돌지만 재시작하면 멈춘다). 마이그레이션이 바뀐 커밋을 받으면 web과 worker를 함께 다시 빌드한다.
+- Docker VM의 메모리가 2GB(colima 기본값)이면 Go 이미지 빌드가 매우 느리다. 전체 스택이 떠 있는 채 web을 빌드하자 90분 넘게 끝나지 않고 Keycloak이 메모리 부족으로 죽은 일이 있었고, `pdf-test`와 `openbao-test`를 멈춘 채 worker 하나를 빌드하는 데 약 16분이 걸렸다. 빌드 전에 `test` 프로필의 서비스를 멈추고, 이미지를 하나씩 빌드한 뒤(`docker compose build worker`) `docker compose up -d --no-deps --no-build worker`로 바꿔 띄운다. 가능하면 VM 메모리를 4GB 이상으로 늘린다(`colima stop && colima start --memory 4`).
+
 ## OpenBao
 
 worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하고, 판정 전의 원본을 OpenBao KV v2에 보관한다. 설정은 `deploy/openbao/config.hcl`에 있고, 이유는 `docs/decisions/0017-openbao-setup.md`에 있다.
@@ -152,6 +165,15 @@ worker 정책에 `secret/data/projects/*`의 `read`가 더해졌고, KV v2 마�
 
 > **경고:** `down -v`로 볼륨을 지우는 것은 **적용을 한 번도 하지 않은 환경에서만** 안전하다. 적용을 한 번이라도 한 환경에서는 `openbao-data` 볼륨에, git이 추적하지 않는 파일(키 파일, 무시된 설정 파일)에서 빼낸 값의 유일한 사본이 있을 수 있다. 그 파일은 적용이 지웠거나 자리표시자로 바꾸었으므로, 볼륨을 지우면 값이 영영 사라진다. 그런 환경에서 정책을 바꾸는 방법은 아직 없다(`docs/next-steps.md`).
 
+## PDF 변환기
+
+리포트의 PDF는 web이 `pdf` 서비스(Gotenberg 9.9.1의 Chromium 전용 이미지)에 HTML, 스타일시트, 글꼴을 한 요청으로 보내 만든다. 설정과 이유는 `docs/decisions/0043-pdf-converter-setup.md`에 있다.
+
+| 서비스 | 내용 |
+|---|---|
+| `pdf` | 호스트에 포트를 열지 않는다. 바깥으로 나가는 길이 없는 내부 네트워크 `pdf`에만 붙고, 그 네트워크에는 web만 함께 붙는다. web은 `http://pdf:3000`으로 부른다. Chromium은 요청으로 받은 파일(`/tmp` 아래)만 열고 JavaScript를 실행하지 않는다 |
+| `pdf-test` | `test` 프로필에서만 뜬다. `pdf`와 같은 이미지와 옵션이고, 기본 네트워크에 붙어 `127.0.0.1:13000`에 열린다 |
+
 ## 개발용 계정
 
 | 사용자 | 비밀번호 | 역할 | 볼 수 있는 화면 |
@@ -175,8 +197,9 @@ realm 설정은 `deploy/keycloak/realm.json`에 있다. Keycloak은 기동할 �
 | valkey | `127.0.0.1:16379` | 통합 테스트. 로컬에 설치한 redis가 6379를 쓰는 경우가 많아 16379로 연다 |
 | postgres | `127.0.0.1:15432` | 통합 테스트. 컨테이너끼리는 `postgres:5432`로 쓴다 |
 | openbao-test | `127.0.0.1:18200` | 통합 테스트. `test` 프로필에서만 뜬다 |
+| pdf-test | `http://127.0.0.1:13000` | 통합 테스트. `test` 프로필에서만 뜬다 |
 
-`openbao`는 호스트에 포트를 열지 않는다. worker만 compose 네트워크 안에서 `openbao:8200`으로 접속한다.
+`openbao`는 호스트에 포트를 열지 않는다. worker만 compose 네트워크 안에서 `openbao:8200`으로 접속한다. `pdf`도 포트를 열지 않고, web만 내부 네트워크 `pdf`에서 `pdf:3000`으로 접속한다.
 
 ## 발급자 주소
 
@@ -265,20 +288,23 @@ go test -count=1 -v -run 'TestRules|TestVersion' ./internal/ruleset/
 
 ## 통합 테스트
 
-valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이, OpenBao가 필요한 테스트는 `TEST_BAO_ADDR`가 없으면 건너뛴다. `make test-integration`은 셋 다 요구한다. OpenBao 테스트는 원본을 보관하는 `openbao`가 아니라 `test` 프로필의 `openbao-test`를 쓰고, 테스트가 개발용 루트 토큰으로 transit, KV, AppRole을 직접 만든다. compose의 서비스로 실행하려면 다음과 같이 한다. 새 셸에서는 compose 명령마다 `SE_WORKSPACE`가 설정되어 있어야 한다. 없으면 compose가 파일을 읽다가 멈춘다(worker를 띄우지 않는 명령도 같다).
+valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이, OpenBao가 필요한 테스트는 `TEST_BAO_ADDR`가, PDF 변환기가 필요한 테스트는 `TEST_PDF_URL`이 없으면 건너뛴다. `make test-integration`은 넷 다 요구한다. PDF 테스트는 `test` 프로필의 `pdf-test`(`http://127.0.0.1:13000`)를 쓴다. OpenBao 테스트는 원본을 보관하는 `openbao`가 아니라 `test` 프로필의 `openbao-test`를 쓰고, 테스트가 개발용 루트 토큰으로 transit, KV, AppRole을 직접 만든다. compose의 서비스로 실행하려면 다음과 같이 한다. 새 셸에서는 compose 명령마다 `SE_WORKSPACE`가 설정되어 있어야 한다. 없으면 compose가 파일을 읽다가 멈춘다(worker를 띄우지 않는 명령도 같다).
 
 실제 스캐너를 쓰는 테스트(`internal/scan`의 `TestHandle_RealScanners…`, `internal/ruleset`의 규칙 테스트 등)는 `bin/`에 스캐너가 없으면 실패하지 않고 건너뛴다. 통합 테스트를 돌리기 전에 `make scanners`를 먼저 실행하고, `-v` 출력에서 이 테스트가 `SKIP`이 아닌지 확인한다.
 
 ```sh
 export SE_WORKSPACE=$HOME/work     # 값은 존재하는 폴더면 된다
 docker compose up -d valkey postgres
-docker compose --profile test up -d openbao-test
+docker compose --profile test up -d openbao-test pdf-test
 make scanners                      # 처음 한 번. 없으면 실제 스캐너 테스트가 건너뛰어진다
 TEST_VALKEY_ADDR=127.0.0.1:16379 \
 TEST_DATABASE_URL=postgres://se_app:dev-only-se-app-password@127.0.0.1:15432/secret_externalizer_test \
 TEST_BAO_ADDR=http://127.0.0.1:18200 \
+TEST_PDF_URL=http://127.0.0.1:13000 \
 make test-integration
 ```
+
+Chromium이 든 `pdf`와 `pdf-test`는 쉬고 있을 때 각각 200MB 안팎을 쓰고, 컨테이너마다 1GB 한도가 있다. Docker VM의 메모리가 2GB(colima 기본값)인 기계에서 전체 스택과 `pdf-test`를 함께 띄운 채 `make test-integration`이 통과했다. VM 메모리가 그보다 작거나 다른 컨테이너가 더 떠 있어 `openbao-test`가 메모리 부족으로 죽으면(`docker inspect`의 `OOMKilled`, `internal/apply`가 `store-failed`나 연결 거부로 실패) `docker compose stop pdf`로 `pdf`를 멈추고 `openbao-test`를 다시 띄운 뒤 돌리거나 VM 메모리를 늘린다.
 
 valkey는 디스크에 아무것도 남기지 않는다. valkey를 다시 띄우면 모든 세션이 사라지고 다시 로그인해야 한다. 메모리는 64MB로 제한하며, 다 차면 기존 키를 지우지 않고 새 쓰기만 거부한다(`noeviction`). 이때 새 로그인은 503 화면을 보고, 이미 로그인한 세션은 그대로 쓸 수 있다.
 

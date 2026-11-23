@@ -51,6 +51,7 @@ func validEnv(t *testing.T) map[string]string {
 		"OIDC_DISCOVERY_URL": "http://keycloak:8080/realms/secret-externalizer",
 		"OIDC_CLIENT_ID":     "secret-externalizer-web",
 		"OIDC_CLIENT_SECRET": testClientSecret,
+		"PDF_URL":            "http://pdf:3000",
 	}
 }
 
@@ -69,6 +70,7 @@ func TestLoadConfig(t *testing.T) {
 		dsn:        db.DSN(testDatabaseURL),
 		baoAddr:    "http://openbao:8200",
 		baoCreds:   bao.Credentials{RoleID: "se-web", SecretID: testSecretID},
+		pdfURL:     "http://pdf:3000",
 		oidc: auth.Config{
 			IssuerURL:    "http://localhost:8081/realms/secret-externalizer",
 			DiscoveryURL: "http://keycloak:8080/realms/secret-externalizer",
@@ -126,6 +128,7 @@ func TestLoadConfig_MissingRequired(t *testing.T) {
 		"BAO_ADDR",
 		"BAO_ROLE_ID",
 		"BAO_SECRET_ID_FILE",
+		"PDF_URL",
 	} {
 		t.Run(name, func(t *testing.T) {
 			env := validEnv(t)
@@ -224,6 +227,37 @@ func TestConfig_Redacted(t *testing.T) {
 	}
 	if want := "secret-externalizer-web"; !strings.Contains(fmt.Sprintf("%v", cfg), want) {
 		t.Errorf("Sprintf(%%v, config) = %q, want the client ID %q", fmt.Sprintf("%v", cfg), want)
+	}
+}
+
+func TestLoadConfig_BadPDFURL(t *testing.T) {
+	for _, v := range []string{"pdf:3000", "ftp://pdf:3000", "http://pdf:3000/forms", "http://user@pdf:3000"} {
+		t.Run(v, func(t *testing.T) {
+			env := validEnv(t)
+			env["PDF_URL"] = v
+			_, err := loadConfig(nil, getenvFrom(env))
+			if err == nil {
+				t.Fatalf("loadConfig() with PDF_URL=%q error = nil, want an error", v)
+			}
+			if !strings.Contains(err.Error(), "checking PDF_URL") {
+				t.Errorf("loadConfig() with PDF_URL=%q error = %q, want it to say checking PDF_URL", v, err)
+			}
+		})
+	}
+}
+
+func TestConfig_ShowsPDFURL(t *testing.T) {
+	cfg, err := loadConfig(nil, getenvFrom(validEnv(t)))
+	if err != nil {
+		t.Fatalf("loadConfig(nil, validEnv(t)) error = %v", err)
+	}
+	if want := "pdf_url:http://pdf:3000"; !strings.Contains(cfg.String(), want) {
+		t.Errorf("config.String() = %q, want it to contain %q", cfg.String(), want)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "config", cfg)
+	if want := `"pdf_url":"http://pdf:3000"`; !strings.Contains(buf.String(), want) {
+		t.Errorf("config.LogValue() logged %q, want it to contain %q", buf.String(), want)
 	}
 }
 

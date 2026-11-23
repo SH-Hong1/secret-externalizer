@@ -35,28 +35,40 @@ type testEnv struct {
 	originals *fakeOriginals
 	applies   *fakeApplies
 	reports   *fakeReports
+	converter *fakeConverter
 }
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
+	return newTestEnvWith(t, web.Limits{Store: time.Minute, PDF: time.Minute}, nil)
+}
+
+// newTestEnvWith is newTestEnv with the limits of one request given, and
+// with converter in place of the fake one when it is not nil.
+func newTestEnvWith(t *testing.T, limits web.Limits, converter web.Converter) *testEnv {
+	t.Helper()
 	e := &testEnv{
-		log:      &bytes.Buffer{},
-		authn:    &fakeAuthenticator{user: auth.User{Subject: "fake-subject", Name: "Fake User", Roles: []auth.Role{auth.RoleUser}}},
-		sessions: newFakeSessions(),
-		attempts: newFakeAttempts(),
-		projects: newFakeProjects(),
-		scans:    newFakeScans(),
-		triage:   newFakeTriage(),
-		calls:    &callLog{},
-		applies:  newFakeApplies(),
-		reports:  newFakeReports(),
+		log:       &bytes.Buffer{},
+		authn:     &fakeAuthenticator{user: auth.User{Subject: "fake-subject", Name: "Fake User", Roles: []auth.Role{auth.RoleUser}}},
+		sessions:  newFakeSessions(),
+		attempts:  newFakeAttempts(),
+		projects:  newFakeProjects(),
+		scans:     newFakeScans(),
+		triage:    newFakeTriage(),
+		calls:     &callLog{},
+		applies:   newFakeApplies(),
+		reports:   newFakeReports(),
+		converter: &fakeConverter{out: []byte("%PDF-1.7 dev-only-fake-pdf")},
 	}
 	e.audits = &fakeAudit{log: e.calls}
 	e.originals = &fakeOriginals{log: e.calls}
+	if converter == nil {
+		converter = e.converter
+	}
 	logger := slog.New(slog.NewJSONHandler(e.log, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	e.handler = web.NewServer(logger, e.authn, e.sessions, e.attempts,
 		web.Stores{Projects: e.projects, Scans: e.scans, Triage: e.triage, Audits: e.audits, Applies: e.applies, Reports: e.reports},
-		web.NewHistorySuggester(e.triage), e.originals, time.Minute)
+		web.NewHistorySuggester(e.triage), e.originals, converter, limits)
 	return e
 }
 

@@ -14,6 +14,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/report"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
@@ -1101,4 +1102,42 @@ func (f *fakeReports) put(d report.Data) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.data[d.Scan.ID] = d
+}
+
+// fakeConverter remembers the documents it is given and whether their
+// context had a deadline. It returns out, or err when that is set. When wait
+// is true it waits until the context ends and returns its error wrapped in
+// pdf.ErrUnavailable, as the real client does.
+type fakeConverter struct {
+	out  []byte
+	err  error
+	wait bool
+
+	mu        sync.Mutex
+	docs      []pdf.Document
+	deadlines []bool
+}
+
+func (f *fakeConverter) Convert(ctx context.Context, doc pdf.Document) ([]byte, error) {
+	_, hasDeadline := ctx.Deadline()
+	f.mu.Lock()
+	f.docs = append(f.docs, doc)
+	f.deadlines = append(f.deadlines, hasDeadline)
+	f.mu.Unlock()
+	if f.wait {
+		<-ctx.Done()
+		return nil, fmt.Errorf("%w: %w", pdf.ErrUnavailable, ctx.Err())
+	}
+	if f.err != nil {
+		return nil, f.err
+	}
+	return f.out, nil
+}
+
+// calls returns the documents Convert was given and, for each, whether its
+// context had a deadline.
+func (f *fakeConverter) calls() ([]pdf.Document, []bool) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.docs), slices.Clone(f.deadlines)
 }
