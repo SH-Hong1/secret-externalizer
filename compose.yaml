@@ -236,9 +236,9 @@ services:
       - /tmp:size=256m
     # Chromium on a page too large for it is killed inside this limit, and
     # the conversion fails, instead of the host killing another service.
-    # 3,000 plain table rows peaked at about 530 MB; a report filled to its
-    # caps (100 rows in each section, 50 places an entry) peaked at
-    # 480-582 MiB. Decision 0042 holds the measurements.
+    # 3,000 plain table rows peaked at 525 MB (decision 0043); a report
+    # filled to its caps (100 rows in each section, 50 places an entry)
+    # peaked at 480-582 MiB (decision 0042).
     mem_limit: 1g
     cap_drop:
       - ALL
