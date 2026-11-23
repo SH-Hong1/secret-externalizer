@@ -1,9 +1,9 @@
-# Passwords in build and deployment settings: a <password> inside a <server>
-# in Maven settings.xml, an element whose name contains passw in pom.xml, and
+# Passwords in build and deployment settings: a <password> and the
+# <username> beside it inside a <server> in Maven settings.xml, an element whose name contains passw in pom.xml, and
 # a password property or task attribute in an Ant build.xml. An Ant password
 # that signs in to another server, the password of a remote task such as
-# <scp> or of a property named after one, is an SSH credential. ${...}
-# placeholders and empty values are not reported.
+# <scp> or of a property named after one, is an SSH credential. ${...} and
+# #{...} placeholders and empty values are not reported.
 #
 # Every rule starts with "  - id:" and has its category and kind under
 # metadata, which the rule tests read line by line.
@@ -22,7 +22,24 @@ rules:
       - pattern: <password>$VALUE</password>
       - metavariable-regex:
           metavariable: $VALUE
-          regex: ^(?!\$\{)\S
+          regex: ^(?![$#]\{)\S
+      - focus-metavariable: $VALUE
+
+  - id: maven-settings-server-username
+    message: A repository user name is written in Maven settings.xml.
+    severity: WARNING
+    languages: [xml]
+    paths:
+      include: ["settings.xml"]
+    metadata:
+      category: storage-credential
+      kind: account
+    patterns:
+      - pattern-inside: <server>...</server>
+      - pattern: <username>$VALUE</username>
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: ^(?![$#]\{)\S
       - focus-metavariable: $VALUE
 
   - id: maven-pom-password
@@ -41,7 +58,7 @@ rules:
           regex: (?i).*passw
       - metavariable-regex:
           metavariable: $VALUE
-          regex: ^(?!\$\{)\S
+          regex: ^(?![$#]\{)\S
       - focus-metavariable: $VALUE
 
   - id: ant-property-password
@@ -60,7 +77,7 @@ rules:
           regex: (?i)^(?!.*(?:ssh|scp|ftp|deploy|remote)).*passw(or)?d$
       - metavariable-regex:
           metavariable: $VALUE
-          regex: ^(?!\$\{)\S
+          regex: ^(?![$#]\{)\S
       - focus-metavariable: $VALUE
 
   # A password property named after a remote task, such as deploy.password.
@@ -80,7 +97,7 @@ rules:
           regex: (?i)^(?=.*(?:ssh|scp|ftp|deploy|remote)).*passw(or)?d$
       - metavariable-regex:
           metavariable: $VALUE
-          regex: ^(?!\$\{)\S
+          regex: ^(?![$#]\{)\S
       - focus-metavariable: $VALUE
 
   # A password attribute of any task that is not a remote one, such as
@@ -95,7 +112,7 @@ rules:
       category: storage-credential
       kind: password
     patterns:
-      - pattern-regex: (?<![\w.-])(?:password|passwd|storepass|keypass)[ \t]*=[ \t]*"(?!\$\{)(?P<VALUE>[^"\r\n]+)"
+      - pattern-regex: (?<![\w.-])(?:password|passwd|storepass|keypass)[ \t]*=[ \t]*"(?![$#]\{)(?P<VALUE>[^"\r\n]+)"
       - pattern-not-regex: <(?:scp|sshexec|sshsession|ftp|telnet|rexec)\b[^<>]*>
       - focus-metavariable: $VALUE
 
@@ -112,5 +129,5 @@ rules:
       kind: password
     patterns:
       - pattern-regex: <(?:scp|sshexec|sshsession|ftp|telnet|rexec)\b[^<>]*>
-      - pattern-regex: (?<![\w.-])(?:password|passwd|passphrase)[ \t]*=[ \t]*"(?!\$\{)(?P<VALUE>[^"\r\n]+)"
+      - pattern-regex: (?<![\w.-])(?:password|passwd|passphrase)[ \t]*=[ \t]*"(?![$#]\{)(?P<VALUE>[^"\r\n]+)"
       - focus-metavariable: $VALUE

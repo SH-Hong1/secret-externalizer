@@ -30,7 +30,7 @@ import (
 // maxFileBytes is the largest example file the tests read.
 const maxFileBytes = 1 << 20
 
-// located is a result reduced to what expected.json lists. Line is the
+// located is a result reduced to what a project's list of findings holds. Line is the
 // 1-based line where the value starts and Value is the exact text of the
 // value in the UTF-8 copy; a result for a whole file is on line 1 with an
 // empty Value.
@@ -80,13 +80,22 @@ func scannerBin(t *testing.T, env, name string) string {
 	return bin
 }
 
+// legacyShop is the example project the scan and apply tests share, and
+// ruleCases is the project that holds one case for each value a rule must
+// report or must leave alone. The findings expected in a project are listed
+// in testdata/<project>.json.
+const (
+	legacyShop = "legacy-shop"
+	ruleCases  = "rule-cases"
+)
+
 // utf8Copy copies the example project into a new folder at parent, a
 // slash-separated path inside a temporary folder, with every file converted
 // to UTF-8, the way the scan runner hands files to the scanners. It returns
 // the folder with its symbolic links resolved.
-func utf8Copy(t *testing.T, parent string) string {
+func utf8Copy(t *testing.T, project, parent string) string {
 	t.Helper()
-	src, err := filepath.EvalSymlinks(filepath.Join("testdata", "legacy-shop"))
+	src, err := filepath.EvalSymlinks(filepath.Join("testdata", project))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +107,7 @@ func utf8Copy(t *testing.T, parent string) string {
 	if err != nil {
 		t.Fatal(err)
 	}
-	dst := filepath.Join(tmp, filepath.FromSlash(parent), "legacy-shop")
+	dst := filepath.Join(tmp, filepath.FromSlash(parent), project)
 	_, err = textfile.Walk(src, nil, func(rel string, _ fs.DirEntry) error {
 		f, err := textfile.Read(filepath.Join(src, filepath.FromSlash(rel)), maxFileBytes)
 		if err != nil {
@@ -111,7 +120,7 @@ func utf8Copy(t *testing.T, parent string) string {
 		return os.WriteFile(out, f.Text, 0o600)
 	})
 	if err != nil {
-		t.Fatalf("copying legacy-shop: %v", err)
+		t.Fatalf("copying %s: %v", project, err)
 	}
 	return dst
 }
@@ -119,33 +128,33 @@ func utf8Copy(t *testing.T, parent string) string {
 // scanExample scans a UTF-8 copy of the example project, placed under
 // parent, with the three scanners and the rules in the repository's rules/
 // folder.
-func scanExample(t *testing.T, parent string) []result {
+func scanExample(t *testing.T, project, parent string) []result {
 	t.Helper()
 	blBin := scannerBin(t, "BETTERLEAKS_BIN", "betterleaks")
 	ogBin := scannerBin(t, "OPENGREP_BIN", "opengrep")
-	dir := utf8Copy(t, parent)
+	dir := utf8Copy(t, project, parent)
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 
 	var raws []scan.Raw
 	bl, counts, err := betterleaks.New(blBin, repoPath(t, "rules/betterleaks.toml"), env).ScanWithCounts(t.Context(), dir)
 	if err != nil {
-		t.Fatalf("betterleaks ScanWithCounts(legacy-shop) error = %v", err)
+		t.Fatalf("betterleaks ScanWithCounts(%s) error = %v", project, err)
 	}
 	if !gocmp.Equal(counts, scan.Counts{}) {
-		t.Errorf("betterleaks ScanWithCounts(legacy-shop) counts = %+v, want zero", counts)
+		t.Errorf("betterleaks ScanWithCounts(%s) counts = %+v, want zero", project, counts)
 	}
 	raws = append(raws, bl...)
 	og, counts, err := opengrep.New(ogBin, repoPath(t, "rules/opengrep"), nil, env).ScanWithCounts(t.Context(), dir)
 	if err != nil {
-		t.Fatalf("opengrep ScanWithCounts(legacy-shop) error = %v", err)
+		t.Fatalf("opengrep ScanWithCounts(%s) error = %v", project, err)
 	}
 	if !gocmp.Equal(counts, scan.Counts{}) {
-		t.Errorf("opengrep ScanWithCounts(legacy-shop) counts = %+v, want zero", counts)
+		t.Errorf("opengrep ScanWithCounts(%s) counts = %+v, want zero", project, counts)
 	}
 	raws = append(raws, og...)
 	kf, err := keyfile.New().Scan(t.Context(), dir)
 	if err != nil {
-		t.Fatalf("keyfile Scan(legacy-shop) error = %v", err)
+		t.Fatalf("keyfile Scan(%s) error = %v", project, err)
 	}
 	raws = append(raws, kf...)
 
@@ -193,15 +202,15 @@ func place(t *testing.T, dir string, r scan.Raw) result {
 	return res
 }
 
-func readExpected(t *testing.T) []located {
+func readExpected(t *testing.T, project string) []located {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "expected.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", project+".json")) //nolint:gosec // G304: the path is a test file of this repository
 	if err != nil {
 		t.Fatal(err)
 	}
 	var want []located
 	if err := json.Unmarshal(data, &want); err != nil {
-		t.Fatalf("reading expected.json: %v", err)
+		t.Fatalf("reading %s.json: %v", project, err)
 	}
 	return want
 }
@@ -216,19 +225,19 @@ func compareLocated(a, b located) int {
 	)
 }
 
-// checkExpected compares results with expected.json, as lists: a finding
-// reported twice is a difference. It also checks every span.
-func checkExpected(t *testing.T, results []result) {
+// checkExpected compares results with the findings listed for project, as
+// lists: a finding reported twice is a difference. It also checks every span.
+func checkExpected(t *testing.T, project string, results []result) {
 	t.Helper()
 	got := make([]located, 0, len(results))
 	for _, r := range results {
 		got = append(got, r.located)
 	}
 	slices.SortFunc(got, compareLocated)
-	want := readExpected(t)
+	want := readExpected(t, project)
 	slices.SortFunc(want, compareLocated)
 	if diff := gocmp.Diff(want, got); diff != "" {
-		t.Errorf("scanning legacy-shop: findings mismatch (-want +got):\n%s", diff)
+		t.Errorf("scanning %s: findings mismatch (-want +got):\n%s", project, diff)
 	}
 	for _, r := range results {
 		checkSpan(t, r)
@@ -236,14 +245,18 @@ func checkExpected(t *testing.T, results []result) {
 }
 
 func TestRules_ExpectedFindings(t *testing.T) {
-	checkExpected(t, scanExample(t, "copy"))
+	for _, project := range []string{legacyShop, ruleCases} {
+		t.Run(project, func(t *testing.T) {
+			checkExpected(t, project, scanExample(t, project, "copy"))
+		})
+	}
 }
 
 // The scanned folder's own path must not decide which rules apply: rules
 // limited to log and data folders or to file names such as build.xml and
 // *.sh look only at paths inside the project.
 func TestRules_ParentFoldersDoNotMatter(t *testing.T) {
-	checkExpected(t, scanExample(t, "data/logs/samples/dump/build.xml/settings.xml/pom.xml/deploy.sh/app.properties/application.yml"))
+	checkExpected(t, legacyShop, scanExample(t, legacyShop, "data/logs/samples/dump/build.xml/settings.xml/pom.xml/deploy.sh/app.properties/application.yml"))
 }
 
 // boundary holds the bytes that may surround a value: white space and the
@@ -254,7 +267,7 @@ const boundary = " \t\r\n\"'<>=:@;,()"
 // with a boundary byte, or are not surrounded by boundary bytes (or the
 // start or end of the file). Any of these means the span takes in a quote or
 // a key name, or cuts the value short. A value may end with "=", the padding
-// of a base64 token. expected.json pins each value exactly; this check
+// of a base64 token. The list of findings pins each value exactly; this check
 // catches the same mistakes in results that are not listed there.
 func checkSpan(t *testing.T, r result) {
 	t.Helper()
@@ -283,7 +296,7 @@ func TestRules_IgnoredAndTestDirsAreScanned(t *testing.T) {
 	if !slices.Contains(strings.Split(string(ignore), "\n"), "local/") {
 		t.Fatalf("legacy-shop/.gitignore does not list local/, so the test checks nothing")
 	}
-	results := scanExample(t, "copy")
+	results := scanExample(t, legacyShop, "copy")
 	for _, dir := range []string{"test/", "local/"} {
 		tools := map[string]bool{}
 		for _, r := range results {
@@ -358,7 +371,7 @@ func TestRules_CustomerDataPathMatchesGo(t *testing.T) {
 }
 
 func TestRules_CustomerDataOnlyInDataFiles(t *testing.T) {
-	results := scanExample(t, "copy")
+	results := scanExample(t, legacyShop, "copy")
 	var logPhone bool
 	for _, r := range results {
 		if r.Category != finding.CategoryCustomerData {

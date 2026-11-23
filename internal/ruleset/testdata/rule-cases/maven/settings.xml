@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<settings>
+  <servers>
+    <server>
+      <id>example-releases</id>
+      <username>dev-only-nexus-user</username>
+      <password>dev-only-fake-releases-password</password>
+    </server>
+    <server>
+      <id>example-snapshots</id>
+      <username>${env.NEXUS_USER}</username>
+      <password>${env.NEXUS_PASSWORD}</password>
+    </server>
+  </servers>
+  <mirrors>
+    <mirror>
+      <id>example-mirror</id>
+      <name>mirror</name>
+    </mirror>
+  </mirrors>
+</settings>

@@ -36,6 +36,7 @@
   {"file": "scripts/deploy.sh", "line": 9, "category": "ssh-credential", "kind": "password", "value": "dev-only fake ssh password"},
   {"file": "scripts/deploy.sh", "line": 10, "category": "other-secret", "kind": "other", "value": "devonlyfakepaddedtoken0000=="},
   {"file": "scripts/deploy.sh", "line": 10, "category": "partner-session", "kind": "token", "value": "devonlyfakepaddedtoken0000=="},
+  {"file": "settings.xml", "line": 6, "category": "storage-credential", "kind": "account", "value": "deployer"},
   {"file": "settings.xml", "line": 7, "category": "storage-credential", "kind": "password", "value": "dev-only-fake-nexus-password"},
   {"file": "src/main/java/com/example/shop/dao/OrderDao.java", "line": 8, "category": "other-secret", "kind": "other", "value": "dev-only-fake-java-password"},
   {"file": "src/main/java/com/example/shop/dao/OrderDao.java", "line": 8, "category": "other-secret", "kind": "password", "value": "dev-only-fake-java-password"},

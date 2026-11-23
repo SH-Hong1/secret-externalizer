@@ -14,18 +14,22 @@ useDefault = true
 # narrow; the address pattern in particular misses many addresses and
 # reports some text that is not one.
 
+# A phone number is written with hyphens, or, for a mobile number only,
+# as ten or eleven digits in a row that are not part of a longer number.
 [[rules]]
 id = "customer-phone"
 description = "Korean mobile or landline phone number"
-regex = '''\b(0(?:1[016789]|2|[3-6][1-5])-[0-9]{3,4}-[0-9]{4})\b'''
+regex = '''\b(0(?:1[016789]|2|[3-6][1-5])-[0-9]{3,4}-[0-9]{4}|01[016789][0-9]{7,8})\b'''
 secretGroup = 1
 path = '''(?i)(?:\.(?:(?:log|out)(?:[.\-_][0-9][^/]*|\.old|\.bak)?|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
 tags = ["category:customer-data", "kind:phone"]
 
+# The digit after the hyphen is 1 to 4 in a resident registration number
+# and 5 to 8 in a foreigner registration number.
 [[rules]]
 id = "customer-rrn"
-description = "Korean resident registration number"
-regex = '''\b([0-9]{6}-[1-4][0-9]{6})\b'''
+description = "Korean resident or foreigner registration number"
+regex = '''\b([0-9]{6}-[1-8][0-9]{6})\b'''
 secretGroup = 1
 path = '''(?i)(?:\.(?:(?:log|out)(?:[.\-_][0-9][^/]*|\.old|\.bak)?|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
 tags = ["category:customer-data", "kind:rrn"]
@@ -57,13 +61,14 @@ path = '''(?i)(?:\.(?:(?:log|out)(?:[.\-_][0-9][^/]*|\.old|\.bak)?|csv|tsv|txt|s
 tags = ["category:customer-data", "kind:address"]
 
 # A partner's session: the value of a JSESSIONID cookie anywhere, and the
-# value of the first cookie in a Cookie: header.
+# value of the first cookie in a Cookie: header or in a call that sets the
+# header, such as setRequestProperty("Cookie", "NAME=value").
 [[rules]]
 id = "partner-session-cookie"
 description = "Session cookie value"
-regex = '''(?i)(?:\bjsessionid=|\bcookie:[ \t]*[A-Za-z0-9_.-]+=)([^;"'\s]{8,})'''
+regex = '''(?i)(?:\bjsessionid=|\bcookie(?::[ \t]*|"[ \t]*,[ \t]*")[A-Za-z0-9_.-]+=)([^;"'\s]{8,})'''
 secretGroup = 1
-keywords = ["jsessionid", "cookie:"]
+keywords = ["jsessionid", "cookie"]
 tags = ["category:partner-session", "kind:token"]
 
 [[rules]]

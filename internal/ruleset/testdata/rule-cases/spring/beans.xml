@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans">
+  <bean id="ftpClient" class="com.example.shop.FtpClient">
+    <constructor-arg name="password" value="dev-only-fake-ctor-password"/>
+  </bean>
+  <bean id="ldapClient" class="com.example.shop.LdapClient">
+    <constructor-arg name="password">
+      <value>dev-only-fake-ctor-value-password</value>
+    </constructor-arg>
+    <property name="managerPassword" value="dev-only-fake-manager-password"/>
+    <property name="passwordEncoder" value="bcrypt"/>
+    <property name="dbPassword" value="#{systemProperties['db.password']}"/>
+  </bean>
+  <bean id="workerPool" class="org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor">
+    <property name="user" value="batch"/>
+    <property name="url" value="https://queue.example.invalid/jobs"/>
+  </bean>
+  <bean id="boneConfig" class="com.jolbox.bonecp.BoneCPConfig">
+    <property name="jdbcUrl" value="jdbc:mysql://bone.example.invalid:3306/shop"/>
+    <property name="username" value="bone_app"/>
+  </bean>
+</beans>

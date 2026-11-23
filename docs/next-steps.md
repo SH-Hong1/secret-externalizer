@@ -27,7 +27,7 @@
 | 6 | 리포트와 PDF | 완료 (`docs/superpowers/plans/2026-11-20-06-report-and-pdf.md`) |
 | 7 | 대시보드 | 완료 (`docs/superpowers/plans/2026-11-23-07-dashboard.md`) |
 
-- [ ] **지금 상태(2026-11-23): 계획 1~7을 모두 끝냈다. 남은 것은 아래의 남은 일이다.** 새 계획은 없다. 남은 일 가운데 무엇을 먼저 할지는 사용자가 정한다. 남은 일의 첫 번째로 스캔부터 확인 스캔까지 도는 통합 테스트를 두었다(결정 기록 0049). 계획 5, 6, 7에서 사용자 대신 정한 것은 결정 기록 0041, 0044, 0047에 모았다. 이 기계의 Docker VM은 2GB라 이미지를 빌드하는 동안 Keycloak이 메모리 부족으로 죽을 수 있다(`docs/local-run.md`의 "이미지를 다시 빌드할 때").
+- [ ] **지금 상태(2026-11-23): 계획 1~7을 모두 끝냈다. 남은 것은 아래의 남은 일이다.** 새 계획은 없다. 남은 일 가운데 무엇을 먼저 할지는 사용자가 정한다. 남은 일의 첫 번째로 스캔부터 확인 스캔까지 도는 통합 테스트를 두었다(결정 기록 0049). 스캔 규칙의 알려진 누락과 오탐은 고쳤다(결정 기록 0052). 계획 5, 6, 7에서 사용자 대신 정한 것은 결정 기록 0041, 0044, 0047에 모았다. 이 기계의 Docker VM은 2GB라 이미지를 빌드하는 동안 Keycloak이 메모리 부족으로 죽을 수 있다(`docs/local-run.md`의 "이미지를 다시 빌드할 때").
 - [x] 계획 3을 Subagent 방식으로 구현한다면, 새 종료 hook(`stop-review.sh`)이 하위 에이전트의 결과를 기다리는 동안 턴 종료를 막지 않는지 첫 Task에서 확인한다. 막으면 구현을 멈추고 hook부터 고친다. 2026-11-19에 계획 3 Task 1에서 확인했다. 하위 에이전트가 도는 동안 턴이 막히지 않고 끝났다.
 - [x] 계획 2 전 정리(PR #2)가 병합되었는지 확인한다. 2026-11-18에 병합되었다.
 - [x] `cmd/worker`를 만들면 `AGENTS.md` "Project layout"의 진입점 문장에 추가한다. 계획 2는 worker를 계획 3으로 미루는 안으로 작성했다. 2026-11-19에 계획 3 Task 4에서 `cmd/worker`를 만들고 진입점 문장에 추가했다.
@@ -90,7 +90,7 @@
 - [ ] `db.Store.Report`의 작은 정리: 건수를 셀 때도 `run_mark`를 계산하고, 판정 이력 쿼리가 전체 줄 수를 줄마다 되풀이한다. `report.Data`와 `reportFound`의 주석 줄바꿈이 고르지 않다.
 - [ ] pdf 컨테이너에 `memswap_limit`이 없다. VM에 스왑이 있으면 메모리 한도를 넘어 스왑을 쓸 수 있다.
 - [ ] web이 새 마이그레이션을 적용한 뒤 이전 worker 이미지가 다시 시작하면 `schema_migration records versions [N] …`로 뜨지 않고 `restart: unless-stopped`로 계속 다시 시작한다. 계획 6 Task 6에서 실제로 일어났다(worker를 다시 빌드해 풀었다). 화면에는 스캔이 "대기"로만 보인다. 배포 순서를 문서로만 막고 있으므로(`docs/local-run.md`의 "이미지를 다시 빌드할 때"), web이 worker의 상태를 보이거나 worker가 같은 오류로 멈춘 것을 알리는 방법을 정한다.
-- [ ] 2GB Docker VM에서 web 이미지 빌드가 다른 서비스와 겹치면 VM이 메모리 부족으로 멈추고 Keycloak이 죽었다(90분 넘게 끝나지 않음). worker 하나만 빌드해도 약 16분 걸렸다. VM 메모리를 늘리거나, Go 빌드를 호스트에서 하고 이미지는 결과만 복사하는 방법을 정한다.
+- [ ] 2GB Docker VM에서 web 이미지 빌드가 다른 서비스와 겹치면 VM이 메모리 부족으로 멈추고 Keycloak이 죽었다(90분 넘게 끝나지 않음). worker 하나만 빌드해도 약 16분 걸렸다. VM 메모리를 늘리거나, Go 빌드를 호스트에서 하고 이미지는 결과만 복사하는 방법을 정한다. 2026-11-23에는 `make test-integration` 전체를 로컬 스택(web, worker, Keycloak)이 떠 있는 채로 돌리자 `openbao-test`가 메모리 부족으로 죽었고(종료 코드 137), `TestReportPDF_PrintsAtEveryCap`이 변환기의 503/400으로 실패했다. `openbao-test`를 다시 띄워 `internal/apply`를, 그것을 멈추고 `internal/web`의 PDF 테스트를 따로 돌리면 통과한다.
 - [ ] "확인 스캔의 리포트 요약이 판정 화면 탭과 같다"는 확인 스캔이 마지막 스캔일 때만 확인할 수 있다. Task 6에서는 마지막 스캔(#7, #8)으로 확인했다.
 
 ## 계획 5에서 남은 일
@@ -149,8 +149,10 @@
 
 계획 3의 검토에서 나온 것 가운데 아직 고치지 않은 것이다. 해당하는 계획을 쓸 때 함께 정한다.
 
-- [ ] 규칙의 알려진 누락: `.properties`의 `jdbc.pass=`와 공백으로 구분한 형태, YAML 블록 스칼라(`password: >`), `sshpass -e`와 `SSHPASS=`, `setRequestProperty("Cookie", …)`, `settings.xml`의 `<username>`, `<constructor-arg name="password">`, `dbPassword` 같은 속성 이름, 외국인등록번호(7번째 자리 5~8), 하이픈 없는 전화번호.
-- [ ] 규칙의 알려진 오탐: `TOKEN_HEADER = "X-Auth-Token"` 같은 상수, `MSG_PWD` 같은 메시지 상수, SpEL `#{…}` 값, DB가 아닌 pool bean의 `url`/`user`, 원격 명령의 `sed -i`.
+- [x] 규칙의 알려진 누락: `.properties`의 `jdbc.pass=`와 공백으로 구분한 형태, YAML 블록 스칼라(`password: >`), `sshpass -e`와 `SSHPASS=`, `setRequestProperty("Cookie", …)`, `settings.xml`의 `<username>`, `<constructor-arg name="password">`, `dbPassword` 같은 속성 이름, 외국인등록번호(7번째 자리 5~8), 하이픈 없는 전화번호. 2026-11-23에 아홉 가지를 모두 규칙에 넣고 사례 예제 `internal/ruleset/testdata/rule-cases`로 붙잡았다(`docs/decisions/0052-rule-gaps-closed.md`).
+- [x] 규칙의 알려진 오탐: `TOKEN_HEADER = "X-Auth-Token"` 같은 상수, `MSG_PWD` 같은 메시지 상수, SpEL `#{…}` 값, DB가 아닌 pool bean의 `url`/`user`, 원격 명령의 `sed -i`. 2026-11-23에 다섯 가지를 모두 고쳤다(0052).
+- [ ] 규칙을 고친 뒤에 남은 누락(0052의 "알려진 한계"): 두 줄 이상인 YAML 블록 스칼라 비밀번호, 목록 항목(`- password: >`)의 블록 스칼라, `p:dbPassword` 같은 `p:` 속성(`p:password`만 찾는다), `settings.xml`의 `<proxy>` 안 계정과 비밀번호, 하이픈 없는 지역 전화번호, 이름에 `pool`만 있고 class가 알려진 데이터 소스가 아닌 bean의 `url`/`user`, 변수 이름이 `…Header`, `…Name`, `…Url`처럼 끝나는데 실제 비밀 값인 Java 문자열, 글자 그대로 `#{…}` 모양인 비밀 값.
+- [ ] 규칙을 고친 뒤에 남은 오탐(0052): 메시지 묶음(`messages*.properties`)의 `label.password=비밀번호`, `changePassword=…` 같은 줄(키 끝이 넓어져 전보다 늘 수 있다), 따옴표와 `user@` 없이 쓴 원격 명령의 `-i`(`ssh host sed -i …`), 로그에서 다른 뜻의 10~11자리 숫자가 `01`로 시작하는 경우.
 - [ ] worker가 둘 이상일 때: 오래된 임시 원본 정리가 다음 스캔의 `PutPending`과 겹치면 `has_original = true`인데 원본이 없는 항목이 생길 수 있다. worker를 늘리기 전에 삭제 직전에 최신 스캔을 다시 확인하게 한다. 적용도 worker 하나를 전제로 한다. 임대를 잃은 뒤 한 실행을 두 worker가 함께 잡으면 기록이 틀릴 수 있다(파일은 바뀌었는데 항목이 `interrupted`). 값은 사라지지 않는다(`docs/decisions/0038-apply-file-records.md`).
 - [x] compose의 worker에 `restart:` 정책이 없다. 하나뿐인 worker가 죽으면 스캔이 "실행 중"으로 남고 그 프로젝트의 새 스캔을 막는다. 2026-11-20에 계획 5 Task 11에서 `restart: unless-stopped`를 두었다. 다시 뜬 worker가 임대가 끝난 작업을 이어 간다.
 - [ ] compose의 모든 서비스가 한 네트워크를 쓴다. web이 `openbao:8200`에 닿을 수 있고(자격 증명은 없다) worker와 스캔 도구가 바깥으로 나갈 수 있다. 네트워크를 나눈다. 2026-11-21에 계획 6 Task 4에서 `pdf`만 내부 네트워크 `pdf`(web과 pdf만 붙음)로 나눴다. 나머지 서비스는 여전히 기본 네트워크 하나다.

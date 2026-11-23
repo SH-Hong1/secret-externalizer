@@ -1,0 +1,14 @@
+spring:
+  datasource:
+    password: >-
+      dev-only-fake-folded-password
+ext:
+  password: |
+    dev-only-fake-literal-password
+  dbPassword: dev-only-fake-yaml-camel
+  multi:
+    password: |
+      first line of two
+      second line of two
+  spel:
+    password: "#{systemProperties['ext.password']}"

@@ -1,8 +1,11 @@
 # SSH credentials in shell scripts: the password given to sshpass -p (before
 # the command sshpass runs, so an ssh -p port is not taken for it), the
-# user and host of user@host on an ssh, scp, sftp, or rsync line, and the key
-# file given to -i. Comment lines and variables ($VAR) are not reported, and
-# quotes around a value are not part of it; a quoted sshpass password may
+# password assigned to SSHPASS for sshpass -e, the user and host of user@host
+# on an ssh, scp, sftp, or rsync line, and the key file given to -i. The -i
+# is an option of ssh itself: one that comes after user@host, or inside a
+# quoted string that began earlier, belongs to the remote command (sed -i)
+# and is not reported. Comment lines and variables ($VAR) are not reported,
+# and quotes around a value are not part of it; a quoted sshpass password may
 # contain spaces. A (?|...) group numbers its alternatives' values alike, so
 # each is $VALUE.
 #
@@ -20,6 +23,19 @@ rules:
       kind: password
     patterns:
       - pattern-regex: (?m)^[^#\r\n]*?\bsshpass\b(?:(?!\b(?:ssh|scp|sftp|rsync)\b)[^#\r\n])*?[ \t]-p[ \t]*(?|'(?P<VALUE>[^'\r\n]+)'|"([^"\r\n$]+)"|([^\s'"$][^\s'"]*))
+      - focus-metavariable: $VALUE
+
+  - id: shell-sshpass-env-password
+    message: A password is assigned to SSHPASS for sshpass -e.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.sh", "*.bash", "*.ksh"]
+    metadata:
+      category: ssh-credential
+      kind: password
+    patterns:
+      - pattern-regex: (?m)^[^#\r\n]*?(?<![\w$])SSHPASS=(?|'(?P<VALUE>[^'\r\n]+)'|"([^"\r\n$]+)"|([^\s'"$;][^\s'";]*))
       - focus-metavariable: $VALUE
 
   - id: shell-ssh-user
@@ -60,5 +76,5 @@ rules:
       category: ssh-credential
       kind: key-file
     patterns:
-      - pattern-regex: (?m)^[^#\r\n]*?\b(?:ssh|scp|sftp)\b[^#\r\n]*?[ \t]-i[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)
+      - pattern-regex: (?m)^[^#\r\n]*?\b(?:ssh|scp|sftp)\b(?:[^#\r\n'"@]|"[^"\r\n]*"|'[^'\r\n]*')*?[ \t]-i[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)
       - focus-metavariable: $VALUE
