@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 )
@@ -32,7 +33,7 @@ const mainTarget = "main"
 
 var (
 	nameAttr   = regexp.MustCompile(`\bname\s*=\s*["']([^"']*)["']`)
-	keyBefore  = regexp.MustCompile(`([A-Za-z_][A-Za-z0-9_.-]*)\s*[=:]\s*["']?$`)
+	assignment = regexp.MustCompile("(?:^|[\\s<({\\[,;\"'])(?:(?:[A-Za-z_][A-Za-z0-9_-]*:)?([A-Za-z_][A-Za-z0-9_.-]*)\\s*=|([A-Za-z_][A-Za-z0-9_.-]*)\\s*:)\\s*[\"']?")
 	targetForm = regexp.MustCompile(`^[a-z][a-z0-9]*$`)
 )
 
@@ -223,17 +224,15 @@ func keyWords(key string) []string {
 }
 
 // lineKey returns the key a value on line is assigned to: the value of a
-// name attribute, or the key written just before column col, a 1-based
-// character column, or the last field before the first "=" or ":". A col of
-// zero means the column is not known.
+// name attribute, or the key of the masked value nearest to column col, a
+// 1-based character column, or the last field before the first "=" or ":".
+// A col of zero means the column is not known.
 func lineKey(line string, col int) string {
 	if m := nameAttr.FindStringSubmatch(line); m != nil {
 		return m[1]
 	}
-	if r := []rune(line); col > 1 && col-1 <= len(r) {
-		if m := keyBefore.FindStringSubmatch(string(r[:col-1])); m != nil {
-			return m[1]
-		}
+	if key := keyNear(line, col); key != "" {
+		return key
 	}
 	i := strings.IndexAny(line, "=:")
 	if i < 0 {
@@ -244,6 +243,52 @@ func lineKey(line string, col int) string {
 		return ""
 	}
 	return strings.Trim(fields[len(fields)-1], `"'`)
+}
+
+// keyNear returns the key of the assignment on line whose value is masked
+// and starts nearest to column col, or "" when col is not known or no key is
+// assigned a masked value. A key is the name before "=", without a namespace
+// such as the "p" of p:password, or the name before ":".
+//
+// The column is the one in the file. The line is the stored one, where a
+// masked value before the column may be shorter or longer than the value it
+// hides, so the value is looked for near the column and not at it. Of two
+// values at the same distance the later one wins.
+func keyNear(line string, col int) string {
+	if col < 1 {
+		return ""
+	}
+	key, best := "", -1
+	for _, m := range assignment.FindAllStringSubmatchIndex(line, -1) {
+		name := m[2:4]
+		if name[0] < 0 {
+			name = m[4:6]
+		}
+		if !strings.Contains(assigned(line[m[1]:], line[m[1]-1]), "*") {
+			continue
+		}
+		d := utf8.RuneCountInString(line[:m[1]]) + 1 - col
+		if d < 0 {
+			d = -d
+		}
+		if best < 0 || d <= best {
+			key, best = line[name[0]:name[1]], d
+		}
+	}
+	return key
+}
+
+// assigned returns the value at the start of rest: up to the quote that
+// opened it, or up to the first white space when opener is not a quote.
+func assigned(rest string, opener byte) string {
+	end := strings.IndexAny(rest, " \t")
+	if opener == '"' || opener == '\'' {
+		end = strings.IndexByte(rest, opener)
+	}
+	if end < 0 {
+		return rest
+	}
+	return rest[:end]
 }
 
 // splitWords splits s into lower-case ASCII words at every other character

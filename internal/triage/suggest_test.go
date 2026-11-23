@@ -126,27 +126,50 @@ func TestSuggestName_KeyBeforeTheValue(t *testing.T) {
 		cat  finding.Category
 		line string
 		at   string // the masked value as the line shows it
+		col  int    // the column the scan stored, when it is not where at is
 		want triage.Name
 	}{
 		{
 			"ant scp task", finding.CategorySSH,
 			`    <scp file="target/shop.war" todir="deploy@was1.example.invalid:/opt/was" password="dev-****" trust="true"/>`,
-			"dev-****", "ssh.main.password",
+			"dev-****", 0, "ssh.main.password",
+		},
+		{
+			// The account and the host before the password are masked to a
+			// shorter text, so the stored column lies past the value.
+			"earlier values masked shorter", finding.CategorySSH,
+			`    <scp file="target/shop.war" todir="****@****:/opt/was" password="****" trust="true"/>`,
+			`"****" trust`, 88, "ssh.main.password",
+		},
+		{
+			"earlier value masked longer", finding.CategorySSH,
+			`<scp todir="****:/opt" keyfile="k" password="****"/>`,
+			`"****"/>`, 38, "ssh.main.password",
+		},
+		{
+			"url value", finding.CategoryStorage,
+			`spring.datasource.url=jdbc:mysql://****:****/shop`,
+			"****", 0, "db.main.password",
+		},
+		{
+			"namespaced attribute", finding.CategoryStorage,
+			`<bean id="ds" p:url="jdbc:oracle:thin:@****" p:orderPassword="****"/>`,
+			`"****"/>`, 0, "db.order.password",
 		},
 		{
 			"second attribute names the target", finding.CategoryOther,
 			`<signjar jar="a.jar" storepass="dev-****" releasePassword="rel-****"/>`,
-			"rel-****", "secret.release.password",
+			"rel-****", 0, "secret.release.password",
 		},
 		{
 			"name attribute still wins", finding.CategoryStorage,
 			`<property name="order.password" value="dev-****"/>`,
-			"dev-****", "db.order.password",
+			"dev-****", 0, "db.order.password",
 		},
 		{
 			"no key before the value", finding.CategorySSH,
 			`deploy.mode=x; sshpass -p '****' ssh host`,
-			"****", "ssh.deploy.password",
+			"****", 0, "ssh.deploy.password",
 		},
 	}
 	for _, tt := range tests {
@@ -156,9 +179,13 @@ func TestSuggestName_KeyBeforeTheValue(t *testing.T) {
 			if i < 0 {
 				t.Fatalf("line %q does not hold %q", tt.line, tt.at)
 			}
-			b.Members[0].Locations[0].StartCol = i + 1
+			col := i + 1
+			if tt.col != 0 {
+				col = tt.col
+			}
+			b.Members[0].Locations[0].StartCol = col
 			if got := triage.SuggestName(b, nil); got != tt.want {
-				t.Errorf("SuggestName(%q at column %d) = %q, want %q", tt.line, i+1, got, tt.want)
+				t.Errorf("SuggestName(%q at column %d) = %q, want %q", tt.line, col, got, tt.want)
 			}
 		})
 	}
