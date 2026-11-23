@@ -260,3 +260,25 @@ func TestHandleDashboard_NoInlineStyle(t *testing.T) {
 		}
 	}
 }
+
+// Every wide thing on the dashboard scrolls inside its own wrapper, so the
+// page itself never scrolls sideways.
+func TestHandleDashboard_ScrollsInsideWrappers(t *testing.T) {
+	e := newTestEnv(t)
+	e.dashboards.data = dashboardData()
+	res := e.getDashboard(t, "/dashboard")
+	if res.status != http.StatusOK {
+		t.Fatalf("GET /dashboard status = %d, want 200", res.status)
+	}
+	if got, want := strings.Count(res.body, `<div class="chart-scroll">`), 1; got != want {
+		t.Errorf("GET /dashboard has %d chart-scroll wrappers, want %d", got, want)
+	}
+	if !regexp.MustCompile(`(?s)<div class="chart-scroll">\s*<svg class="chart"`).MatchString(res.body) {
+		t.Errorf("GET /dashboard does not wrap the chart directly in chart-scroll")
+	}
+	tables := strings.Count(res.body, "<table")
+	wraps := strings.Count(res.body, `<div class="table-wrap">`)
+	if tables != wraps || tables != 3 {
+		t.Errorf("GET /dashboard has %d tables and %d table-wrap, want 3 and 3", tables, wraps)
+	}
+}

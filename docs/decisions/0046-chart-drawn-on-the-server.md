@@ -10,7 +10,7 @@
 계획 7 Task 4의 첫 단계에서 다음을 확인했다.
 
 - `html/template`은 HTML 안의 인라인 `<svg>`를 보통의 HTML 요소처럼 다룬다. `<rect>`의 숫자 속성은 그대로 나오고, `class` 속성의 값은 속성 문맥으로 이스케이프된다(`x" onload="y`가 `x&#34; onload=&#34;y`가 된다). `<title>`은 RCDATA로 다뤄져 `<script>`가 `&lt;script&gt;`로, `<text>`의 글자도 `&lt;b&gt;`로 나온다. 브라우저는 SVG 안의 `<title>`을 SVG 제목으로 읽고 엔티티를 풀어 보인다.
-- 실제 템플릿으로 그린 화면을 `default-src 'self'; base-uri 'none'; frame-ancestors 'none'` 머리말과 함께 Chromium(playwright)에 열었을 때, 조각의 `fill`이 `app.css`의 클래스에서 그려졌고(`rgb(0, 135, 106)`) CSP 위반이 없었다. 막대의 `<title>`은 이스케이프된 프로젝트 이름을 원래 글자로 보였다. 390px 너비에서도 쪽이 가로로 넘치지 않았다. 다만 차트는 viewBox대로 줄어들어 좁은 화면에서는 글자가 작으므로, 같은 숫자를 "표로 보기"에서 읽는다.
+- 실제 템플릿으로 그린 화면을 `default-src 'self'; base-uri 'none'; frame-ancestors 'none'` 머리말과 함께 Chromium(playwright)에 열었을 때, 조각의 `fill`이 `app.css`의 클래스에서 그려졌고(`rgb(0, 135, 106)`) CSP 위반이 없었다. 막대의 `<title>`은 이스케이프된 프로젝트 이름을 원래 글자로 보였다. 390px 너비에서도 쪽이 가로로 넘치지 않았다. 다만 차트가 viewBox대로 줄면 390px에서 글자가 약 3.6px이 되어, 차트에 최소 너비 780px(`.chart`의 `min-width`)를 두고 그보다 좁으면 `.chart-scroll` 안에서 가로로 스크롤하게 했다. 글자는 13px(viewBox 단위)이라 780px에서 약 10.5px, 1280px(차트 너비 약 1024px)에서 약 13.9px이다. 같은 숫자는 "표로 보기"에서도 읽는다.
 
 ## 결정
 

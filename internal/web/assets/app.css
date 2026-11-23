@@ -382,6 +382,7 @@
     font-size: var(--text-sm);
     font-weight: 600;
     text-align: left;
+    white-space: nowrap;
   }
   .table td {
     padding: 12px 16px;
@@ -393,6 +394,7 @@
   }
   .table .num {
     text-align: right;
+    white-space: nowrap;
   }
   .table a.row-link {
     font-weight: 600;
@@ -1508,9 +1510,16 @@
     height: 12px;
     border-radius: 2px;
   }
+  /* The chart never shrinks below the width at which its labels stay
+     readable: 13 units of a 960-unit viewBox are about 10.5px at 780px.
+     A narrower box scrolls the chart inside itself. */
+  .chart-scroll {
+    overflow-x: auto;
+  }
   .chart {
     display: block;
     width: 100%;
+    min-width: 780px;
     height: auto;
   }
   .chart rect {
@@ -1525,7 +1534,7 @@
   .chart-label {
     fill: var(--color-ink-muted);
     font-family: var(--font-mono);
-    font-size: 12px;
+    font-size: 13px;
   }
   .chart-tick {
     text-anchor: end;

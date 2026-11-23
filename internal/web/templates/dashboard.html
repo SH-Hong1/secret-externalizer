@@ -36,6 +36,7 @@
 <ul class="chart-legend" aria-label="분류">
 {{range .Legend}}<li><span class="chart-key {{.Class}}" aria-hidden="true"></span>{{.Label}}</li>
 {{end}}</ul>
+<div class="chart-scroll">
 <svg class="chart" viewBox="0 0 {{.Chart.Width}} {{.Chart.Height}}" role="img" aria-label="스캔별 남은 항목">
 {{range .Chart.Ticks}}<line class="chart-grid" x1="48" x2="952" y1="{{.Y}}" y2="{{.Y}}"></line>
 <text class="chart-tick" x="42" y="{{.Y}}" dy="4">{{.Label}}</text>
@@ -44,6 +45,7 @@
 {{end}}{{with .Label}}<text class="chart-label" x="50%" y="292">{{.}}</text>
 {{end}}</svg>
 {{end}}</svg>
+</div>
 <details class="chart-table">
 <summary>표로 보기</summary>
 <div class="table-wrap">

@@ -253,3 +253,21 @@ func TestWithoutFooterStyle(t *testing.T) {
 		})
 	}
 }
+
+// The dashboard chart keeps a minimum width and the cells of a table keep
+// to one line, so a narrow screen scrolls them instead of squeezing them.
+func TestStaticCSS_NarrowScreen(t *testing.T) {
+	srv := newTestServer(t, io.Discard)
+	css := get(t, srv.URL+"/static/app.css").body
+	compact := strings.ReplaceAll(css, " ", "")
+	for _, want := range []string{".chart-scroll", "min-width:780px"} {
+		if !strings.Contains(compact, want) {
+			t.Errorf("app.css lacks %q", want)
+		}
+	}
+	for _, sel := range []string{".table th", ".table .num"} {
+		if !regexp.MustCompile(`(?s)` + regexp.QuoteMeta(sel) + `[^{]*\{[^}]*white-space:\s*nowrap`).MatchString(css) {
+			t.Errorf("app.css: no rule for %q sets white-space: nowrap", sel)
+		}
+	}
+}
