@@ -266,7 +266,7 @@ func TestStaticCSS_NarrowScreen(t *testing.T) {
 		}
 	}
 	for _, sel := range []string{".table-nowrap th", ".table-nowrap .num"} {
-		if !regexp.MustCompile(`(?s)` + regexp.QuoteMeta(sel) + `[^{]*\{[^}]*white-space:\s*nowrap`).MatchString(css) {
+		if !regexp.MustCompile(`(?s)(?:^|[,}\s])` + regexp.QuoteMeta(sel) + `[^{]*\{[^}]*white-space:\s*nowrap`).MatchString(css) {
 			t.Errorf("app.css: no rule for %q sets white-space: nowrap", sel)
 		}
 	}
@@ -278,7 +278,7 @@ func TestStaticCSS_NoWrapIsScoped(t *testing.T) {
 	srv := newTestServer(t, io.Discard)
 	css := get(t, srv.URL+"/static/app.css").body
 	for _, sel := range []string{".table th", ".table .num"} {
-		if regexp.MustCompile(`(?s)` + regexp.QuoteMeta(sel) + `[^{]*\{[^}]*white-space:\s*nowrap`).MatchString(css) {
+		if regexp.MustCompile(`(?s)(?:^|[,}\s])` + regexp.QuoteMeta(sel) + `[^{]*\{[^}]*white-space:\s*nowrap`).MatchString(css) {
 			t.Errorf("app.css: rule for %q sets white-space: nowrap, want it only on .table-nowrap", sel)
 		}
 	}

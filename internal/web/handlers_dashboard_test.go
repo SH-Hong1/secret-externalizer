@@ -80,7 +80,7 @@ func TestHandleDashboard_OK(t *testing.T) {
 		"기간은 추이에만 적용됩니다.",
 		"남은 항목", "지난 스캔 대비 -4", "미판정 4 · 보류 1 · 적용 대기 2",
 		"외부화 완료", "위치 9곳", "삭제·마스킹 완료", "위치 4곳", "오탐", "보류",
-		"남은 항목 추이", `role="img"`, `aria-label="스캔별 남은 항목"`, "<summary>표로 보기</summary>",
+		"남은 항목 추이", `x1="48" x2="952"`, `class="chart-tick" x="42"`, `y="292"`, `role="img"`, `aria-label="스캔별 남은 항목"`, "<summary>표로 보기</summary>",
 		"분류별 남은 항목", `<meter class="bar"`,
 		"오탐이 많은 규칙", "dev-only-fake-rule", "66%",
 		"50%", "—", "스캔한 적 없음", "프로젝트 열기", `href="/projects/3"`,

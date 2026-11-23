@@ -186,3 +186,15 @@ func TestNewBarChart_Title(t *testing.T) {
 		t.Errorf("newBarChart(scan 7, all).Title = %q, want it to hold %q", got, "전체 남은 항목 5개")
 	}
 }
+
+func TestNewBarChart_GuideCoordinates(t *testing.T) {
+	c := newBarChart(nil, false)
+	got := []int{c.GridLeft, c.GridRight, c.TickX, c.LabelY}
+	want := []int{chartLeft, chartWidth - chartRight, chartLeft - 6, chartHeight - chartBottom + 20}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("newBarChart(nil) GridLeft, GridRight, TickX, LabelY mismatch (-want +got):\n%s", diff)
+	}
+	if want := []int{48, 952, 42, 292}; !slices.Equal(got, want) {
+		t.Errorf("newBarChart(nil) guides = %v, want %v", got, want)
+	}
+}

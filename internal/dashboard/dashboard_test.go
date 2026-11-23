@@ -240,6 +240,26 @@ func TestBuild_LastStepIsRemaining(t *testing.T) {
 	}
 }
 
+func TestBuild_CategoriesFollowTheGivenOrder(t *testing.T) {
+	other := finding.CategoryOther
+	later := point(1, 2, one(other, 7))
+	earlier := point(1, 9, one(other, 3))
+	// The later-given point has the smaller scan ID and the later time.
+	earlier.At = later.At.Add(-time.Hour)
+	d := dashboard.Data{Points: []dashboard.Point{earlier, later}, PointTotal: 2}
+	if got := dashboard.Build(d, dashboard.Filter{}); got.Categories[other].Undecided != 7 {
+		t.Errorf("Build Categories[other] = %+v, want the later-given point (7 undecided)", got.Categories[other])
+	}
+
+	base := point(1, 1, one(other, 4))
+	base.Baseline = true
+	next := point(1, 5, one(other, 2))
+	d = dashboard.Data{Points: []dashboard.Point{base, next}, PointTotal: 1}
+	if got := dashboard.Build(d, dashboard.Filter{}); got.Categories[other].Undecided != 2 {
+		t.Errorf("Build Categories[other] = %+v, want the point after the baseline (2 undecided)", got.Categories[other])
+	}
+}
+
 func TestBuild_TrendMore(t *testing.T) {
 	d := dashboard.Data{PointTotal: 45}
 	for i := range dashboard.MaxPoints {

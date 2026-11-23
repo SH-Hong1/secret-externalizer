@@ -117,7 +117,7 @@ func dashboardHref(id project.ID, p dashboard.Period) string {
 	return dashboardPath + "?" + q.Encode()
 }
 
-// newDashboardPage shapes d, made for project id over period p, for the
+// newDashboardPage shapes d, the dashboard of the period p, for the
 // template.
 func newDashboardPage(u auth.User, d dashboard.Dashboard, p dashboard.Period) dashboardPage {
 	page := dashboardPage{User: u, NoProjects: len(d.Rows) == 0, NoScans: d.Scanned == 0}

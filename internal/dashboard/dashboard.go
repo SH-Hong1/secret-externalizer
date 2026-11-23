@@ -234,7 +234,7 @@ func row(p ProjectState) Row {
 // trend replays the points: baselines first set what each project has,
 // then every other point replaces its project's numbers and adds a step
 // with the sum over all projects. It also returns, per category, the sum
-// over the newest point of every project.
+// over the point each project ends with: the last one given for it.
 func trend(points []Point, names map[project.ID]string) ([]Step, map[finding.Category]Split) {
 	current := map[project.ID]Point{}
 	for _, p := range points {
@@ -260,15 +260,7 @@ func trend(points []Point, names map[project.ID]string) ([]Step, map[finding.Cat
 		steps = append(steps, s)
 	}
 
-	// The newest point of a project is the one with the largest scan ID,
-	// whether or not it is a baseline.
-	newest := map[project.ID]Point{}
-	for _, p := range points {
-		if n, ok := newest[p.Project]; !ok || p.Scan > n.Scan {
-			newest[p.Project] = p
-		}
-	}
-	return steps, sumOf(newest)
+	return steps, sumOf(current)
 }
 
 func sumOf(points map[project.ID]Point) map[finding.Category]Split {

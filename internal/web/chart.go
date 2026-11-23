@@ -55,15 +55,24 @@ type chartTick struct {
 // barChart is a stacked bar chart in the coordinates of its viewBox.
 type barChart struct {
 	Width, Height int
-	Ticks         []chartTick
-	Bars          []chartBar
+	// GridLeft and GridRight are the ends of the grid lines, TickX is where
+	// the numbers of the grid end, and LabelY is the baseline of the names
+	// of the bars.
+	GridLeft, GridRight int
+	TickX, LabelY       int
+	Ticks               []chartTick
+	Bars                []chartBar
 }
 
 // newBarChart lays out one bar per step, stacked by category in the
 // order of categoryOrder.
 // all says that the steps sum every project.
 func newBarChart(steps []dashboard.Step, all bool) barChart {
-	c := barChart{Width: chartWidth, Height: chartHeight}
+	c := barChart{
+		Width: chartWidth, Height: chartHeight,
+		GridLeft: chartLeft, GridRight: chartWidth - chartRight,
+		TickX: chartLeft - 6, LabelY: chartHeight - chartBottom + 20,
+	}
 	largest := 0
 	for _, s := range steps {
 		largest = max(largest, s.Total)
