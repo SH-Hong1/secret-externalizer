@@ -65,6 +65,105 @@ func TestSuggestName(t *testing.T) {
 	}
 }
 
+func TestSuggestName_Environment(t *testing.T) {
+	const line = "    password: Sh0p****"
+	tests := []struct {
+		name  string
+		files []string
+		line  string
+		want  triage.Name
+	}{
+		{"profile suffix", []string{"src/main/resources/application-prod.yml"}, line, "db.prod.main.password"},
+		{"underscore suffix", []string{"conf/jdbc_dev.properties"}, line, "db.dev.main.password"},
+		{"dotted suffix", []string{"conf/config.stage.xml"}, line, "db.stg.main.password"},
+		{"synonym", []string{"conf/application-production.yml"}, line, "db.prod.main.password"},
+		{"upper case", []string{"conf/application-PRD.yml"}, line, "db.prod.main.password"},
+		{"folder", []string{"conf/prod/jdbc.properties"}, line, "db.prod.main.password"},
+		{"nearest folder", []string{"dev/conf/qa/jdbc.properties"}, line, "db.qa.main.password"},
+		{"file before folder", []string{"local/dev.properties"}, line, "db.dev.main.password"},
+		{"test folder", []string{"src/test/resources/application.yml"}, line, "db.test.main.password"},
+		{"no environment", []string{"src/main/resources/jdbc.properties"}, line, "db.main.password"},
+		{"word inside a name", []string{"src/LocalCache.java", "conf/realm.xml", "delivery/a.yml"}, line, "db.main.password"},
+		{"same environment twice", []string{"conf/prod/a.yml", "application-prod.yml"}, line, "db.prod.main.password"},
+		{"two environments", []string{"application-dev.yml", "application-prod.yml"}, line, "db.main.password"},
+		{"one file without", []string{"application-prod.yml", "jdbc.properties"}, line, "db.main.password"},
+		{"with a target", []string{"application-prod.yml"}, "order.datasource.password=****", "db.prod.order.password"},
+		{"key repeats the file", []string{"application-prod.yml"}, "prod.order.password=****", "db.prod.order.password"},
+		{"key only", []string{"jdbc.properties"}, "prod.order.password=****", "db.prod.order.password"},
+		{"key only without a target", []string{"jdbc.properties"}, "real.db.password=****", "db.prod.main.password"},
+		{"key differs from the file", []string{"application-prod.yml"}, "dev.password=****", "db.prod.dev.password"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := suggestBundle(finding.CategoryStorage, finding.KindPassword, tt.files[0], tt.line)
+			for _, f := range tt.files[1:] {
+				b.Members = append(b.Members, triage.Member{File: f})
+			}
+			got := triage.SuggestName(b, nil)
+			if got != tt.want {
+				t.Errorf("SuggestName(files %v, %q) = %q, want %q", tt.files, tt.line, got, tt.want)
+			}
+			if _, err := triage.ParseName(string(got)); err != nil {
+				t.Errorf("SuggestName(files %v) = %q does not parse: %v", tt.files, got, err)
+			}
+		})
+	}
+}
+
+func TestSuggestName_EnvironmentTaken(t *testing.T) {
+	b := suggestBundle(finding.CategoryStorage, finding.KindPassword, "application-prod.yml", "password: ****")
+	used := []triage.Name{"db.prod.main.password"}
+	if got := triage.SuggestName(b, used); got != "db.prod.main2.password" {
+		t.Errorf("SuggestName(used %v) = %q, want db.prod.main2.password", used, got)
+	}
+}
+
+// The key of a value is the one written just before it, not the first one on
+// the line.
+func TestSuggestName_KeyBeforeTheValue(t *testing.T) {
+	tests := []struct {
+		name string
+		cat  finding.Category
+		line string
+		at   string // the masked value as the line shows it
+		want triage.Name
+	}{
+		{
+			"ant scp task", finding.CategorySSH,
+			`    <scp file="target/shop.war" todir="deploy@was1.example.invalid:/opt/was" password="dev-****" trust="true"/>`,
+			"dev-****", "ssh.main.password",
+		},
+		{
+			"second attribute names the target", finding.CategoryOther,
+			`<signjar jar="a.jar" storepass="dev-****" releasePassword="rel-****"/>`,
+			"rel-****", "secret.release.password",
+		},
+		{
+			"name attribute still wins", finding.CategoryStorage,
+			`<property name="order.password" value="dev-****"/>`,
+			"dev-****", "db.order.password",
+		},
+		{
+			"no key before the value", finding.CategorySSH,
+			`deploy.mode=x; sshpass -p '****' ssh host`,
+			"****", "ssh.deploy.password",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			b := suggestBundle(tt.cat, finding.KindPassword, "a/build.xml", tt.line)
+			i := strings.Index(tt.line, tt.at)
+			if i < 0 {
+				t.Fatalf("line %q does not hold %q", tt.line, tt.at)
+			}
+			b.Members[0].Locations[0].StartCol = i + 1
+			if got := triage.SuggestName(b, nil); got != tt.want {
+				t.Errorf("SuggestName(%q at column %d) = %q, want %q", tt.line, i+1, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestSuggestNameGuards(t *testing.T) {
 	b := triage.Bundle{Category: finding.CategoryStorage, Kind: finding.KindPassword}
 	if got := triage.SuggestName(b, nil); got != "db.main.password" {

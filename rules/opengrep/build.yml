@@ -1,6 +1,8 @@
 # Passwords in build and deployment settings: a <password> inside a <server>
 # in Maven settings.xml, an element whose name contains passw in pom.xml, and
-# a password property or task attribute in an Ant build.xml. ${...}
+# a password property or task attribute in an Ant build.xml. An Ant password
+# that signs in to another server, the password of a remote task such as
+# <scp> or of a property named after one, is an SSH credential. ${...}
 # placeholders and empty values are not reported.
 #
 # Every rule starts with "  - id:" and has its category and kind under
@@ -55,13 +57,34 @@ rules:
       - pattern: <property name="$NAME" value="$VALUE"/>
       - metavariable-regex:
           metavariable: $NAME
-          regex: (?i).*passw(or)?d$
+          regex: (?i)^(?!.*(?:ssh|scp|ftp|deploy|remote)).*passw(or)?d$
       - metavariable-regex:
           metavariable: $VALUE
           regex: ^(?!\$\{)\S
       - focus-metavariable: $VALUE
 
-  # A password attribute of any task, such as <scp password="...">.
+  # A password property named after a remote task, such as deploy.password.
+  - id: ant-remote-property-password
+    message: A password for another server is written in an Ant build.xml.
+    severity: WARNING
+    languages: [xml]
+    paths:
+      include: ["build.xml"]
+    metadata:
+      category: ssh-credential
+      kind: password
+    patterns:
+      - pattern: <property name="$NAME" value="$VALUE"/>
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: (?i)^(?=.*(?:ssh|scp|ftp|deploy|remote)).*passw(or)?d$
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: ^(?!\$\{)\S
+      - focus-metavariable: $VALUE
+
+  # A password attribute of any task that is not a remote one, such as
+  # <sql password="...">.
   - id: ant-task-password
     message: A password is passed to an Ant task.
     severity: WARNING
@@ -73,4 +96,21 @@ rules:
       kind: password
     patterns:
       - pattern-regex: (?<![\w.-])(?:password|passwd|storepass|keypass)[ \t]*=[ \t]*"(?!\$\{)(?P<VALUE>[^"\r\n]+)"
+      - pattern-not-regex: <(?:scp|sshexec|sshsession|ftp|telnet|rexec)\b[^<>]*>
+      - focus-metavariable: $VALUE
+
+  # A password or passphrase attribute of a task that signs in to another
+  # server, such as <scp password="...">.
+  - id: ant-remote-task-password
+    message: A password for another server is passed to an Ant task.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["build.xml"]
+    metadata:
+      category: ssh-credential
+      kind: password
+    patterns:
+      - pattern-regex: <(?:scp|sshexec|sshsession|ftp|telnet|rexec)\b[^<>]*>
+      - pattern-regex: (?<![\w.-])(?:password|passwd|passphrase)[ \t]*=[ \t]*"(?!\$\{)(?P<VALUE>[^"\r\n]+)"
       - focus-metavariable: $VALUE
