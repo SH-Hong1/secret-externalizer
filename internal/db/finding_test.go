@@ -258,6 +258,8 @@ func TestSaveResult_RejectsMalformedFinding(t *testing.T) {
 		{name: "unknown category", mutate: func(f *finding.Finding) { f.Category = "secret" }},
 		{name: "unknown kind", mutate: func(f *finding.Finding) { f.Kind = "database" }},
 		{name: "empty file", mutate: func(f *finding.Finding) { f.File = "" }},
+		{name: "key with a space", mutate: func(f *finding.Finding) { f.Key = "a b" }},
+		{name: "key of 201 bytes", mutate: func(f *finding.Finding) { f.Key = strings.Repeat("k", 201) }},
 		{name: "customer data with an original", mutate: func(f *finding.Finding) {
 			f.Category, f.Kind, f.HasOriginal = finding.CategoryCustomerData, finding.KindPhone, true
 		}},
@@ -375,5 +377,84 @@ func TestCategoryCounts(t *testing.T) {
 		if diff := cmp.Diff(tt.want, got); diff != "" {
 			t.Errorf("CategoryCounts(%d) (-want +got):\n%s", tt.id, diff)
 		}
+	}
+}
+
+func TestSaveResult_StoresKey(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	f := secretAt(fpA, 4)
+	f.Key = "live.db.password"
+	id := save(t, s, pid, f)
+
+	got, err := s.FindingsByScan(ctx, id)
+	if err != nil {
+		t.Fatalf("FindingsByScan(%d) error = %v", id, err)
+	}
+	if len(got) != 1 || got[0].Key != f.Key {
+		t.Errorf("FindingsByScan(%d) = %+v, want one finding with key %q", id, got, f.Key)
+	}
+}
+
+func TestSaveResult_KeyedFindingSurvivesLineShift(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	const key = "live.db.password"
+	first := secretAt(fpA, 3)
+	first.Key = key
+	save(t, s, pid, first)
+	before, err := s.FindingRowOfKey(ctx, pid, fpA, propsFile, key)
+	if err != nil {
+		t.Fatalf("FindingRowOfKey(first) error = %v", err)
+	}
+	bundle, err := s.BundleOfKey(ctx, pid, fpA, propsFile, key)
+	if err != nil {
+		t.Fatalf("BundleOfKey(first) error = %v", err)
+	}
+
+	moved := secretAt(fpA, 7)
+	moved.Key = key
+	save(t, s, pid, moved)
+	after, err := s.FindingRowOfKey(ctx, pid, fpA, propsFile, key)
+	if err != nil {
+		t.Fatalf("FindingRowOfKey(second) error = %v", err)
+	}
+	if after.ID != before.ID {
+		t.Errorf("finding of %s after a line shift = %d, want %d", key, after.ID, before.ID)
+	}
+	if got, err := s.BundleOfKey(ctx, pid, fpA, propsFile, key); err != nil || got != bundle {
+		t.Errorf("BundleOfKey(%s) after a line shift = %d, %v, want %d", key, got, err, bundle)
+	}
+}
+
+func TestMigration0009(t *testing.T) {
+	s := db.NewTestStore(t)
+	ctx := t.Context()
+	if err := s.MigrateThrough(ctx, 4); err != nil {
+		t.Fatalf("MigrateThrough(4) error = %v", err)
+	}
+	pid := newProject(t, s, "shop")
+	sid, err := s.InsertRawScan(ctx, pid)
+	if err != nil {
+		t.Fatalf("InsertRawScan() error = %v", err)
+	}
+	if err := s.InsertRawFinding(ctx, pid, int64(sid), secretAt(fpA, 4), 4); err != nil {
+		t.Fatalf("InsertRawFinding() error = %v", err)
+	}
+	if err := s.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() over 0004 error = %v", err)
+	}
+
+	row, err := s.FindingRowOfKey(ctx, pid, fpA, propsFile, "")
+	if err != nil {
+		t.Fatalf("FindingRowOfKey(no key) after 0009 error = %v, want the existing finding with key ''", err)
+	}
+	if err := s.CopyFinding(ctx, row.ID, ""); err == nil {
+		t.Errorf("CopyFinding(%d, no key) error = nil, want the identity constraint to refuse it", row.ID)
+	}
+	if err := s.CopyFinding(ctx, row.ID, "live.db.password"); err != nil {
+		t.Errorf("CopyFinding(%d, live.db.password) error = %v, want it accepted", row.ID, err)
 	}
 }

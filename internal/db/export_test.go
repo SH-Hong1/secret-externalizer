@@ -111,13 +111,32 @@ type FindingIDs struct {
 }
 
 // FindingRow returns the identifying columns of the finding of the project
-// with the given fingerprint and file.
+// with the given fingerprint and file and no key.
 func (s *Store) FindingRow(ctx context.Context, projectID project.ID, fingerprint, file string) (FindingIDs, error) {
+	return s.FindingRowOfKey(ctx, projectID, fingerprint, file, "")
+}
+
+// FindingRowOfKey returns the identifying columns of the finding of the
+// project with the given fingerprint, file and key.
+func (s *Store) FindingRowOfKey(ctx context.Context, projectID project.ID, fingerprint, file, key string) (FindingIDs, error) {
 	var f FindingIDs
-	err := s.pool.QueryRow(ctx,
-		"SELECT id, first_scan_id, last_scan_id FROM finding WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3",
-		projectID, fingerprint, file).Scan(&f.ID, &f.FirstScanID, &f.LastScanID)
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, first_scan_id, last_scan_id FROM finding
+		WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3 AND key = $4`,
+		projectID, fingerprint, file, key).Scan(&f.ID, &f.FirstScanID, &f.LastScanID)
 	return f, err
+}
+
+// CopyFinding stores a copy of the finding with the given ID under key, with
+// no locations.
+func (s *Store) CopyFinding(ctx context.Context, id int64, key string) error {
+	_, err := s.pool.Exec(ctx, `
+		INSERT INTO finding (project_id, fingerprint, file_path, key, category, kind, preview, has_original,
+			first_scan_id, last_scan_id, bundle_id)
+		SELECT project_id, fingerprint, file_path, $2, category, kind, preview, has_original,
+			first_scan_id, last_scan_id, bundle_id
+		FROM finding WHERE id = $1`, id, key)
+	return err
 }
 
 // JobRow is the lease columns of a job row.
@@ -186,12 +205,18 @@ func (s *Store) InsertRawFinding(ctx context.Context, projectID project.ID, scan
 }
 
 // BundleOf returns the bundle of the finding of the project with the given
-// fingerprint and file.
+// fingerprint and file and no key.
 func (s *Store) BundleOf(ctx context.Context, projectID project.ID, fingerprint, file string) (triage.BundleID, error) {
+	return s.BundleOfKey(ctx, projectID, fingerprint, file, "")
+}
+
+// BundleOfKey returns the bundle of the finding of the project with the
+// given fingerprint, file and key.
+func (s *Store) BundleOfKey(ctx context.Context, projectID project.ID, fingerprint, file, key string) (triage.BundleID, error) {
 	var id triage.BundleID
 	err := s.pool.QueryRow(ctx,
-		"SELECT bundle_id FROM finding WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3",
-		projectID, fingerprint, file).Scan(&id)
+		"SELECT bundle_id FROM finding WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3 AND key = $4",
+		projectID, fingerprint, file, key).Scan(&id)
 	return id, err
 }
 

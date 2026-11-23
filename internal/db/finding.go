@@ -25,9 +25,9 @@ type detection struct {
 // It returns job.ErrLeaseLost, storing nothing, when the worker does not hold
 // the job, which is also the case when the result was already saved.
 //
-// A finding is keyed by project, fingerprint, and file. A finding that an
-// earlier scan stored keeps its ID, its bundle, and its first scan; its last scan becomes
-// this one, and its category, kind, preview, and whether it has an original
+// A finding is identified by project, fingerprint, file, and configuration
+// key. A finding that an earlier scan stored keeps its ID, its bundle, and its
+// first scan; its last scan becomes this one, and its category, kind, preview, and whether it has an original
 // become what this scan found, since the rules or the masking may have
 // changed in between. Locations belong to the scan that found them, so each
 // scan adds its own.
@@ -70,24 +70,39 @@ func (s *Store) SaveResult(ctx context.Context, jobID int64, workerID string, id
 // insertFinding stores f, or updates it when an earlier scan stored it, and
 // adds its locations for the scan. A finding stored for the first time joins
 // the bundle bundleForNew gives it; a stored finding keeps its bundle.
+//
+// A keyed finding that matches no stored finding takes over the one stored
+// finding of its fingerprint and file when that one has no key and this scan
+// has not found it yet: a finding stored before keys were read keeps its ID,
+// and with it its bundle, decision and apply records, under the first key of
+// its file that a scan reads.
 func insertFinding(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, f finding.Finding) error {
 	var findingID int64
 	err := tx.QueryRow(ctx, `
-		UPDATE finding SET category = $4, kind = $5, preview = $6, has_original = $7, last_scan_id = $8
-		WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3
+		UPDATE finding SET category = $5, kind = $6, preview = $7, has_original = $8, last_scan_id = $9
+		WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3 AND key = $4
 		RETURNING id`,
-		projectID, f.Fingerprint, f.File, f.Category, f.Kind, f.Preview, f.HasOriginal, id).Scan(&findingID)
+		projectID, f.Fingerprint, f.File, f.Key, f.Category, f.Kind, f.Preview, f.HasOriginal, id).Scan(&findingID)
+	if errors.Is(err, pgx.ErrNoRows) && f.Key != "" {
+		err = tx.QueryRow(ctx, `
+			UPDATE finding SET key = $4, category = $5, kind = $6, preview = $7, has_original = $8, last_scan_id = $9
+			WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3 AND key = '' AND last_scan_id <> $9
+				AND (SELECT count(*) FROM finding o
+					WHERE o.project_id = $1 AND o.fingerprint = $2 AND o.file_path = $3) = 1
+			RETURNING id`,
+			projectID, f.Fingerprint, f.File, f.Key, f.Category, f.Kind, f.Preview, f.HasOriginal, id).Scan(&findingID)
+	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		bundleID, berr := bundleForNew(ctx, tx, projectID, f)
 		if berr != nil {
 			return berr
 		}
 		err = tx.QueryRow(ctx, `
-			INSERT INTO finding (project_id, fingerprint, file_path, category, kind, preview, has_original,
+			INSERT INTO finding (project_id, fingerprint, file_path, key, category, kind, preview, has_original,
 				first_scan_id, last_scan_id, bundle_id)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)
 			RETURNING id`,
-			projectID, f.Fingerprint, f.File, f.Category, f.Kind, f.Preview, f.HasOriginal, id, bundleID).Scan(&findingID)
+			projectID, f.Fingerprint, f.File, f.Key, f.Category, f.Kind, f.Preview, f.HasOriginal, id, bundleID).Scan(&findingID)
 	}
 	if err != nil {
 		return fmt.Errorf("storing finding: %w", err)
@@ -151,7 +166,7 @@ func scanLocation(rows pgx.Rows, dest ...any) (finding.Location, error) {
 // their first location; locations by line and column.
 func (s *Store) FindingsByScan(ctx context.Context, id scan.ID) ([]finding.Finding, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT f.id, f.fingerprint, f.file_path, f.category, f.kind, f.preview, f.has_original,
+		SELECT f.id, f.fingerprint, f.file_path, f.key, f.category, f.kind, f.preview, f.has_original,
 			`+locationColumns+`
 		FROM location l JOIN finding f ON f.id = l.finding_id
 		WHERE l.scan_id = $1
@@ -165,7 +180,7 @@ func (s *Store) FindingsByScan(ctx context.Context, id scan.ID) ([]finding.Findi
 	index := map[finding.ID]int{}
 	for rows.Next() {
 		var f finding.Finding
-		l, err := scanLocation(rows, &f.ID, &f.Fingerprint, &f.File, &f.Category, &f.Kind, &f.Preview, &f.HasOriginal)
+		l, err := scanLocation(rows, &f.ID, &f.Fingerprint, &f.File, &f.Key, &f.Category, &f.Kind, &f.Preview, &f.HasOriginal)
 		if err != nil {
 			return nil, err
 		}
