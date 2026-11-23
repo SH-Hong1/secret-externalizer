@@ -114,9 +114,9 @@ func readMembers(ctx context.Context, tx pgx.Tx, scanID scan.ID, b *triage.Bundl
 // one row per bundle of project $1 with a member that scan $2 found. Its
 // category, kind and preview are those of the member with the lowest ID; its
 // file, first_line and key are those of the first member by file and first
-// line; locations
-// counts the locations of the scan; shell is true when every member is in a
-// shell script and applied when an apply stored the bundle's value.
+// line; locations counts the locations of the scan; shell is true when every
+// member is in a shell script and applied when an apply stored the bundle's
+// value.
 const scanBundles = `
 	WITH member AS (
 		SELECT f.id, f.bundle_id, f.file_path, f.key, f.category, f.kind, f.preview,

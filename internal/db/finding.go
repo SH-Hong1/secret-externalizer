@@ -27,9 +27,9 @@ type detection struct {
 //
 // A finding is identified by project, fingerprint, file, and configuration
 // key. A finding that an earlier scan stored keeps its ID, its bundle, and its
-// first scan; its last scan becomes this one, and its category, kind, preview, and whether it has an original
-// become what this scan found, since the rules or the masking may have
-// changed in between. Locations belong to the scan that found them, so each
+// first scan; its last scan becomes this one, and its category, kind,
+// preview, and whether it has an original become what this scan found, since
+// the rules or the masking may have changed in between. Locations belong to the scan that found them, so each
 // scan adds its own.
 func (s *Store) SaveResult(ctx context.Context, jobID int64, workerID string, id scan.ID, r scan.Result) error {
 	return s.closeJob(ctx, jobID, workerID, id, "done", func(tx pgx.Tx) error {
@@ -75,7 +75,10 @@ func (s *Store) SaveResult(ctx context.Context, jobID int64, workerID string, id
 // finding of its fingerprint and file when that one has no key and this scan
 // has not found it yet: a finding stored before keys were read keeps its ID,
 // and with it its bundle, decision and apply records, under the first key of
-// its file that a scan reads.
+// its file that a scan reads. Any other sole keyless finding is taken over
+// the same way, such as one at a place whose key could not be read when a
+// keyed place of the same value is added to the file later, above it, so that
+// the scan stores the keyed finding first.
 func insertFinding(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, f finding.Finding) error {
 	var findingID int64
 	err := tx.QueryRow(ctx, `

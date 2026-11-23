@@ -111,8 +111,9 @@ type appliedInfo struct {
 }
 
 // memberView is one member of a bundle. Key is the configuration key of its
-// value, empty when it has none. MoveAction is where its move forms post; Split is set for every member after the first, which can be split
-// off into a bundle of its own.
+// value, empty when it has none. MoveAction is where its move forms post;
+// Split is set for every member after the first, which can be split off into
+// a bundle of its own.
 type memberView struct {
 	MoveAction string
 	Key        string
