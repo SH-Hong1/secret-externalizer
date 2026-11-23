@@ -3,6 +3,7 @@ package triage
 import (
 	"path"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -133,15 +134,15 @@ func fileEnv(file string) string {
 	dir, base := path.Split(file)
 	segments := []string{strings.TrimSuffix(base, path.Ext(base))}
 	folders := strings.Split(strings.Trim(dir, "/"), "/")
-	for i := len(folders) - 1; i >= 0; i-- {
-		segments = append(segments, folders[i])
+	for _, folder := range slices.Backward(folders) {
+		segments = append(segments, folder)
 	}
 	for _, seg := range segments {
 		words := strings.FieldsFunc(strings.ToLower(seg), func(r rune) bool {
 			return (r < 'a' || r > 'z') && (r < '0' || r > '9')
 		})
-		for i := len(words) - 1; i >= 0; i-- {
-			if e := environments[words[i]]; e != "" {
+		for _, w := range slices.Backward(words) {
+			if e := environments[w]; e != "" {
 				return e
 			}
 		}
@@ -298,8 +299,10 @@ func Default(b Bundle, used []Name) Suggestion {
 
 // Adapt turns a decision taken earlier for the same value elsewhere into a
 // suggestion for b. It falls back to Default when past is zero or b does not
-// allow it. The note is not copied, and an externalize name that is already
-// in used is replaced by SuggestName.
+// allow it. The verdict and the hold reason are copied. The note is not, and
+// neither is the name: an externalize suggestion carries the name SuggestName
+// gives b, because the files and the category of b say which environment and
+// which kind of store the name belongs to.
 func Adapt(past Decision, b Bundle, used []Name) Suggestion {
 	if past == (Decision{}) {
 		return Default(b, used)
@@ -309,12 +312,7 @@ func Adapt(past Decision, b Bundle, used []Name) Suggestion {
 		return Default(b, used)
 	}
 	if d.Verdict == VerdictExternalize {
-		for _, n := range used {
-			if n == d.Name {
-				d.Name = SuggestName(b, used)
-				break
-			}
-		}
+		d.Name = SuggestName(b, used)
 	}
 	return Suggestion{Decision: d, Source: SourceHistory}
 }

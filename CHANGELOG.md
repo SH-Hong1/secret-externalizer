@@ -132,6 +132,7 @@
 ### 변경
 
 - 판정 화면이 추천하는 이름에 환경이 든다. 묶음의 모든 파일이 같은 환경을 가리키면 `분류.환경.대상.항목`이다(`application-prod.yml`의 비밀번호는 `db.prod.main.password`). 환경은 파일 이름과 폴더의 단어에서 읽고(`prod`, `stg`, `uat`, `qa`, `test`, `dev`, `local`과 그 동의어), 파일에 없으면 키의 첫 단어에서 읽는다. 파일마다 환경이 다르거나 없는 파일이 있으면 넣지 않는다. 이미 판정한 이름은 바뀌지 않는다(`docs/decisions/0048-environment-in-suggested-names.md`)
+- 같은 값을 다른 곳에서 판정한 적이 있을 때 판정 화면은 판정과 보류 사유만 이어받아 제안한다. 외부화를 제안할 때의 이름은 이전 판정의 이름이 아니라 지금 묶음의 파일과 분류로 새로 만든다
 - 추천하는 이름의 대상은 찾은 값 바로 앞에 적힌 키에서 읽는다. `<scp file="…" password="…">`의 비밀번호가 `file`이 아니라 `main`을 대상으로 받는다
 - Ant `build.xml`에서 다른 서버에 접속하는 비밀번호의 분류가 `storage-credential`에서 `ssh-credential`로 바뀐다. `<scp>`, `<sshexec>`, `<sshsession>`, `<ftp>`, `<telnet>`, `<rexec>`의 `password`, `passwd`, `passphrase`(새 규칙 `ant-remote-task-password`, `passphrase`는 새로 찾는다)와, 이름에 `ssh`, `scp`, `ftp`, `deploy`, `remote`가 든 비밀번호 속성(새 규칙 `ant-remote-property-password`)이다. 추천하는 이름도 `db.…`에서 `ssh.…`로 바뀐다. 이미 저장된 항목은 다음 스캔에서 분류가 바뀐다
 - 프로젝트 화면, 스캔 화면, 적용된 묶음 탭은 판정별 건수만 필요한데 판정 목록 한 쪽을 읽었다. 건수만 세는 `db.Store.VerdictCounts`로 바꿨다. 화면에 보이는 숫자는 같다

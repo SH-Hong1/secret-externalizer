@@ -229,17 +229,23 @@ func TestAdapt(t *testing.T) {
 		want triage.Suggestion
 	}{
 		{
-			"externalize free name",
+			"externalize takes the name of this bundle",
 			triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.shop.password", Note: "old"},
 			storage, nil,
-			triage.Suggestion{Decision: triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.shop.password"}, Source: "history"},
+			triage.Suggestion{Decision: triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.order.password"}, Source: "history"},
+		},
+		{
+			"externalize in another environment",
+			triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"},
+			suggestBundle(finding.CategoryStorage, finding.KindPassword, "application-prod.yml", "password: ****"), nil,
+			triage.Suggestion{Decision: triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.prod.main.password"}, Source: "history"},
 		},
 		{
 			"externalize used name",
 			triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.shop.password"},
 			storage,
-			[]triage.Name{"db.shop.password"},
-			triage.Suggestion{Decision: triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.order.password"}, Source: "history"},
+			[]triage.Name{"db.order.password"},
+			triage.Suggestion{Decision: triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.order2.password"}, Source: "history"},
 		},
 		{
 			"externalize onto frontend",

@@ -264,13 +264,14 @@ func TestTriageCustomerBundleSelectsGroup(t *testing.T) {
 
 func TestTriageSuggestion(t *testing.T) {
 	e := triageEnv(t)
-	e.triage.past[fpPassword] = triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.order.password", Note: "fake past note"}
+	e.triage.past[fpPassword] = triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.elsewhere.password", Note: "fake past note"}
 
 	res := e.getTriage(t, nil, nil)
 	detail := section(res.body, "section", "detail")
 	wantIn(t, "suggested detail", detail,
-		`value="db.order.password"`, "제안: 외부화",
+		`value="db.main.password"`, "제안: 외부화",
 	)
+	wantNotIn(t, "suggested detail", detail, "db.elsewhere.password")
 	if !regexp.MustCompile(`<button class="[^"]*btn-suggested[^"]*" type="submit" name="verdict" value="externalize">외부화 · 제안</button>`).MatchString(detail) {
 		t.Errorf("suggested detail does not ring the externalize button:\n%s", detail)
 	}
