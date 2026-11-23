@@ -8,7 +8,11 @@ rules:
   # secret, token, or pwd (any case), or ends in Pass, PASS, Pw, or PW, or is
   # pass or pw, in a declaration or an assignment. The endings are matched
   # with their case so that dbPass and DB_PASS are reported but compass is
-  # not.
+  # not. A name that says the literal is the name of something or a message
+  # is not reported: one that ends in header, name, field, param, attribute,
+  # label, prefix, suffix, type, url, uri, path, pattern, or format
+  # (TOKEN_HEADER, passwordParam), or starts with msg, message, err, error,
+  # label, title, or text (MSG_PWD).
   - id: java-secret-variable
     message: A string literal is assigned to a variable whose name says it holds a secret.
     severity: WARNING
@@ -23,6 +27,9 @@ rules:
       - metavariable-regex:
           metavariable: $NAME
           regex: ((?i:.*(passw|secret|token|pwd).*)|.*[a-z0-9_](Pass|PASS|Pw|PW)|(?i:pass|pw))$
+      - metavariable-regex:
+          metavariable: $NAME
+          regex: ^(?!(?i:.*(header|name|field|param|parameter|attr|attribute|label|prefix|suffix|type|url|uri|path|pattern|format)$))(?!(?:MSG|MESSAGE|ERR|ERROR|LABEL|TITLE|TEXT)_)(?!(?:msg|message|err|error|label|title|text)[A-Z])
       - metavariable-regex:
           metavariable: $VALUE
           regex: ^.

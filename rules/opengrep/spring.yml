@@ -1,16 +1,16 @@
 # Database settings and passwords in Spring XML contexts, .properties files, and
 # application*.yml files. Every rule reports only the value: no quotes, no key
-# name, no surrounding XML. Values that are a ${...} placeholder or empty are
-# not reported.
+# name, no surrounding XML. Values that are a ${...} or #{...} placeholder or
+# empty are not reported.
 #
 # Every rule starts with "  - id:" and has its category and kind under
 # metadata, which the rule tests read line by line.
 rules:
   # Connection settings of a connection pool or data source bean: a bean
-  # whose id or class contains datasource, hikari, pool, c3p0, dbcp, or druid
-  # (BasicDataSource, HikariConfig, ComboPooledDataSource, ...). The URL and
-  # the user name are credentials only there; a mail sender's username or
-  # url is not reported. A value is a <property name="..." value="..."/> or a
+  # whose id or class contains datasource, jdbc, hikari, c3p0, dbcp, druid,
+  # bonecp, or proxool (BasicDataSource, HikariConfig, ComboPooledDataSource,
+  # ...). The URL and the user name are credentials only there; a mail
+  # sender's username or a thread pool's url is not reported. A value is a <property name="..." value="..."/> or a
   # p: namespace attribute on the bean.
   - id: spring-xml-datasource-url
     message: A data source URL is written in a Spring XML context.
@@ -35,10 +35,10 @@ rules:
           - pattern: <bean class="$BEAN" p:jdbcUrl="$VALUE"/>
       - metavariable-regex:
           metavariable: $BEAN
-          regex: (?i).*(datasource|hikari|pool|c3p0|dbcp|druid).*
+          regex: (?i).*(datasource|jdbc|hikari|c3p0|dbcp|druid|bonecp|proxool).*
       - metavariable-regex:
           metavariable: $VALUE
-          regex: ^(?!\$\{)\S
+          regex: ^(?![$#]\{)\S
       - focus-metavariable: $VALUE
 
   - id: spring-xml-datasource-username
@@ -64,16 +64,17 @@ rules:
           - pattern: <bean class="$BEAN" p:user="$VALUE"/>
       - metavariable-regex:
           metavariable: $BEAN
-          regex: (?i).*(datasource|hikari|pool|c3p0|dbcp|druid).*
+          regex: (?i).*(datasource|jdbc|hikari|c3p0|dbcp|druid|bonecp|proxool).*
       - metavariable-regex:
           metavariable: $VALUE
-          regex: ^(?!\$\{)\S
+          regex: ^(?![$#]\{)\S
       - focus-metavariable: $VALUE
 
-  # A password property of any bean: a literal password in a Spring context
-  # is a credential whatever the bean is (a data source, a mail sender, an
-  # LDAP or FTP client). The value may be an attribute, a <value> child, or
-  # a p:password attribute.
+  # A password of any bean: a literal password in a Spring context is a
+  # credential whatever the bean is (a data source, a mail sender, an LDAP or
+  # FTP client). It is a property or a constructor argument whose name ends
+  # in password or passwd in any case (password, dbPassword), given as an
+  # attribute or a <value> child, or a p:password attribute.
   - id: spring-xml-password
     message: A password is written in a Spring XML context.
     severity: WARNING
@@ -86,17 +87,25 @@ rules:
           - patterns:
               - pattern-inside: <bean>...</bean>
               - pattern-either:
-                  - pattern: <property name="password" value="$VALUE"/>
-                  - pattern: <property name="password"><value>$VALUE</value></property>
+                  - pattern: <property name="$NAME" value="$VALUE"/>
+                  - pattern: <property name="$NAME"><value>$VALUE</value></property>
+                  - pattern: <constructor-arg name="$NAME" value="$VALUE"/>
+                  - pattern: <constructor-arg name="$NAME"><value>$VALUE</value></constructor-arg>
+              - metavariable-regex:
+                  metavariable: $NAME
+                  regex: (?i).*passw(or)?d$
           - pattern: <bean p:password="$VALUE"/>
       - metavariable-regex:
           metavariable: $VALUE
-          regex: ^(?!\$\{)\S
+          regex: ^(?![$#]\{)\S
       - focus-metavariable: $VALUE
 
-  # key=value or key: value lines in .properties files, where the last part
-  # of the key is password, user name, host, or a URL whose value is a JDBC
-  # URL. Comment lines start with # or ! and do not match the key pattern.
+  # Lines in .properties files where the last part of the key names a
+  # password, a user name, a host, or a URL whose value is a JDBC URL. The key
+  # and the value are separated by =, by :, or by white space alone. A
+  # password key ends in password, passwd, or pwd (db.password, dbPassword,
+  # db_pwd), or is pass or ends in _pass or -pass, so compass is not one.
+  # Comment lines start with # or ! and do not match the key pattern.
   - id: properties-password
     message: A password is written in a properties file.
     severity: WARNING
@@ -107,7 +116,7 @@ rules:
       category: storage-credential
       kind: password
     patterns:
-      - pattern-regex: (?mi)^[ \t]*(?:[\w-]+\.)*(?:password|passwd|pwd)[ \t]*[=:][ \t]*(?!\$\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$
+      - pattern-regex: (?mi)^[ \t]*(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)(?:[ \t]*[=:][ \t]*|[ \t]+(?![=:]))(?![$#]\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$
       - focus-metavariable: $VALUE
 
   - id: properties-username
@@ -120,7 +129,7 @@ rules:
       category: storage-credential
       kind: account
     patterns:
-      - pattern-regex: (?mi)^[ \t]*(?:[\w-]+\.)*(?:username|user|userid)[ \t]*[=:][ \t]*(?!\$\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$
+      - pattern-regex: (?mi)^[ \t]*(?:[\w-]+\.)*(?:username|user|userid)(?:[ \t]*[=:][ \t]*|[ \t]+(?![=:]))(?![$#]\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$
       - focus-metavariable: $VALUE
 
   - id: properties-jdbc-url
@@ -133,7 +142,7 @@ rules:
       category: storage-credential
       kind: url
     patterns:
-      - pattern-regex: (?mi)^[ \t]*[\w.-]*url[ \t]*[=:][ \t]*(?P<VALUE>jdbc:\S+)
+      - pattern-regex: (?mi)^[ \t]*[\w.-]*url(?:[ \t]*[=:][ \t]*|[ \t]+(?![=:]))(?P<VALUE>jdbc:\S+)
       - focus-metavariable: $VALUE
 
   - id: properties-host
@@ -146,14 +155,16 @@ rules:
       category: storage-credential
       kind: host
     patterns:
-      - pattern-regex: (?mi)^[ \t]*(?:[\w-]+\.)*(?:host|hostname)[ \t]*[=:][ \t]*(?!\$\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$
+      - pattern-regex: (?mi)^[ \t]*(?:[\w-]+\.)*(?:host|hostname)(?:[ \t]*[=:][ \t]*|[ \t]+(?![=:]))(?![$#]\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$
       - focus-metavariable: $VALUE
 
   # key: value lines in application*.yml files. The value may be double- or
   # single-quoted, and may be followed by a # comment; neither the quotes nor
   # the comment are part of the reported value. Inside quotes, " #" is part
   # of the value. The (?|...) group numbers the three alternatives' values
-  # alike, so each is $VALUE.
+  # alike, so each is $VALUE. A password key ends as in a .properties file.
+  # A value that starts with > or | opens a block scalar and is not a value
+  # itself.
   - id: yaml-password
     message: A password is written in a Spring Boot YAML file.
     severity: WARNING
@@ -164,7 +175,23 @@ rules:
       category: storage-credential
       kind: password
     patterns:
-      - pattern-regex: (?mi)^[ \t]*(?:-[ \t]+)?(?:[\w-]+\.)*(?:password|passwd|pwd)[ \t]*:[ \t]+(?|"(?!\$\{)(?P<VALUE>[^"\r\n]+)"|'(?!\$\{)([^'\r\n]+)'|(?!\$\{)([^\s"'#][^\r\n]*?))(?:[ \t]+#[^\r\n]*)?[ \t]*\r?$
+      - pattern-regex: (?mi)^[ \t]*(?:-[ \t]+)?(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)[ \t]*:[ \t]+(?|"(?![$#]\{)(?P<VALUE>[^"\r\n]+)"|'(?![$#]\{)([^'\r\n]+)'|(?![$#]\{)([^\s"'#>|][^\r\n]*?))(?:[ \t]+#[^\r\n]*)?[ \t]*\r?$
+      - focus-metavariable: $VALUE
+
+  # A password written as a block scalar: the key ends in > or |, and the
+  # value is the one line below it, indented more than the key. A block of
+  # two or more lines is not reported.
+  - id: yaml-block-password
+    message: A password is written as a block scalar in a Spring Boot YAML file.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["application*.yml", "application*.yaml"]
+    metadata:
+      category: storage-credential
+      kind: password
+    patterns:
+      - pattern-regex: (?mi)^(?P<INDENT>[ \t]*)(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)[ \t]*:[ \t]+[>|][+-]?[ \t]*\r?\n(?P=INDENT)[ \t]+(?![$#]\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$(?!\n(?P=INDENT)[ \t]+\S)
       - focus-metavariable: $VALUE
 
   - id: yaml-username
@@ -177,7 +204,7 @@ rules:
       category: storage-credential
       kind: account
     patterns:
-      - pattern-regex: (?mi)^[ \t]*(?:-[ \t]+)?(?:[\w-]+\.)*(?:username|user|userid)[ \t]*:[ \t]+(?|"(?!\$\{)(?P<VALUE>[^"\r\n]+)"|'(?!\$\{)([^'\r\n]+)'|(?!\$\{)([^\s"'#][^\r\n]*?))(?:[ \t]+#[^\r\n]*)?[ \t]*\r?$
+      - pattern-regex: (?mi)^[ \t]*(?:-[ \t]+)?(?:[\w-]+\.)*(?:username|user|userid)[ \t]*:[ \t]+(?|"(?![$#]\{)(?P<VALUE>[^"\r\n]+)"|'(?![$#]\{)([^'\r\n]+)'|(?![$#]\{)([^\s"'#>|][^\r\n]*?))(?:[ \t]+#[^\r\n]*)?[ \t]*\r?$
       - focus-metavariable: $VALUE
 
   - id: yaml-jdbc-url
@@ -203,5 +230,5 @@ rules:
       category: storage-credential
       kind: host
     patterns:
-      - pattern-regex: (?mi)^[ \t]*(?:-[ \t]+)?(?:[\w-]+\.)*(?:host|hostname)[ \t]*:[ \t]+(?|"(?!\$\{)(?P<VALUE>[^"\r\n]+)"|'(?!\$\{)([^'\r\n]+)'|(?!\$\{)([^\s"'#][^\r\n]*?))(?:[ \t]+#[^\r\n]*)?[ \t]*\r?$
+      - pattern-regex: (?mi)^[ \t]*(?:-[ \t]+)?(?:[\w-]+\.)*(?:host|hostname)[ \t]*:[ \t]+(?|"(?![$#]\{)(?P<VALUE>[^"\r\n]+)"|'(?![$#]\{)([^'\r\n]+)'|(?![$#]\{)([^\s"'#>|][^\r\n]*?))(?:[ \t]+#[^\r\n]*)?[ \t]*\r?$
       - focus-metavariable: $VALUE

@@ -6,6 +6,9 @@
 
 ### 추가
 
+- 규칙 `maven-settings-server-username`(`settings.xml`의 `<server>` 안 `<username>`, 계정), `shell-sshpass-env-password`(`sshpass -e`가 읽는 `SSHPASS=` 값), `yaml-block-password`(`password: >`, `password: |` 아래 한 줄짜리 블록 스칼라)
+- 규칙 사례 예제 `internal/ruleset/testdata/rule-cases`와 그 기대 결과 `rule-cases.json`. 규칙이 찾아야 하는 모양과 건드리지 말아야 하는 모양을 하나씩 둔다. `TestRules_ExpectedFindings`가 `legacy-shop`과 함께 스캔한다
+- 결정 기록 0052 (스캔 규칙의 알려진 누락과 오탐 가운데 고친 것)
 - 결정 기록 0051 (적용 중에는 판정 화면을 잠그고, 근거 없는 복구 불가 동의는 세지 않는다)
 - `db.Store.ApplyActive`. 프로젝트에 점검 중이거나 대기 중이거나 실행 중인 적용이 있는지 알려 준다
 - 결정 기록 0050 (PDF 변환은 한 번에 하나, PDF에는 링크가 없다)
@@ -136,6 +139,10 @@
 
 ### 변경
 
+- 규칙이 더 찾는 것: `.properties`와 `application*.yml`에서 `password`, `passwd`, `pwd`로 끝나는 키(`dbPassword`, `db_passwd`)와 `pass`, `_pass`, `-pass` 키(`jdbc.pass`), `.properties`에서 키와 값을 공백만으로 나눈 줄(비밀번호, 계정, 호스트, JDBC URL), Spring XML에서 이름이 `password`나 `passwd`로 끝나는 `<property>`와 `<constructor-arg>`(`managerPassword`), `"Cookie", "이름=값"`으로 쿠키를 넣는 호출의 첫 쿠키 값(`setRequestProperty`), 뒷자리가 5~8로 시작하는 외국인등록번호(종류는 주민등록번호와 같은 `rrn`), 하이픈 없이 붙여 쓴 휴대전화 번호(10~11자리, 더 긴 숫자의 일부가 아닐 때)
+- 규칙이 더는 보고하지 않는 것: SpEL `#{…}` 값(XML, properties, YAML, Maven, Ant), 이름이 무엇의 이름이나 메시지임을 말하는 Java 변수의 문자열(`TOKEN_HEADER`, `PASSWORD_PARAM`, `MSG_PWD`), 이름에 `pool`만 있고 데이터 소스가 아닌 bean의 `url`과 `user`(스레드 풀 등), 원격 명령 안의 `-i`(`ssh host 'sed -i …'`), YAML 블록 스칼라의 표시 글자(`>-`, `|`)
+- 데이터 소스 bean을 알아보는 이름에서 `pool`을 빼고 `jdbc`, `bonecp`, `proxool`을 더했다
+- 규칙 테스트의 기대 결과 파일 이름이 `expected.json`에서 `legacy-shop.json`으로 바뀌었다. 예제 `legacy-shop`의 `settings.xml`에서 계정 `deployer`가 새로 나온다
 - 판정 화면은 프로젝트의 점검이나 적용이 진행 중이면 상세를 잠근다. 판정·메모 저장·판정 취소 버튼, 보류 사유, 메모, 이름을 누를 수 없고 옮기기 양식을 그리지 않으며, "점검이나 적용이 진행 중이라 지금은 판정을 바꿀 수 없습니다."와 적용 화면 링크를 보인다. 화면을 연 뒤에 적용이 시작된 경우의 409는 그대로다(`docs/decisions/0051-apply-screen-guards.md`)
 - 점검한 뒤에 스캔이 있어 적용 확인이 거부될 때 `db.Store.ConfirmApply`가 `ErrPlanChanged` 대신 `ErrScanFollowed`를 돌려주고, 적용 화면은 "점검한 뒤에 새 스캔이 있습니다. 스캔 결과와 판정을 확인한 뒤 다시 점검해 주세요."를 보인다. 판정이 바뀐 경우의 문장은 "판정이 바뀌었습니다. 다시 점검해 주세요."다
 - 적용 화면의 낡은 점검 안내를 둘로 나눴다. 점검 뒤에 새 스캔이 성공했으면 "점검한 뒤에 새 스캔이 성공했습니다. 새 스캔의 판정을 확인하고 다시 점검해 주세요.", 판정만 바뀌었으면 "점검한 뒤 판정이 바뀌었습니다. 지금 판정으로 다시 점검해 주세요."다
