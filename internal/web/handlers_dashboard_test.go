@@ -2,6 +2,7 @@ package web_test
 
 import (
 	"errors"
+	"fmt"
 	"net/http"
 	"regexp"
 	"strings"
@@ -85,6 +86,19 @@ func TestHandleDashboard_OK(t *testing.T) {
 		"50%", "—", "스캔한 적 없음", "프로젝트 열기", `href="/projects/3"`,
 		`<a class="nav-link" href="/dashboard" aria-current="page">대시보드</a>`,
 	)
+	// Every tile's figure is distinct, so a figure under the wrong label
+	// fails.
+	for _, tile := range []struct {
+		label  string
+		figure int
+	}{
+		{"남은 항목", 7}, {"외부화 완료", 5}, {"삭제·마스킹 완료", 2}, {"오탐", 3}, {"보류", 1},
+	} {
+		want := fmt.Sprintf("<span class=\"tile-label\">%s</span>\n<span class=\"tile-figure\">%d</span>", tile.label, tile.figure)
+		if !strings.Contains(res.body, want) {
+			t.Errorf("GET /dashboard lacks the tile %s with figure %d (%q)", tile.label, tile.figure, want)
+		}
+	}
 	if got := strings.Count(res.body, "<rect"); got != dashboardSegments {
 		t.Errorf("GET /dashboard draws %d <rect>, want %d", got, dashboardSegments)
 	}
