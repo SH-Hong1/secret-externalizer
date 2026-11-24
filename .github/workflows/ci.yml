@@ -1,0 +1,78 @@
+name: ci
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened, labeled, unlabeled]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bin
+          key: tools-${{ runner.os }}-${{ hashFiles('Makefile', 'deploy/worker/scanners.lock') }}
+      - run: make tools scanners
+      - run: make check
+
+  integration:
+    runs-on: ubuntu-latest
+    env:
+      # compose reads these even for the services this job does not start.
+      SE_WORKSPACE: ${{ runner.temp }}/workspace
+      OPENBAO_UNSEAL_KEY_FILE: ${{ runner.temp }}/unused-unseal.key
+      OPENBAO_ADMIN_SECRET_ID_FILE: ${{ runner.temp }}/unused-admin.secret-id
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bin
+          key: tools-${{ runner.os }}-${{ hashFiles('Makefile', 'deploy/worker/scanners.lock') }}
+      - run: make scanners
+      - name: Start the test services
+        run: |
+          mkdir -p "$SE_WORKSPACE"
+          touch "$OPENBAO_UNSEAL_KEY_FILE" "$OPENBAO_ADMIN_SECRET_ID_FILE"
+          docker compose up -d --wait postgres
+          docker compose --profile test up -d --wait valkey-test openbao-test pdf-test
+      - name: Run the integration tests
+        run: |
+          make test-integration \
+            TEST_VALKEY_ADDR=127.0.0.1:16379 \
+            TEST_VALKEY_PASSWORD=dev-only-valkey-test-password \
+            TEST_DATABASE_URL=postgres://se_app:dev-only-se-app-password@127.0.0.1:15432/secret_externalizer_test \
+            TEST_BAO_ADDR=http://127.0.0.1:18200 \
+            TEST_PDF_URL=http://127.0.0.1:13000
+      - name: Show the service logs
+        if: failure()
+        run: docker compose --profile test logs --no-color postgres valkey-test openbao-test pdf-test
+
+  pull-request:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the title and the closing line
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          sh scripts/commit-lint.sh --title "$PR_TITLE"
+          printf '%s\n' "$PR_BODY" | tr -d '\r' > "$RUNNER_TEMP/body"
+          sh scripts/commit-lint.sh --closes "$RUNNER_TEMP/body"

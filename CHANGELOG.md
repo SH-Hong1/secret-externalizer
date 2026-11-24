@@ -6,6 +6,7 @@
 
 ### 변경
 
+- PR과 `main` push마다 GitHub Actions가 `make check`(`check`), compose 테스트 서비스로 `make test-integration`(`integration`), PR 제목과 `Closes #N` 줄(`pull-request`)을 검사한다. 병합은 스쿼시만 허용하고, 스쿼시 커밋의 제목과 본문은 PR의 제목과 본문이다. PR과 Issue 템플릿을 두었다(`docs/decisions/0074-one-task-one-squashed-pr-merged-by-ci.md`)
 - 검사를 Claude Code hook이 아니라 커밋할 때 git hook이 한다. `pre-commit`은 검사 대상 파일이 스테이징되어 있으면 Go 파일을 포맷하고 `make check`를 실행하고, `commit-msg`는 커밋 메시지가 Angular 형식이고 이슈를 가리키는지 확인한다. 새로 받은 저장소에서는 `make setup`을 실행한다. Claude Code의 편집 hook과 종료 hook(`make check`, 규칙 검토)은 없앴다(`docs/decisions/0072-checks-run-in-git-hooks-and-ci.md`)
 - betterleaks가 base64, hex, 퍼센트 인코딩을 풀어 찾은 비밀을 버리지 않고 항목으로 보고한다. 항목의 값은 파일에 적힌 인코딩된 글자이고, 스캔이 그 글자를 직접 풀어 보고된 값이 나올 때만 항목으로 삼는다. 그래서 판정하고 외부화할 수 있으며(소스의 인코딩된 글자가 placeholder로 바뀌고 OpenBao에 그 글자가 저장된다), 같은 파일의 다른 항목도 주변 줄을 잃지 않는다. 판정 화면의 탐지 표시에 "(base64 디코딩)"처럼 인코딩이 보인다. 확인하지 못한 결과와 고객정보는 전처럼 버린다(`docs/decisions/0071-encoded-values-are-findings.md`)
 - 적용이 OpenBao에 소스의 글자가 아니라 그 글자가 뜻하는 값을 저장한다. `.properties`, `.xml`, `.yml`/`.yaml`, `.java`, `.sh`, `.json` 파일의 자리는 그 파일 종류의 이스케이프(XML의 `&amp;`, properties의 `\=`, YAML과 JSON, Java 문자열의 `\"` 등)를 풀어 저장하고, 그 밖의 파일과 키 파일은 전처럼 글자 그대로다. 글자만으로 값을 정할 수 없는 자리(셸의 `$` 확장, 파일 밖에서 정의한 XML 엔티티, 잘못된 이스케이프, 줄바꿈이 든 값)는 새 사유 "소스의 글자만으로 값을 정할 수 없음"(`value-unclear`)으로, 한 이름의 자리들이 서로 다른 값으로 풀리면 "같은 이름의 자리마다 값이 다르게 읽힘"(`values-differ`)으로 건너뛴다(마이그레이션 `0012`). 이 변경 전에 글자 그대로 저장된 값은 바뀌지 않는다(`docs/decisions/0070-store-the-value-the-text-stands-for.md`)
