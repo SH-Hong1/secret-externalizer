@@ -28,6 +28,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
@@ -623,18 +624,14 @@ func TestRun_JobsSplit(t *testing.T) {
 	if sc.Status != scan.StatusQueued {
 		t.Errorf("Scan(%d) status = %q after the apply-only worker, want queued", waiting, sc.Status)
 	}
-	pool, err := pgxpool.New(ctx, databaseURL)
+	// A job the apply-only worker had claimed would be under its lease, or
+	// on its second attempt once the lease ran out.
+	probe, err := store.ClaimJob(ctx, "probe", time.Minute, job.KindScan)
 	if err != nil {
-		t.Fatalf("pgxpool.New() error = %v", err)
+		t.Fatalf("ClaimJob(scan) after the apply-only worker error = %v, want the job of scan %d", err, waiting)
 	}
-	defer pool.Close()
-	var state string
-	var attempts int
-	if err := pool.QueryRow(ctx, `SELECT state, attempts FROM job WHERE scan_id = $1`, int64(waiting)).Scan(&state, &attempts); err != nil {
-		t.Fatalf("reading the job of scan %d error = %v", waiting, err)
-	}
-	if state != "queued" || attempts != 0 {
-		t.Errorf("job of scan %d = state %q, %d attempts after the apply-only worker; want queued and never claimed", waiting, state, attempts)
+	if probe.ScanID != int64(waiting) || probe.Attempts != 1 {
+		t.Errorf("ClaimJob(scan) after the apply-only worker = %+v, want the job of scan %d on its first attempt", probe, waiting)
 	}
 }
 

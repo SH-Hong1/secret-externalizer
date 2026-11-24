@@ -276,9 +276,11 @@ func TestJobs_Kinds(t *testing.T) {
 		{jobsApply, []job.Kind{job.KindApplyCheck, job.KindApply}},
 	}
 	for _, tt := range tests {
-		if diff := cmp.Diff(tt.want, tt.jobs.kinds()); diff != "" {
-			t.Errorf("jobs(%q).kinds() mismatch (-want +got):\n%s", tt.jobs, diff)
-		}
+		t.Run(string(tt.jobs), func(t *testing.T) {
+			if diff := cmp.Diff(tt.want, tt.jobs.kinds()); diff != "" {
+				t.Errorf("jobs(%q).kinds() mismatch (-want +got):\n%s", tt.jobs, diff)
+			}
+		})
 	}
 }
 
