@@ -4,20 +4,20 @@
 
 ## 띄우고 내리기
 
-Docker Engine 26 이상과, 볼륨 마운트의 `subpath`를 지원하는 그에 맞는 Compose가 필요하다. worker, applier, web은 `openbao-secrets` 볼륨에서 각자의 폴더(worker와 applier는 `worker`, web은 `web`)만 `volume.subpath`로 마운트하는데, 이전 Engine이나 이 옵션을 모르는 Compose에서는 이 셋이 뜨지 않는다. 아래의 `docker compose`는 따로 설치한 `docker-compose`로 바꿔 써도 된다.
+Docker Engine 26 이상과, 볼륨 마운트의 `subpath`를 지원하는 그에 맞는 Compose가 필요하다. worker, applier, web은 `openbao-secrets` 볼륨에서 각자의 폴더(`worker`, `applier`, `web`)만, `openbao-roles`는 그 세 폴더를 `volume.subpath`로 마운트하는데, 이전 Engine이나 이 옵션을 모르는 Compose에서는 이 넷이 뜨지 않는다. 아래의 `docker compose`는 따로 설치한 `docker-compose`로 바꿔 써도 된다.
 
-처음 띄우기 전에 OpenBao의 봉인 해제 키를 호스트에 만든다. 키는 Docker 볼륨 밖의 파일 `~/.config/secret-externalizer/openbao-unseal.key`(바꾸려면 `OPENBAO_UNSEAL_KEY_FILE`)에 있고, 이 파일이 없으면 compose가 openbao를 만들지 못한다(`bind source path does not exist`).
+처음 띄우기 전에 OpenBao가 쓰는 파일 둘을 호스트에 만든다. 봉인 해제 키 `~/.config/secret-externalizer/openbao-unseal.key`(바꾸려면 `OPENBAO_UNSEAL_KEY_FILE`)와 관리 역할의 secret-id `~/.config/secret-externalizer/openbao-admin.secret-id`(바꾸려면 `OPENBAO_ADMIN_SECRET_ID_FILE`)다. 둘 다 Docker 볼륨 밖에 있고, 없으면 compose가 openbao를 만들지 못한다(`bind source path does not exist`).
 
 ```sh
-make openbao-unseal-key        # 한 번만. 이미 있으면 확인만 하고 그대로 둔다
+make openbao-host-files        # 한 번만. 이미 있으면 확인만 하고 그대로 둔다
 docker compose up --build -d   # 처음에는 Keycloak이 realm을 가져오느라 30초쯤 걸린다
-docker compose ps              # postgres, valkey, keycloak, openbao는 healthy, web, worker, applier는 running
+docker compose ps              # postgres, valkey, keycloak, openbao는 healthy, web, worker, applier는 running. openbao-roles는 역할을 맞추고 끝난다(-a로 보면 Exited (0))
 docker compose logs -f web
 docker compose down            # 데이터(postgres, OpenBao 볼륨)는 남긴다
 docker compose down -v         # 볼륨까지 지운다. 다음 기동 때 realm을 새로 가져오고, OpenBao에 보관한 원본도 사라진다
 ```
 
-`down -v` 뒤에도 호스트의 봉인 해제 키 파일은 남는다. 빈 저장소는 다음 기동 때 그 키로 다시 초기화되므로 그대로 써도 된다.
+`down -v` 뒤에도 호스트의 두 파일은 남는다. 빈 저장소는 다음 기동 때 그 키로 다시 초기화되고 관리 역할에 같은 secret-id를 등록하므로 그대로 써도 된다.
 
 `deploy/postgres/init.sql`은 postgres 볼륨을 처음 만들 때만 실행된다. `se_app` 계정과 테스트용 데이터베이스(`secret_externalizer_test`)를 더하기 전에 만든 볼륨에는 이 둘이 없으므로, `docker compose down -v`로 볼륨을 지우고 다시 띄운다. 볼륨을 지우지 않으려면 `init.sql`의 `se_app` 이하 문장을 `docker compose exec -T postgres psql -U postgres`로 한 번 실행한다.
 
@@ -32,7 +32,7 @@ docker compose down -v         # 볼륨까지 지운다. 다음 기동 때 realm
 | worker | `/workspace` (`WORKSPACE_ROOT`) | 읽기 전용 | 스캔과 스캐너(betterleaks, opengrep) |
 | applier | `/workspace-rw` (`APPLY_WORKSPACE_ROOT`) | 읽기-쓰기 | 사용자가 확인한 적용과 그 점검 |
 
-스캐너는 worker 컨테이너에서만 돌고, 그 컨테이너에는 읽기 전용 마운트만 있다. 그래서 잘못 만들어졌거나 바뀐 스캐너도 소스를 바꿀 수 없다. applier는 스캐너를 실행하지 않는다. 적용이 끝난 뒤의 확인 스캔은 스캔이므로 worker가 한다. 두 서비스는 같은 AppRole(`se-worker`)과 secret-id를 쓴다(`docs/decisions/0068-scan-and-apply-in-separate-containers.md`).
+스캐너는 worker 컨테이너에서만 돌고, 그 컨테이너에는 읽기 전용 마운트만 있다. 그래서 잘못 만들어졌거나 바뀐 스캐너도 소스를 바꿀 수 없다. applier는 스캐너를 실행하지 않는다. 적용이 끝난 뒤의 확인 스캔은 스캔이므로 worker가 한다. 두 서비스는 서로 다른 AppRole을 쓴다. worker(`se-worker`)는 지문 계산과 원본 보관·정리만 할 수 있고 외부화한 값에는 닿지 못하며, applier(`se-applier`)는 외부화한 값을 쓰고 읽을 수 있지만 원본을 보관하거나 읽지 못한다(`docs/decisions/0068-scan-and-apply-in-separate-containers.md`, `docs/decisions/0069-separate-approles-and-role-sync.md`).
 
 ```sh
 export SE_WORKSPACE=$HOME/work     # 프로젝트 폴더들이 들어 있는 폴더
@@ -43,7 +43,7 @@ docker compose up --build -d
 - macOS에서는 Docker가 공유하는 경로(보통 홈 폴더 아래)여야 한다. `/tmp` 같은 경로는 컨테이너에서 빈 폴더로 보인다.
 - 프로젝트를 등록할 때의 경로는 `SE_WORKSPACE` 기준의 상대 경로다. 예를 들어 `$HOME/work/shop`을 스캔하려면 `shop`으로 등록한다.
 - worker와 applier는 `SE_UID`와 `SE_GID`로 정한 사용자로 실행된다. 기본값은 둘 다 65532다. 둘 다 숫자여야 하고, root(0)로는 실행하지 않는다(`openbao-secrets`가 거부해 둘 다 뜨지 않는다). Linux 호스트의 Docker(네이티브)에서는 bind mount가 호스트 소유권을 그대로 유지하므로, 스캔할 파일과 폴더를 그 사용자가 읽을 수 있어야 하고, 적용하려면 쓸 수 있어야 한다. 작업 공간의 주인으로 실행하려면 `SE_UID=$(id -u) SE_GID=$(id -g) docker compose up -d`처럼 띄운다. applier가 적용으로 쓴 파일의 소유자는 그 사용자다. 읽을 수 없는 파일과 폴더(예: `0700` 폴더, `0600` 개인키나 `.env`)는 스캔에서 오류 없이 건너뛰고 건너뛴 수를 센다. macOS의 colima나 Docker Desktop에서는 소유권이 바뀌어 보이므로 이 문제가 생기지 않는다.
-- `openbao-secrets`는 뜰 때마다 worker와 applier가 함께 쓰는 secret-id(`worker/secret-id`)와 그 폴더의 소유자를 `SE_UID`로 맞춘다(web의 것은 65532 그대로). `SE_UID`를 바꾸면 `docker compose up -d`가 `openbao-secrets`를 다시 실행해 이미 있는 볼륨의 소유자도 바꾼다.
+- `openbao-secrets`는 뜰 때마다 worker와 applier의 secret-id(`worker/secret-id`, `applier/secret-id`)와 그 폴더의 소유자를 `SE_UID`로 맞춘다(web의 것은 65532 그대로). `SE_UID`를 바꾸면 `docker compose up -d`가 `openbao-secrets`를 다시 실행해 이미 있는 볼륨의 소유자도 바꾼다.
 - worker는 큐에 쌓인 스캔을 하나씩 실행한다. 파일마다 UTF-8이나 EUC-KR 텍스트로 읽고, betterleaks, opengrep, 키 파일 탐지기를 돌려 찾은 값을 항목으로 저장한다. postgres에는 값의 지문, 가린 미리보기, 위치, 가린 주변 줄만 남고, 비밀 값의 원본은 OpenBao에 보관한다. 고객정보는 원본을 보관하지 않고 주변 줄도 남기지 않는다. 실패하면 화면에는 정해진 사유만 보이고 자세한 오류는 `docker compose logs worker`에 남는다.
 - 스캔 하나는 30분을 넘기면 `scan took longer than the time limit`으로 실패한다. 20MiB가 넘는 파일, 바이너리 파일, UTF-8도 EUC-KR도 아닌 파일은 텍스트로 스캔하지 않고 건너뛴 수에 센다. 경로가 UTF-8이 아니거나 제어 문자가 든 파일도 건너뛴 수에 센다. 키 저장소(`.jks`, `.p12` 등)는 바이너리라도 키 파일 항목이 된다.
 - 스캔이 성공하면 worker 로그(`docker compose logs worker`)에 `scan finished` 기록이 하나 남는다. 스캔 ID(`scan_id`), 스캔이 목록에 넣은 일반 파일 수(`files`, 텍스트로 읽지 못하거나 경로를 저장할 수 없어 건너뛴 파일도 센다), 건너뛴 수(`skipped`), 버린 건수(`dropped`), 항목 수(`findings`), 텍스트로 읽지 못해 건너뛴 파일에 스캐너가 낸 결과 수(`results_in_skipped_files`), 도구별로 파일을 일부만 분석했다고 알린 오류 수(`scanner_errors`, opengrep의 파일별 10초 시간 초과나 부분 파싱 등)가 들어 있다. 건너뛴 파일이 있으면 `scan skipped files` 기록에 처음 50개의 상대 경로(`paths`)와 전체 수(`total`)가 남는다. 경로의 제어 문자와 깨진 UTF-8은 `U+FFFD`로 바뀐다. 읽지 못한 폴더는 수만 `skipped`에 들어가고 경로는 남지 않는다. 건너뛴 파일의 이름(경로순 처음 200개, UTF-8이 아니거나 제어 문자가 든 경로는 빼고 수에만 센다)과 도구별 스캐너 오류 수는 데이터베이스에도 저장되어 스캔 화면의 "검사하지 못한 것"에 보인다.
@@ -108,15 +108,15 @@ git add -A && git -c user.name=dev -c user.email=dev@example.invalid commit -q -
 
 ### 저장된 값을 확인하기
 
-루트 토큰은 초기화 뒤 폐기되므로 worker의 AppRole로 로그인해 읽는다. 값은 base64로 저장되어 있고, 디코딩하면 소스에 적혀 있던 글자 그대로다. 이 명령은 값을 터미널에 출력하므로 로컬 개발 환경의 가짜 값에만 쓴다.
+루트 토큰은 초기화 뒤 폐기되므로 applier의 AppRole로 로그인해 읽는다. 값은 base64로 저장되어 있고, 디코딩하면 소스에 적혀 있던 글자 그대로다. 이 명령은 값을 터미널에 출력하므로 로컬 개발 환경의 가짜 값에만 쓴다.
 
 ```sh
 docker compose exec -e BAO_ADDR=https://127.0.0.1:8200 -e BAO_CACERT=/openbao/secrets/tls/ca.crt openbao sh -c '
-  T=$(bao write -field=token auth/approle/login role_id=se-worker secret_id="$(cat /openbao/secrets/worker/secret-id)")
+  T=$(bao write -field=token auth/approle/login role_id=se-applier secret_id=- </openbao/secrets/applier/secret-id)
   BAO_TOKEN=$T bao read -format=json secret/data/projects/1/ext.db.main.password'
 ```
 
-경로는 `secret/data/projects/<프로젝트 ID>/ext.<이름>`이고 manifest의 `store`와 같다. worker는 이 경로를 지울 수 없다(`bao delete`는 `permission denied`).
+경로는 `secret/data/projects/<프로젝트 ID>/ext.<이름>`이고 manifest의 `store`와 같다. applier는 이 경로를 지울 수 없고(`bao delete`는 `permission denied`), worker는 읽을 수도 없다.
 
 ## 원본 보기와 감사 로그
 
@@ -150,22 +150,25 @@ docker compose exec -e BAO_ADDR=https://127.0.0.1:8200 -e BAO_CACERT=/openbao/se
 
 ## OpenBao
 
-worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하고, 판정 전의 원본을 OpenBao KV v2에 보관한다. 설정은 `deploy/openbao/config.hcl`과 봉인만 담은 `deploy/openbao/seal-static.hcl`에 있고, 이유는 `docs/decisions/0017-openbao-setup.md`와 `docs/decisions/0067-openbao-seal-key-on-host-and-tls.md`에 있다.
+worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하고, 판정 전의 원본을 OpenBao KV v2에 보관한다. applier는 외부화한 값을 KV v2에 쓴다. 설정은 `deploy/openbao/config.hcl`과 봉인만 담은 `deploy/openbao/seal-static.hcl`에, 역할과 정책은 `deploy/openbao/roles.sh`와 `deploy/openbao/policies/`에 있다. 이유는 `docs/decisions/0017-openbao-setup.md`, `docs/decisions/0067-openbao-seal-key-on-host-and-tls.md`, `docs/decisions/0069-separate-approles-and-role-sync.md`에 있다.
 
 | 서비스 | 내용 |
 |---|---|
-| `openbao-secrets` | 한 번 실행되고 끝난다. `openbao-secrets` 볼륨에 AppRole secret-id(`worker/secret-id`, `web/secret-id`)를 난수로, OpenBao의 TLS 인증서(`tls/`)와 그 CA(`worker/ca.crt`, `web/ca.crt`)를 만든다. 이미 있는 파일은 그대로 두고, worker의 파일과 그 폴더의 소유자만 매번 `SE_UID`(기본 65532)로 맞춘다. 볼륨에 예전의 봉인 해제 키(`unseal/`)가 남아 있으면 `make openbao-unseal-key`를 실행하라는 메시지로 멈춘다 |
-| `openbao` | 원본을 보관한다. 호스트에 포트를 열지 않고 TLS만 받으며, 내부 네트워크 `bao`의 worker와 applier(쓰기)와 web(원본 보기의 읽기)만 쓴다. 데이터는 `openbao-data` 볼륨에, 봉인 해제 키는 호스트 파일에 있고 compose가 그 파일을 openbao에만 `/run/secrets/openbao-unseal-key`로 넘긴다 |
+| `openbao-secrets` | 한 번 실행되고 끝난다. `openbao-secrets` 볼륨에 AppRole secret-id(`worker/secret-id`, `applier/secret-id`, `web/secret-id`)를 난수로, OpenBao의 TLS 인증서(`tls/`)와 그 CA(`worker/ca.crt`, `applier/ca.crt`, `web/ca.crt`)를 만든다. 이미 있는 파일은 그대로 두고(CA가 없는 역할 폴더에는 `tls/ca.crt`를 복사한다), worker와 applier의 파일과 그 폴더의 소유자만 매번 `SE_UID`(기본 65532)로 맞춘다. 볼륨에 예전의 봉인 해제 키(`unseal/`)가 남아 있으면 `make openbao-unseal-key`를 실행하라는 메시지로 멈춘다 |
+| `openbao` | 원본과 외부화한 값을 보관한다. 호스트에 포트를 열지 않고 TLS만 받으며, 내부 네트워크 `bao`의 worker(원본 보관), applier(외부화한 값 쓰기), web(원본 보기의 읽기), openbao-roles만 쓴다. 데이터는 `openbao-data` 볼륨에, 봉인 해제 키와 관리 역할의 secret-id는 호스트 파일에 있다. compose가 키 파일은 openbao에만, secret-id 파일은 openbao와 openbao-roles에만 넘긴다 |
+| `openbao-roles` | `docker compose up` 때마다 OpenBao가 열린 뒤 한 번 실행되고 끝난다. 관리 역할(`se-admin`)로 로그인해 역할 `worker`, `applier`, `web`과 같은 이름의 정책을 `deploy/openbao/policies/`의 파일대로 쓰고, 각 역할의 secret-id를 볼륨의 파일 하나로 맞춘다. 선언하지 않은 역할과 정책은 지운다(`admin`, `default`, `root` 정책과 `admin` 역할은 남긴다). 끝나면 토큰을 폐기한다. worker와 applier는 이것이 성공한 뒤에 뜬다 |
 | `openbao-test` | `test` 프로필에서만 뜬다. 통합 테스트용 `-dev` 서버이며 `127.0.0.1:18200`에 열린다. 메모리에만 저장하고 루트 토큰은 `dev-only-openbao-test-root-token`이다 |
 
-- 처음 뜰 때 OpenBao가 스스로 초기화(self-init)한다. transit 키 `fingerprint`, KV v2 마운트 `secret`, AppRole `worker`와 `web`, 정책, 표준 출력 audit device를 만든다. 루트 토큰은 초기화가 끝나면 폐기되어 남지 않는다.
+- 처음 뜰 때 OpenBao가 스스로 초기화(self-init)한다. transit 키 `fingerprint`, KV v2 마운트 `secret`, AppRole 인증과 관리 역할 `admin`과 그 정책, 표준 출력 audit device를 만든다. worker, applier, web의 역할은 self-init이 아니라 `openbao-roles`가 만든다. 루트 토큰은 초기화가 끝나면 폐기되어 남지 않는다.
+- 관리 역할은 자기 자신을 뺀 모든 정책과 역할을 쓰고 지울 수 있으므로, 그 secret-id를 가진 사람은 어떤 권한이든 줄 수 있다. 그래서 secret-id는 봉인 해제 키처럼 볼륨 밖의 호스트 파일(`0700` 폴더 안의 `0644` 파일)이고, 백업도 볼륨과 따로 둔다. 파일을 잃으면 정책과 역할을 바꿀 수 없다(이미 있는 역할은 계속 쓸 수 있다).
 - 다시 띄우면 호스트 파일의 키로 봉인이 저절로 풀린다. `docker compose restart openbao` 뒤에도 그대로 쓸 수 있다.
 - 키 파일을 잃으면 `openbao-data`의 값을 읽을 수 없다. 적용을 한 환경에서는 키 파일을 백업한다. 키 파일과 볼륨을 함께 가진 사람은 모든 값을 읽을 수 있으므로 백업도 볼륨과 따로 둔다.
 - 키 파일은 `0700` 폴더 안의 `0644` 파일이다. Linux 호스트에서는 bind mount가 호스트의 소유자와 권한을 그대로 보이므로, 컨테이너의 openbao 사용자(uid 100)가 읽으려면 파일이 모두에게 읽기 가능해야 한다. 호스트의 다른 사용자는 폴더에서 막힌다. `make openbao-unseal-key`는 다른 사용자가 들어갈 수 있는 폴더를 거부한다.
-- web과 worker는 `https://openbao:8200`으로 붙고 `BAO_CA_FILE`의 CA만 믿는다. 컨테이너 안에서 `bao` 명령을 쓸 때는 `-address=https://127.0.0.1:8200 -ca-cert=/openbao/secrets/tls/ca.crt`(또는 `BAO_ADDR`, `BAO_CACERT`)를 준다.
+- web, worker, applier는 `https://openbao:8200`으로 붙고 `BAO_CA_FILE`의 CA만 믿는다. 컨테이너 안에서 `bao` 명령을 쓸 때는 `-address=https://127.0.0.1:8200 -ca-cert=/openbao/secrets/tls/ca.crt`(또는 `BAO_ADDR`, `BAO_CACERT`)를 준다.
 - `seal-static.hcl`의 static 봉인은 개발자 PC 한 대를 위한 것이다. 공유하거나 배포하는 환경에서는 이 파일 대신 키 관리 서비스에 기댄 자동 봉인 해제(transit, 클라우드 KMS, HSM 등)를 쓰고, 그 환경의 CA로 만든 인증서를 같은 경로에 둔다.
 - audit 기록은 `docker compose logs openbao`에 나온다. 요청의 값은 HMAC으로 가려져 있다.
-- `config.hcl`의 `initialize` 블록은 첫 기동 때만 실행된다. 고친 뒤 반영하려면 두 볼륨을 지우고 다시 띄운다. 보관한 원본도 모두 사라진다.
+- 역할의 정책을 바꾸려면 `deploy/openbao/policies/<역할>.hcl`을 고치고 `docker compose up -d`를 다시 실행한다. `openbao-roles`가 새 정책을 쓰고, 이미 발급된 토큰에도 바로 적용된다. 역할을 더하거나 빼려면 `roles.sh`의 `roles`와 정책 파일, compose의 secret-id 마운트, `make-secrets.sh`의 역할 목록을 함께 바꾼다. 볼륨은 지우지 않는다.
+- `config.hcl`의 `initialize` 블록(마운트, transit 키, 관리 역할)은 첫 기동 때만 실행된다. 고친 뒤 반영하려면 두 볼륨을 지우고 다시 띄운다. 보관한 원본도 모두 사라진다.
 
   ```sh
   docker compose rm -sf openbao openbao-secrets
@@ -181,13 +184,32 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
 
 - 호스트 파일과 볼륨의 키가 다르면 아무것도 바꾸지 않고 멈춘다. `openbao-data`를 연 키를 호스트 파일 자리에 두고 다시 실행한다.
 - `openbao-data` 볼륨은 있는데 어디에도 키가 없으면 새 키를 만들지 않고 멈춘다. 새 키로는 그 저장소를 열 수 없다.
-- 적용은 외부화한 값을 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 쓴다. 이미 값이 있으면 저장된 바이트를 다시 읽어 지문을 비교하고, 다를 때만 check-and-set으로 새 버전을 쓴다. 이전 값은 이전 버전에 남는다. worker 정책은 이 경로를 쓰고 읽을 수만 있고 지우거나 메타데이터를 볼 수 없다. KV v2 마운트는 경로마다 버전을 100개 남긴다. 값 하나는 16MiB까지 저장하고, 그보다 큰 값(큰 키 파일)은 `too-large`로 건너뛰어 소스에 남는다. OpenBao는 요청 하나를 32MiB까지 받는다(`docs/decisions/0035-externalized-values-in-openbao.md`).
+- 적용은 외부화한 값을 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 쓴다. 이미 값이 있으면 저장된 바이트를 다시 읽어 지문을 비교하고, 다를 때만 check-and-set으로 새 버전을 쓴다. 이전 값은 이전 버전에 남는다. applier 정책은 이 경로를 쓰고 읽을 수만 있고 지우거나 메타데이터를 볼 수 없다. KV v2 마운트는 경로마다 버전을 100개 남긴다. 값 하나는 16MiB까지 저장하고, 그보다 큰 값(큰 키 파일)은 `too-large`로 건너뛰어 소스에 남는다. OpenBao는 요청 하나를 32MiB까지 받는다(`docs/decisions/0035-externalized-values-in-openbao.md`).
 
-### 정책을 바꾼 뒤(계획 5)
+### 역할을 나누기 전에 만든 저장소
 
-worker 정책에 `secret/data/projects/*`의 `read`가 더해졌고, KV v2 마운트가 경로마다 버전을 100개 남기도록 self-init이 `secret/config`를 쓴다. 계획 5 이전에 만든 볼륨에는 이전 정책과 기본값(10개)이 들어 있으므로, `openbao-data`, `openbao-secrets`를 지우고 다시 띄운 뒤(`docker compose down -v`, 또는 위의 세 명령 뒤에 `docker compose up -d --force-recreate web worker`) 프로젝트를 다시 스캔한다. secret-id가 새로 만들어지므로 web과 worker도 다시 시작해야 한다.
+관리 역할이 생기기 전에 만든 `openbao-data` 볼륨에는 `admin` 역할이 없고 worker와 applier가 함께 쓰던 `worker` 역할이 남아 있다. 이 저장소에서는 `openbao-roles`가 `logging in to OpenBao as se-admin failed`로 끝나고, worker와 applier가 뜨지 않는다. 루트 토큰도 복구 키도 없으므로 그 저장소의 정책을 바꿀 방법이 없고, 한 번은 두 볼륨을 지우고 다시 띄워야 한다. 그 뒤로는 정책을 바꿔도 볼륨을 지우지 않는다.
 
-> **경고:** `down -v`로 볼륨을 지우는 것은 **적용을 한 번도 하지 않은 환경에서만** 안전하다. 적용을 한 번이라도 한 환경에서는 `openbao-data` 볼륨에, git이 추적하지 않는 파일(키 파일, 무시된 설정 파일)에서 빼낸 값의 유일한 사본이 있을 수 있다. 그 파일은 적용이 지웠거나 자리표시자로 바꾸었으므로, 볼륨을 지우면 값이 영영 사라진다. 그런 환경에서 정책을 바꾸는 방법은 아직 없다(`docs/next-steps.md`).
+1. 되돌릴 수 있게 두 볼륨을 묶어 둔다. 되돌리려면 같은 이름의 볼륨에 풀고, 이전 compose(`git show <이전 커밋>:compose.yaml`)로 띄운다.
+
+   ```sh
+   docker compose stop web worker applier openbao
+   for v in openbao-data openbao-secrets; do
+     docker run --rm --network none -v secret-externalizer_$v:/v:ro -v "$PWD":/b alpine tar -C /v -czf /b/$v.tgz .
+   done
+   ```
+
+2. 외부화한 값이 필요하면 지우기 전에 읽어 둔다. 이전 `worker` 역할은 `secret/data/projects/*`를 읽을 수 있다. 경로는 각 프로젝트의 `secrets-manifest.yml`의 `store`에 있다. 위의 "저장된 값을 확인하기"의 명령에서 역할을 `se-worker`, 파일을 `/openbao/secrets/worker/secret-id`로 바꿔 쓴다.
+3. 두 볼륨을 지우고, 호스트 파일을 만든 뒤 다시 띄운다. 프로젝트는 다시 스캔한다.
+
+   ```sh
+   docker compose rm -sf openbao openbao-secrets
+   docker volume rm secret-externalizer_openbao-data secret-externalizer_openbao-secrets
+   make openbao-host-files
+   docker compose up -d --build
+   ```
+
+> **경고:** 적용을 한 번이라도 한 환경에서는 `openbao-data` 볼륨에, git이 추적하지 않는 파일(키 파일, 무시된 설정 파일)에서 빼낸 값의 유일한 사본이 있을 수 있다. 2번에서 읽어 두지 않으면 그 값은 지운 뒤 다시 얻을 수 없다.
 
 ## valkey
 
@@ -285,7 +307,7 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 | `OIDC_CLIENT_SECRET` | 예 | 로그와 오류 메시지에 남지 않는다 |
 | `BAO_ADDR` | 예 | OpenBao 주소. `http://` 또는 `https://`로 시작하고 경로가 없어야 한다. compose에서는 `https://openbao:8200`. `http://`이면 시작할 때 `openbao connection is not encrypted` 경고를 남긴다. web은 기동할 때 OpenBao에 닿지 않아도 되고, 원본 보기를 누를 때만 연결한다 |
 | `BAO_CA_FILE` | 아니요 | OpenBao의 인증서가 이어져야 하는 CA 인증서(PEM) 파일. 주면 `BAO_ADDR`가 `https://`여야 하고 이 CA만 믿는다. 주지 않은 `https://` 주소는 시스템의 루트 인증서로 확인한다. compose에서는 `/run/secrets/openbao/ca.crt` |
-| `BAO_ROLE_ID` | 예 | AppRole role-id. compose에서는 `se-web`. 이 역할의 정책은 `secret/data/pending/*` 읽기만 허용한다 |
+| `BAO_ROLE_ID` | 예 | AppRole role-id. compose에서는 `se-web`. 이 역할의 정책(`deploy/openbao/policies/web.hcl`)은 `secret/data/pending/*`와 `secret/data/projects/*`의 읽기만 허용한다 |
 | `BAO_SECRET_ID_FILE` | 예 | AppRole secret-id가 든 파일. 앞뒤 공백은 뗀다. compose에서는 `openbao-secrets` 볼륨의 `web` 폴더만 `/run/secrets/openbao`에 읽기 전용으로 마운트하고 `/run/secrets/openbao/secret-id`를 쓴다. secret-id는 로그와 오류 메시지에 남지 않는다 |
 
 ## worker 환경 변수
@@ -300,8 +322,8 @@ worker와 applier는 같은 실행 파일이고 `WORKER_JOBS`로 나뉜다. "스
 | `APPLY_WORKSPACE_ROOT` | `apply`에서 예 | 적용이 파일을 바꾸는 작업 공간 루트. `WORKSPACE_ROOT`와 같은 폴더를 읽기-쓰기로 마운트한 경로다. 절대 경로이고 폴더여야 한다. `all`에서 비우면 적용의 모든 점검이 `workspace-read-only`로 막히고, `scan`에서는 주면 안 된다. compose에서는 applier의 `/workspace-rw` |
 | `BAO_ADDR` | 예 | OpenBao 주소. `http://` 또는 `https://`로 시작하고 경로가 없어야 한다. compose에서는 `https://openbao:8200`. `http://`이면 시작할 때 `openbao connection is not encrypted` 경고를 남긴다 |
 | `BAO_CA_FILE` | 아니요 | OpenBao의 인증서가 이어져야 하는 CA 인증서(PEM) 파일. 주면 `BAO_ADDR`가 `https://`여야 하고 이 CA만 믿는다. 주지 않은 `https://` 주소는 시스템의 루트 인증서로 확인한다. compose에서는 `/run/secrets/openbao/ca.crt` |
-| `BAO_ROLE_ID` | 예 | AppRole role-id. compose에서는 `se-worker` |
-| `BAO_SECRET_ID_FILE` | 예 | AppRole secret-id가 든 파일. 앞뒤 공백은 뗀다. compose에서는 `openbao-secrets` 볼륨의 `worker` 폴더만 `/run/secrets/openbao`에 읽기 전용으로 마운트하고 `/run/secrets/openbao/secret-id`를 쓴다. secret-id는 로그와 오류 메시지에 남지 않는다 |
+| `BAO_ROLE_ID` | 예 | AppRole role-id. compose에서는 worker가 `se-worker`, applier가 `se-applier`. 각 정책은 `deploy/openbao/policies/`에 있다. `all`로 띄운 worker 하나에는 두 정책의 권한이 모두 필요하다 |
+| `BAO_SECRET_ID_FILE` | 예 | AppRole secret-id가 든 파일. 앞뒤 공백은 뗀다. compose에서는 `openbao-secrets` 볼륨의 자기 폴더(worker는 `worker`, applier는 `applier`)만 `/run/secrets/openbao`에 읽기 전용으로 마운트하고 `/run/secrets/openbao/secret-id`를 쓴다. secret-id는 로그와 오류 메시지에 남지 않는다 |
 | `BETTERLEAKS_BIN` | 스캔 | betterleaks 실행 파일의 절대 경로. compose에서는 `/usr/local/bin/betterleaks` |
 | `OPENGREP_BIN` | 스캔 | opengrep 실행 파일의 절대 경로. compose에서는 `/usr/local/bin/opengrep` |
 | `RULES_DIR` | 스캔 | 탐지 규칙 폴더의 절대 경로. `betterleaks.toml` 파일과 `opengrep` 폴더가 있어야 한다. compose에서는 `/rules` |

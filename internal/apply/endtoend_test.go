@@ -196,7 +196,7 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 	blBin := realScanner(t, "BETTERLEAKS_BIN", "betterleaks")
 	ogBin := realScanner(t, "OPENGREP_BIN", "opengrep")
 	store, admin, schema := realStore(t)
-	vault, root := realVault(t)
+	worker, vault, root := realVault(t)
 	ctx := t.Context()
 	f := newShop(t, inRepository)
 
@@ -210,7 +210,7 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 	}
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 	logger := slog.New(slog.NewJSONHandler(&f.logs, nil))
-	scanner := scan.NewRunner(logger, store, vault, vault, []scan.Scanner{
+	scanner := scan.NewRunner(logger, store, worker, worker, []scan.Scanner{
 		betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env),
 		opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env),
 		keyfile.New(),
@@ -232,12 +232,12 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 				t.Errorf("deleting the stored value %s: %v", key, err)
 			}
 		}
-		pending, err := vault.ListPending(cctx, int64(projectID))
+		pending, err := worker.ListPending(cctx, int64(projectID))
 		if err != nil {
 			t.Errorf("ListPending() error = %v", err)
 		}
 		for _, fp := range pending {
-			if err := vault.DeletePending(cctx, int64(projectID), fp); err != nil {
+			if err := worker.DeletePending(cctx, int64(projectID), fp); err != nil {
 				t.Errorf("DeletePending() error = %v", err)
 			}
 		}
