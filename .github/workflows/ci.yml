@@ -30,12 +30,17 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
-    env:
-      # compose reads these even for the services this job does not start.
-      SE_WORKSPACE: ${{ runner.temp }}/workspace
-      OPENBAO_UNSEAL_KEY_FILE: ${{ runner.temp }}/unused-unseal.key
-      OPENBAO_ADMIN_SECRET_ID_FILE: ${{ runner.temp }}/unused-admin.secret-id
     steps:
+      # compose reads these even for the services this job does not start.
+      - name: Point compose at empty host files
+        run: |
+          mkdir -p "$RUNNER_TEMP/workspace"
+          touch "$RUNNER_TEMP/unused-unseal.key" "$RUNNER_TEMP/unused-admin.secret-id"
+          {
+            echo "SE_WORKSPACE=$RUNNER_TEMP/workspace"
+            echo "OPENBAO_UNSEAL_KEY_FILE=$RUNNER_TEMP/unused-unseal.key"
+            echo "OPENBAO_ADMIN_SECRET_ID_FILE=$RUNNER_TEMP/unused-admin.secret-id"
+          } >> "$GITHUB_ENV"
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
         with:
@@ -47,8 +52,6 @@ jobs:
       - run: make scanners
       - name: Start the test services
         run: |
-          mkdir -p "$SE_WORKSPACE"
-          touch "$OPENBAO_UNSEAL_KEY_FILE" "$OPENBAO_ADMIN_SECRET_ID_FILE"
           docker compose up -d --wait postgres
           docker compose --profile test up -d --wait valkey-test openbao-test pdf-test
       - name: Run the integration tests
