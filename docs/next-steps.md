@@ -15,7 +15,7 @@
 
 ## 다음 계획
 
-설계 문서: `docs/superpowers/specs/2026-11-18-secret-externalizer-design.md`
+설계 문서: `docs/design/secret-externalizer.md`
 
 | 번호 | 계획 | 상태 |
 |---|---|---|
