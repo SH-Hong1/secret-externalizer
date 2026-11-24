@@ -9,6 +9,7 @@
 - 항목을 "프로젝트, 지문, 파일 경로"가 아니라 "프로젝트, 지문, 파일 경로, 설정 키"로 식별한다. 한 파일에서 같은 값이 서로 다른 설정 키에 있으면(`local.db.password`, `dev.db.password`, `live.db.password`) 키마다 항목이 따로 생기고, 값이 고유한 종류의 새 항목은 같은 파일의 다른 키 항목이 든 `shared`, `frontend` 묶음에 들어가지 않고 자기만의 묶음으로 시작해 추천 이름도 따로 나온다. 키가 같거나 읽지 못한 자리는 전과 같이 파일마다 항목 하나다. 이 변경 전에 저장된 항목은 한 파일의 그 지문에 키 없는 항목이 하나뿐이면 첫 키를 읽은 자리가 이어 쓴다(`docs/decisions/0053-finding-key.md`)
 - 판정 화면의 구성원 줄과 옮기기 양식의 대상 목록에 설정 키를 보인다. 추천 이름은 저장된 키를 먼저 쓴다
 - 오탐으로 확정된 값의 임시 원본을 정리할 때, 마지막 성공한 스캔이 구성원을 찾은 묶음만 센다. 판정 화면에 보이지 않는 미판정 묶음(값이 지워진 JSP의 묶음, 키를 읽지 못한 스캔이 만든 키 없는 묶음) 때문에 보이는 묶음을 모두 오탐으로 판정해도 원본이 OpenBao에 남던 것을 고쳤다(`docs/decisions/0054-settled-counts-only-bundles-on-screen.md`)
+- 스캔 결과를 저장하는 동안 그 프로젝트의 판정과 항목 옮기기는 저장이 끝나기를 기다리고, 저장은 진행 중인 판정과 옮기기를 기다린다. 옮기기가 스캔 결과 저장과 겹치면 스캔이 교착 상태나 외래 키 오류로 실패하던 것을 고쳤다. 위치는 항목을 모두 저장한 뒤 1000개씩 묶어 넣는다(`docs/decisions/0056-scan-save-holds-the-project-lock.md`)
 
 - 적용 화면에서 점검한 뒤의 조건 이름을 "적용할 판정이 있음"에서 "적용할 수 있는 항목이 있음"으로 바꿨다. 점검 전의 조건(데이터베이스가 아는 것)과 같은 이름으로 통과였다가 실패로 바뀌던 것을 나눴다(`docs/decisions/0055-screens-say-what-they-know.md`)
 - admin이 보는 판정 화면 상세에서 원본이 없고 적용되지 않은 묶음은 판정과 상관없이 이유를 보인다. 오탐은 "오탐으로 판정한 값은 원본을 보관하지 않습니다. 판정을 바꾸고 다시 스캔하면 보관됩니다.", 그 밖에는 "보관된 원본이 없습니다. 다시 스캔하면 보관됩니다."다. 전에는 미판정 묶음에만 안내가 보였다
@@ -20,6 +21,7 @@
 - 스캔이 설정 키를 파일 원문에서 읽는 `internal/scan`의 `configKey`. 값이나 그 일부가 키에 들어가지 않도록 가려지는 범위와 겹치면 비운다. URL 안의 값은 어느 스캐너가 먼저 보고했든 URL이 대입된 키를 받고(`dev.jdbc.url`, `live.jdbc.url`의 같은 비밀번호는 항목 둘), URL의 계정 이름이나 매개변수 이름은 키가 되지 않는다. XML의 bean `id`는 값의 자리에서 열려 있는 가장 가까운 bean에서 읽고, 앞에서 닫힌 bean과 자기 닫힘 bean은 건너뛴다
 - 사례 `rule-cases/conf/multi-env.properties`(한 파일 여러 환경)와 그 기대 결과. 실제 스캐너로 스캔한 `TestHandle_RealScannersKeysOfOneFile`(`internal/scan`)이 이 파일의 계정 셋과 비밀번호 셋이 키 여섯 개의 항목 여섯 개인지 확인한다. 통합 테스트는 한 값이 한 파일의 여러 키에 있는 자리(예제에서 두 파일의 JDBC URL 포트)를 확인한다
 - 결정 기록 0053 (설정 키로 항목을 나눈다)
+- 결정 기록 0056 (스캔 결과 저장은 프로젝트 잠금을 잡는다)
 - 규칙 `maven-settings-server-username`(`settings.xml`의 `<server>` 안 `<username>`, 계정), `shell-sshpass-env-password`(`sshpass -e`가 읽는 `SSHPASS=` 값), `yaml-block-password`(`password: >`, `password: |` 아래 한 줄짜리 블록 스칼라)
 - 규칙 사례 예제 `internal/ruleset/testdata/rule-cases`와 그 기대 결과 `rule-cases.json`. 규칙이 찾아야 하는 모양과 건드리지 말아야 하는 모양을 하나씩 둔다. `TestRules_ExpectedFindings`가 `legacy-shop`과 함께 스캔한다
 - 결정 기록 0052 (스캔 규칙의 알려진 누락과 오탐 가운데 고친 것)

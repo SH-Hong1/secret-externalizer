@@ -36,10 +36,13 @@ var ErrScanFollowed = errors.New("a scan followed the check")
 // UPDATE; inserting a scan takes FOR KEY SHARE through the foreign key, and
 // Decide and MoveFinding take FOR SHARE. Each then checks, in a statement
 // that starts after the lock is granted, for what would exclude it, so it
-// sees whatever the transaction it waited for committed.
+// sees whatever the transaction it waited for committed. SaveResult holds it
+// FOR NO KEY UPDATE, which keeps Decide and MoveFinding out while a scan's
+// findings are stored and lets a scan be requested.
 
 // lockProject locks the project's row in tx with the given clause, "FOR
-// UPDATE" or "FOR SHARE". It returns ErrNotFound when there is no project.
+// UPDATE", "FOR NO KEY UPDATE" or "FOR SHARE". It returns ErrNotFound when
+// there is no project.
 func lockProject(ctx context.Context, tx pgx.Tx, projectID project.ID, clause string) error {
 	var one int
 	err := tx.QueryRow(ctx, "SELECT 1 FROM project WHERE id = $1 "+clause, projectID).Scan(&one)

@@ -1362,3 +1362,43 @@ func TestSameValueBundles_ReadsKeyOfFirstMember(t *testing.T) {
 		t.Errorf("SameValueBundles(%d, %d, %d) (-want +got):\n%s", pid, sid, dev, diff)
 	}
 }
+
+// A move that empties the shared bundle of a value deletes it. A scan that
+// stores a new finding of that value meanwhile waits for the move and then
+// starts a new shared bundle, instead of joining the one being deleted.
+func TestSaveResult_WaitsForMove(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, password("conf/a.yml"))
+	shared := bundleOf(t, s, pid, fpA, "conf/a.yml")
+	id, j := claimedScan(t, s, pid)
+
+	held, err := s.LockProject(ctx, pid, "FOR SHARE")
+	if err != nil {
+		t.Fatalf("LockProject(%d) error = %v", pid, err)
+	}
+	if err := held.Exec(ctx, `
+		WITH own AS (
+			INSERT INTO bundle (project_id, fingerprint, origin) VALUES ($1, $2, 'own') RETURNING id
+		)
+		UPDATE finding SET bundle_id = (SELECT id FROM own) WHERE bundle_id = $3`, pid, fpA, shared); err != nil {
+		t.Fatalf("moving the finding out of bundle %d error = %v", shared, err)
+	}
+	if err := held.Exec(ctx, "DELETE FROM bundle WHERE id = $1", shared); err != nil {
+		t.Fatalf("deleting bundle %d error = %v", shared, err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		done <- s.SaveResult(ctx, j.ID, "worker-a", id, result(password("conf/b.xml")))
+	}()
+	releaseWhenBlocked(t, s, held, done)
+	if err := <-done; err != nil {
+		t.Fatalf("SaveResult(scan %d) behind a move error = %v, want nil", id, err)
+	}
+	got := bundleOf(t, s, pid, fpA, "conf/b.xml")
+	if got == shared || got == bundleOf(t, s, pid, fpA, "conf/a.yml") {
+		t.Errorf("bundle of b.xml after the move = %d, want a new shared bundle", got)
+	}
+}
