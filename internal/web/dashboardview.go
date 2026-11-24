@@ -203,6 +203,9 @@ func newDashboardRow(r dashboard.Row, current project.ID, p dashboard.Period) da
 	}
 	if r.Last.ID != 0 {
 		row.Last = formatTime(r.Last.RequestedAt)
+		if !r.Last.FinishedAt.IsZero() {
+			row.Last = formatTime(r.Last.FinishedAt)
+		}
 		row.Status, row.StatusLabel = string(r.Last.Status), statusLabel(r.Last.Status)
 	}
 	if !r.Scanned {
