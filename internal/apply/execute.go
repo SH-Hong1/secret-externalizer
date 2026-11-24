@@ -630,7 +630,7 @@ func finalItems(p *prepared) []Item {
 }
 
 // dropSettled deletes the pending originals of the values the project
-// judged false positives everywhere. A failure is logged once and changes
+// judged false positives in every bundle on the triage screen. A failure is logged once and changes
 // nothing about the run.
 func (r *Runner) dropSettled(ctx context.Context, j job.Job, p *prepared) {
 	fps, err := r.store.SettledFingerprints(ctx, p.in.Project.ID)

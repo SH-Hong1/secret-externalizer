@@ -338,8 +338,9 @@ func (r *Runner) fingerprint(ctx context.Context, placed []*placedFile) (map[str
 	return out, nil
 }
 
-// settled returns the fingerprints of the project whose bundles are all
-// judged false positives, as a set. Their originals are not kept. A failure
+// settled returns the fingerprints of the project whose bundles on the
+// triage screen are all judged false positives, as a set. Their originals
+// are not kept. A failure
 // to read them is logged and gives none, so the scan keeps every original
 // as it would without verdicts.
 func (r *Runner) settled(ctx context.Context, id ID, projectID project.ID) map[string]bool {
