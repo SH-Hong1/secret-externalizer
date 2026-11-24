@@ -19,18 +19,20 @@ import (
 
 // The reasons a verdict or a move is refused, shown above the detail.
 const (
-	msgUnknownVerdict = "알 수 없는 판정입니다."
-	msgPressButton    = "판정 버튼을 눌러 주세요."
-	msgHoldReason     = "보류 사유를 골라 주세요."
-	msgName           = "이름은 점으로 나눈 소문자 낱말 두 개에서 다섯 개로 쓰고, ext로 시작하지 않게 입력해 주세요."
-	msgNote           = "메모는 500자 이하로, 줄바꿈 없이 입력해 주세요."
-	msgNotAllowed     = "이 항목에는 고를 수 없는 판정입니다."
-	msgDuplicate      = "이미 쓰는 이름입니다. 다른 이름을 입력해 주세요."
-	msgMoveTarget     = "옮길 묶음을 알 수 없습니다."
-	msgMoveNotAllowed = "이 묶음으로 옮길 수 없습니다."
-	msgApplyActive    = "적용 중에는 판정을 바꿀 수 없습니다. 점검이나 적용이 끝난 뒤 다시 해 주세요."
-	msgAppliedFixed   = "적용한 묶음은 판정과 이름을 바꿀 수 없습니다. 소스에 이 이름의 placeholder가 들어가 있습니다. 메모만 고칠 수 있습니다."
-	msgAppliedMove    = "이 항목은 그 묶음으로 옮길 수 없습니다. 적용한 위치의 항목과 적용한 묶음의 마지막 항목은 옮길 수 없고, 옮겨 갈 묶음은 같은 값이며 그 판정이 이 항목을 받아들여야 합니다."
+	msgUnknownVerdict  = "알 수 없는 판정입니다."
+	msgPressButton     = "판정 버튼을 눌러 주세요."
+	msgHoldReason      = "보류 사유를 골라 주세요."
+	msgName            = "이름은 점으로 나눈 소문자 낱말 두 개에서 다섯 개로 쓰고, ext로 시작하지 않게 입력해 주세요."
+	msgNote            = "메모는 500자 이하로, 줄바꿈 없이 입력해 주세요."
+	msgNotAllowed      = "이 항목에는 고를 수 없는 판정입니다."
+	msgDuplicate       = "이미 쓰는 이름입니다. 다른 이름을 입력해 주세요."
+	msgMoveTarget      = "옮길 묶음을 알 수 없습니다."
+	msgMoveNotAllowed  = "이 묶음으로 옮길 수 없습니다."
+	msgMergeNotAllowed = "이 묶음을 그 묶음으로 합칠 수 없습니다. 합칠 묶음은 같은 값이어야 하고, 그 판정이 이 묶음의 모든 항목을 받아들여야 합니다."
+	msgApplyActive     = "적용 중에는 판정을 바꿀 수 없습니다. 점검이나 적용이 끝난 뒤 다시 해 주세요."
+	msgAppliedFixed    = "적용한 묶음은 판정과 이름을 바꿀 수 없습니다. 소스에 이 이름의 placeholder가 들어가 있습니다. 메모만 고칠 수 있습니다."
+	msgAppliedMerge    = "이 묶음을 그 묶음으로 합칠 수 없습니다. 적용한 위치가 있는 항목과 적용한 묶음은 합칠 수 없고, 합칠 묶음은 같은 값이며 그 판정이 모든 항목을 받아들여야 합니다."
+	msgAppliedMove     = "이 항목은 그 묶음으로 옮길 수 없습니다. 적용한 위치의 항목과 적용한 묶음의 마지막 항목은 옮길 수 없고, 옮겨 갈 묶음은 같은 값이며 그 판정이 이 항목을 받아들여야 합니다."
 )
 
 // refusal is how the triage screen answers a refused verdict or move: the
@@ -483,6 +485,49 @@ func handleMove(tw triageWriter) http.Handler {
 		if from != 0 && tw.remains(r, pid, from) {
 			q.Sel = bundleSel(from)
 		}
+		back(w, r, pid, q)
+	})
+}
+
+// handleMerge moves every finding of a bundle to another bundle of the same
+// value, and sends the browser back to the triage screen with the bundle
+// they went to selected. The store moves all of them or none.
+func handleMerge(tw triageWriter) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		n, ok1 := pathID(r, "id")
+		b, ok2 := pathID(r, "bundle")
+		if !ok1 || !ok2 {
+			tw.rd.fail(w, r, tw.logger, http.StatusNotFound, errors.New("project or bundle id is not a number"))
+			return
+		}
+		pid, from := project.ID(n), triage.BundleID(b)
+		q, err := readForm(w, r)
+		if err != nil {
+			tw.rd.fail(w, r, tw.logger, http.StatusBadRequest, err)
+			return
+		}
+		sel := bundleSel(from)
+		to, err := strconv.ParseInt(r.PostFormValue("to"), 10, 64)
+		if err != nil || to < 1 {
+			tw.reject(w, r, pid, q, sel, verdictInput{}, msgMoveTarget)
+			return
+		}
+		err = tw.store.MergeBundle(r.Context(), pid, from, triage.BundleID(to), actorOf(r))
+		switch {
+		case errors.Is(err, db.ErrApplyActive):
+			tw.refuse(w, r, pid, q, sel, verdictInput{}, applyActive(pid))
+			return
+		case errors.Is(err, triage.ErrNotAllowed):
+			tw.refuse(w, r, pid, q, sel, verdictInput{}, refusal{status: http.StatusBadRequest, msg: msgMergeNotAllowed, applied: msgAppliedMerge})
+			return
+		case errors.Is(err, db.ErrNotFound):
+			tw.rd.fail(w, r, tw.logger, http.StatusNotFound, err)
+			return
+		case err != nil:
+			tw.rd.fail(w, r, tw.logger, http.StatusInternalServerError, fmt.Errorf("merging bundle: %w", err))
+			return
+		}
+		q.Sel = bundleSel(triage.BundleID(to))
 		back(w, r, pid, q)
 	})
 }

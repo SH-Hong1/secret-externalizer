@@ -258,7 +258,19 @@ func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id findin
 	if err := refuseActiveApply(ctx, tx, projectID); err != nil {
 		return 0, fmt.Errorf("moving finding %d: %w", id, err)
 	}
+	dest, err := moveFinding(ctx, tx, projectID, id, to, by)
+	if err != nil {
+		return 0, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return 0, fmt.Errorf("committing move: %w", err)
+	}
+	return dest, nil
+}
 
+// moveFinding is MoveFinding in the transaction tx, which holds the project
+// lock and has checked that no apply is active, and which the caller commits.
+func moveFinding(ctx context.Context, tx pgx.Tx, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (_ triage.BundleID, err error) {
 	var (
 		from     triage.BundleID
 		moving   triage.Member
@@ -354,10 +366,57 @@ func (s *Store) MoveFinding(ctx context.Context, projectID project.ID, id findin
 	}); err != nil {
 		return 0, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return 0, fmt.Errorf("committing move: %w", err)
-	}
 	return to, nil
+}
+
+// MergeBundle moves every finding of the bundle from to the bundle to, in
+// one transaction, so that the two become one bundle that follows the
+// decision of to. The bundle from is deleted, which frees its name. Each
+// move is recorded in the audit trail, as MoveFinding records it, and each
+// is held to the rules of MoveFinding. Merging a bundle into itself changes
+// nothing.
+//
+// It returns ErrNotFound when the project has no such bundle, and
+// triage.ErrNotAllowed, changing nothing, when any of the moves is refused.
+// Nothing moves while the project has an apply that is being checked, is
+// queued or runs (ErrApplyActive).
+func (s *Store) MergeBundle(ctx context.Context, projectID project.ID, from, to triage.BundleID, by audit.Actor) (err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer rollback(ctx, tx, &err)
+
+	if err := lockProject(ctx, tx, projectID, "FOR SHARE"); err != nil {
+		return err
+	}
+	if err := refuseActiveApply(ctx, tx, projectID); err != nil {
+		return fmt.Errorf("merging bundle %d: %w", from, err)
+	}
+	rows, err := tx.Query(ctx,
+		"SELECT id FROM finding WHERE project_id = $1 AND bundle_id = $2 ORDER BY id", projectID, from)
+	if err != nil {
+		return fmt.Errorf("listing findings of bundle %d: %w", from, err)
+	}
+	ids, err := pgx.CollectRows(rows, pgx.RowTo[finding.ID])
+	if err != nil {
+		return fmt.Errorf("listing findings of bundle %d: %w", from, err)
+	}
+	if len(ids) == 0 {
+		return fmt.Errorf("merging bundle %d: %w", from, ErrNotFound)
+	}
+	if from == to {
+		return nil
+	}
+	for _, id := range ids {
+		if _, err := moveFinding(ctx, tx, projectID, id, to, by); err != nil {
+			return fmt.Errorf("merging bundle %d into %d: %w", from, to, err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing merge: %w", err)
+	}
+	return nil
 }
 
 // UsedNames returns the names the project's bundles have, in order.

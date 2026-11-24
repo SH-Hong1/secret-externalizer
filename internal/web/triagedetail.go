@@ -92,6 +92,7 @@ type bundleDetail struct {
 	Original      *originalView
 	Applied       *appliedInfo
 	From          string
+	MergeAction   string
 	Targets       []moveTarget
 	KindLabel     string
 	CategoryLabel string
@@ -261,6 +262,7 @@ func newBundleDetail(id project.ID, ret string, b triage.Bundle, s triage.Sugges
 		d.Frontend = d.Frontend || triage.Frontend(m.File)
 	}
 	pid := strconv.FormatInt(int64(id), 10)
+	d.MergeAction = "/projects/" + pid + "/bundles/" + d.From + "/merge"
 	for i, m := range b.Members {
 		mv := memberView{
 			MoveAction: "/projects/" + pid + "/findings/" + strconv.FormatInt(int64(m.FindingID), 10) + "/move",

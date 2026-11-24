@@ -52,6 +52,8 @@ func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets,
 	mux.Handle("/projects/{id}/bundles/{bundle}/verdict", handlePostOnly(logger, rd))
 	mux.Handle("POST /projects/{id}/customer-data/verdict", usesStore(handleCustomerDataVerdict(tw)))
 	mux.Handle("/projects/{id}/customer-data/verdict", handlePostOnly(logger, rd))
+	mux.Handle("POST /projects/{id}/bundles/{bundle}/merge", usesStore(handleMerge(tw)))
+	mux.Handle("/projects/{id}/bundles/{bundle}/merge", handlePostOnly(logger, rd))
 	mux.Handle("POST /projects/{id}/findings/{finding}/move", usesStore(handleMove(tw)))
 	mux.Handle("/projects/{id}/findings/{finding}/move", handlePostOnly(logger, rd))
 	aw := applyWriter{logger: logger, rd: rd, projects: projects, store: stores.Applies}

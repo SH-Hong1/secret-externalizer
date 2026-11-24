@@ -86,7 +86,8 @@ type ScanStore interface {
 // db.ErrDuplicate when it stores nothing because of the decision, MoveFinding
 // with one matching triage.ErrNotAllowed when the finding may not move there,
 // and both with one matching db.ErrNotFound when something they name is
-// unknown and db.ErrApplyActive while an apply of the project is active.
+// unknown. MergeBundle moves all findings of a bundle to another bundle, and
+// fails like MoveFinding when any of them may not move there, moving none and db.ErrApplyActive while an apply of the project is active.
 type TriageStore interface {
 	LatestScan(ctx context.Context, projectID project.ID) (scan.Scan, error)
 	Entries(ctx context.Context, projectID project.ID, scanID scan.ID, f triage.Filter) (triage.Page, error)
@@ -99,6 +100,7 @@ type TriageStore interface {
 	ApplyActive(ctx context.Context, projectID project.ID) (bool, error)
 	Decide(ctx context.Context, projectID project.ID, ids []triage.BundleID, d triage.Decision, by audit.Actor) error
 	MoveFinding(ctx context.Context, projectID project.ID, id finding.ID, to triage.BundleID, by audit.Actor) (triage.BundleID, error)
+	MergeBundle(ctx context.Context, projectID project.ID, from, to triage.BundleID, by audit.Actor) error
 }
 
 // Suggester proposes a verdict and a name for a bundle that has no verdict.
