@@ -1,33 +1,34 @@
 # OpenBao server for local development. It holds the original values that
-# scans find, so it publishes no port on the host; only containers on the
-# compose network reach it.
+# scans find, so it publishes no port on the host; only web and the worker
+# reach it, on the internal compose network "bao".
 #
-# The static seal and the self-initialisation below let one `compose up`
-# produce an initialised, unsealed server that leaves no root token behind.
-# The unseal key and the AppRole secret-ids are random files that the
-# openbao-secrets container writes into the openbao-secrets volume; nothing
-# secret is in this file. The unseal key lives in a volume next to the data,
-# so this setup is for a single local machine only.
+# The seal is in a file of its own, seal-static.hcl, which the server reads
+# with this one. An environment that holds real values replaces that file
+# with an auto-unseal seal backed by a key service, and keeps this file.
+#
+# The seal and the self-initialisation below let one `compose up` produce an
+# initialised, unsealed server that leaves no root token behind. The AppRole
+# secret-ids and the TLS certificate are files that the openbao-secrets
+# container writes into the openbao-secrets volume; nothing secret is in
+# this file.
 
 ui            = false
 disable_mlock = true
-api_addr      = "http://openbao:8200"
+api_addr      = "https://openbao:8200"
 log_level     = "info"
 
 storage "pebbledb" {
   path = "/openbao/file"
 }
 
-seal "static" {
-  current_key_id = "local-1"
-  current_key    = "file:///openbao/secrets/unseal/key"
-}
-
-# Traffic stays on the compose network, which is not reachable from outside
-# the machine.
+# Only TLS is answered. The certificate is for the name openbao and for
+# 127.0.0.1, and is signed by a CA whose certificate web and the worker
+# trust; see deploy/openbao/make-secrets.sh.
 listener "tcp" {
-  address     = "0.0.0.0:8200"
-  tls_disable = true
+  address         = "0.0.0.0:8200"
+  tls_cert_file   = "/openbao/secrets/tls/tls.crt"
+  tls_key_file    = "/openbao/secrets/tls/tls.key"
+  tls_min_version = "tls12"
 }
 
 # Every request and response is written to standard output, where

@@ -1,18 +1,17 @@
 package main
 
 import (
-	"crypto/x509"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
+	"github.com/SH-Hong1/secret-externalizer/internal/cafile"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
@@ -34,19 +33,25 @@ type config struct {
 	dsn      db.DSN
 	oidc     auth.Config
 	baoAddr  string
+	// baoTLS is whether baoAddr is an https address.
+	baoTLS bool
+	// baoCA holds the PEM certificates that OpenBao's certificate must
+	// chain to. Nil means the system's roots, or no TLS when baoTLS is
+	// false.
+	baoCA    []byte
 	baoCreds bao.Credentials
 	pdfURL   string
 }
 
 // String returns every setting with the client secret, the database URL,
-// the secret-id and the valkey password redacted. Of valkey's CA it says
-// only whether one is set.
+// the secret-id and the valkey password redacted. Of the CAs it says only
+// whether each connection uses TLS.
 func (c config) String() string {
 	// c.dsn, c.oidc, the secret-id and the password are passed as arguments
 	// of their own, so fmt calls the Format methods of db.DSN, of the
 	// ClientSecret field, of bao.SecretID and of session.Password.
-	return fmt.Sprintf("{addr:%s valkey_addr:%s valkey_username:%s valkey_password:%v valkey_tls:%t database_url:%v oidc:%+v bao_addr:%s bao_role_id:%s bao_secret_id:%v pdf_url:%s}",
-		c.addr, c.valkeyAddr, c.valkeyUser, c.valkeyPassword, c.valkeyCA != nil, c.dsn, c.oidc, c.baoAddr, c.baoCreds.RoleID, c.baoCreds.SecretID, c.pdfURL)
+	return fmt.Sprintf("{addr:%s valkey_addr:%s valkey_username:%s valkey_password:%v valkey_tls:%t database_url:%v oidc:%+v bao_addr:%s bao_tls:%t bao_role_id:%s bao_secret_id:%v pdf_url:%s}",
+		c.addr, c.valkeyAddr, c.valkeyUser, c.valkeyPassword, c.valkeyCA != nil, c.dsn, c.oidc, c.baoAddr, c.baoTLS, c.baoCreds.RoleID, c.baoCreds.SecretID, c.pdfURL)
 }
 
 // Format prints the form String returns for every fmt verb, including %#v,
@@ -67,6 +72,7 @@ func (c config) LogValue() slog.Value {
 		slog.Any("database_url", c.dsn),
 		slog.Any("oidc", c.oidc),
 		slog.String("bao_addr", c.baoAddr),
+		slog.Bool("bao_tls", c.baoTLS),
 		slog.String("bao_role_id", c.baoCreds.RoleID),
 		slog.Any("bao_secret_id", c.baoCreds.SecretID),
 		slog.String("pdf_url", c.pdfURL),
@@ -84,6 +90,10 @@ func (c config) LogValue() slog.Value {
 // VALKEY_CA_FILE is optional. When it is set, web reaches valkey over TLS
 // and trusts only the certificates in that file; when it is not, the
 // connection is not encrypted.
+//
+// BAO_CA_FILE is optional too. When it is set, BAO_ADDR must be an https
+// address and web trusts only the certificates in that file for OpenBao;
+// when it is not, an https address is checked against the system's roots.
 func loadConfig(_ []string, getenv func(string) string) (config, error) {
 	var missing []string
 	required := func(name string) string {
@@ -118,16 +128,20 @@ func loadConfig(_ []string, getenv func(string) string) (config, error) {
 	}
 	var valkeyCA []byte
 	if path := getenv("VALKEY_CA_FILE"); path != "" {
-		valkeyCA, err = readCAFile(path)
+		valkeyCA, err = cafile.Read(path)
 		if err != nil {
 			return config{}, fmt.Errorf("reading VALKEY_CA_FILE: %w", err)
 		}
+	}
+	baoTLS, baoCA, err := bao.LoadCA(baoAddr, getenv("BAO_CA_FILE"))
+	if err != nil {
+		return config{}, fmt.Errorf("checking BAO_ADDR and BAO_CA_FILE: %w", err)
 	}
 
 	cfg := config{
 		addr: ":8080", valkeyAddr: valkeyAddr, valkeyUser: valkeyUser, valkeyPassword: valkeyPassword, valkeyCA: valkeyCA,
 		dsn:     dsn,
-		baoAddr: baoAddr, baoCreds: bao.Credentials{RoleID: roleID, SecretID: secretID},
+		baoAddr: baoAddr, baoTLS: baoTLS, baoCA: baoCA, baoCreds: bao.Credentials{RoleID: roleID, SecretID: secretID},
 		pdfURL: pdfURL,
 	}
 	if v := getenv("WEB_ADDR"); v != "" {
@@ -159,19 +173,6 @@ func loadConfig(_ []string, getenv func(string) string) (config, error) {
 		LogoutReturn: base + "/",
 	}
 	return cfg, nil
-}
-
-// readCAFile reads the PEM certificates in the file at path and checks that
-// there is at least one.
-func readCAFile(path string) ([]byte, error) {
-	b, err := os.ReadFile(path) //nolint:gosec // G304: the path is the operator's own VALKEY_CA_FILE setting
-	if err != nil {
-		return nil, fmt.Errorf("reading the CA file: %w", err)
-	}
-	if !x509.NewCertPool().AppendCertsFromPEM(b) {
-		return nil, fmt.Errorf("%q holds no PEM certificate", path)
-	}
-	return b, nil
 }
 
 // parseBaseURL checks that raw is an absolute http or https address with no

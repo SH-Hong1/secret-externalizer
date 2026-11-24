@@ -421,3 +421,76 @@ func TestLoadConfig_BadValkeyCAFile(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadConfig_BaoCAFile(t *testing.T) {
+	caPEM, _ := newTestCA(t)
+	env := validEnv(t)
+	env["BAO_ADDR"] = "https://openbao:8200"
+	env["BAO_CA_FILE"] = writeFile(t, string(caPEM))
+	got, err := loadConfig(nil, getenvFrom(env))
+	if err != nil {
+		t.Fatalf("loadConfig() with BAO_CA_FILE error = %v", err)
+	}
+	if diff := cmp.Diff(caPEM, got.baoCA); diff != "" {
+		t.Errorf("loadConfig() with BAO_CA_FILE baoCA mismatch (-want +got):\n%s", diff)
+	}
+	if want := "bao_tls:true"; !strings.Contains(got.String(), want) {
+		t.Errorf("config.String() = %q, want it to contain %q", got.String(), want)
+	}
+}
+
+func TestLoadConfig_BaoTLS(t *testing.T) {
+	tests := []struct {
+		addr string
+		want string
+	}{
+		{"http://openbao:8200", "bao_tls:false"},
+		{"https://openbao.example:8200", "bao_tls:true"},
+	}
+	for _, tt := range tests {
+		env := validEnv(t)
+		env["BAO_ADDR"] = tt.addr
+		got, err := loadConfig(nil, getenvFrom(env))
+		if err != nil {
+			t.Fatalf("loadConfig() with BAO_ADDR=%q error = %v", tt.addr, err)
+		}
+		if got.baoCA != nil {
+			t.Errorf("loadConfig() with BAO_ADDR=%q and no BAO_CA_FILE baoCA = %q, want nil", tt.addr, got.baoCA)
+		}
+		if !strings.Contains(got.String(), tt.want) {
+			t.Errorf("loadConfig() with BAO_ADDR=%q String() = %q, want it to contain %q", tt.addr, got.String(), tt.want)
+		}
+	}
+}
+
+func TestLoadConfig_BadBaoTLS(t *testing.T) {
+	caPEM, _ := newTestCA(t)
+	tests := []struct {
+		name   string
+		addr   string
+		caFile func(t *testing.T) string
+		names  string
+	}{
+		{"missing CA file", "https://openbao:8200", func(t *testing.T) string { return filepath.Join(t.TempDir(), "absent") }, "BAO_CA_FILE"},
+		{"CA file without a certificate", "https://openbao:8200", func(t *testing.T) string { return writeFile(t, "not a certificate\n") }, "BAO_CA_FILE"},
+		{"CA file with an http address", "http://openbao:8200", func(t *testing.T) string { return writeFile(t, string(caPEM)) }, "BAO_CA_FILE"},
+		{"address that is not http or https", "ftp://openbao:8200", func(*testing.T) string { return "" }, "BAO_ADDR"},
+		{"address without a host", "https://", func(*testing.T) string { return "" }, "BAO_ADDR"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv(t)
+			env["BAO_ADDR"] = tt.addr
+			if path := tt.caFile(t); path != "" {
+				env["BAO_CA_FILE"] = path
+			}
+			_, err := loadConfig(nil, getenvFrom(env))
+			if err == nil {
+				t.Fatalf("loadConfig() with a %s error = nil, want an error", tt.name)
+			}
+			if !strings.Contains(err.Error(), tt.names) {
+				t.Errorf("loadConfig() with a %s error = %q, want it to name %s", tt.name, err, tt.names)
+			}
+		})
+	}
+}

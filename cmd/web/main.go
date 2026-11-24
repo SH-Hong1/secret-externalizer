@@ -3,8 +3,6 @@ package main
 
 import (
 	"context"
-	"crypto/tls"
-	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -21,6 +19,7 @@ import (
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
+	"github.com/SH-Hong1/secret-externalizer/internal/cafile"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 	"github.com/SH-Hong1/secret-externalizer/internal/session"
@@ -122,7 +121,14 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 
 	// bao.New does not contact OpenBao, so web starts while OpenBao is
 	// down, and only a reveal says that the secret store cannot be reached.
-	originals, err := bao.New(cfg.baoAddr, cfg.baoCreds, outboundClient())
+	if !cfg.baoTLS {
+		logger.WarnContext(ctx, "openbao connection is not encrypted", "bao_addr", cfg.baoAddr)
+	}
+	baoHTTP, err := bao.NewHTTPClient(cfg.baoCA, outboundTimeout)
+	if err != nil {
+		return fmt.Errorf("preparing openbao TLS: %w", err)
+	}
+	originals, err := bao.New(cfg.baoAddr, cfg.baoCreds, baoHTTP)
 	if err != nil {
 		return fmt.Errorf("preparing openbao client: %w", err)
 	}
@@ -181,11 +187,10 @@ func valkeyOption(cfg config) (valkey.ClientOption, error) {
 	if err != nil {
 		return valkey.ClientOption{}, fmt.Errorf("reading the host of %s: %w", cfg.valkeyAddr, err)
 	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(cfg.valkeyCA) {
-		return valkey.ClientOption{}, errors.New("the valkey CA holds no PEM certificate")
+	opt.TLSConfig, err = cafile.TLSConfig(cfg.valkeyCA, host)
+	if err != nil {
+		return valkey.ClientOption{}, fmt.Errorf("preparing valkey TLS: %w", err)
 	}
-	opt.TLSConfig = &tls.Config{RootCAs: roots, ServerName: host, MinVersion: tls.VersionTLS12}
 	return opt, nil
 }
 
@@ -202,8 +207,12 @@ func valkeyRetryDelay(attempts int, _ valkey.Completed, _ error) time.Duration {
 // outboundClient returns the client for every request this program sends to
 // another service.
 func outboundClient() *http.Client {
-	return &http.Client{Timeout: 10 * time.Second}
+	return &http.Client{Timeout: outboundTimeout}
 }
+
+// outboundTimeout bounds every request this program sends to another
+// service.
+const outboundTimeout = 10 * time.Second
 
 // discover builds the authenticator, asking the provider for its discovery
 // document every retry.interval until it answers or retry.limit has passed.
