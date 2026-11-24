@@ -448,18 +448,20 @@ func TestLoadConfig_BaoTLS(t *testing.T) {
 		{"https://openbao.example:8200", "bao_tls:true"},
 	}
 	for _, tt := range tests {
-		env := validEnv(t)
-		env["BAO_ADDR"] = tt.addr
-		got, err := loadConfig(nil, getenvFrom(env))
-		if err != nil {
-			t.Fatalf("loadConfig() with BAO_ADDR=%q error = %v", tt.addr, err)
-		}
-		if got.baoCA != nil {
-			t.Errorf("loadConfig() with BAO_ADDR=%q and no BAO_CA_FILE baoCA = %q, want nil", tt.addr, got.baoCA)
-		}
-		if !strings.Contains(got.String(), tt.want) {
-			t.Errorf("loadConfig() with BAO_ADDR=%q String() = %q, want it to contain %q", tt.addr, got.String(), tt.want)
-		}
+		t.Run(tt.addr, func(t *testing.T) {
+			env := validEnv(t)
+			env["BAO_ADDR"] = tt.addr
+			got, err := loadConfig(nil, getenvFrom(env))
+			if err != nil {
+				t.Fatalf("loadConfig() with BAO_ADDR=%q error = %v", tt.addr, err)
+			}
+			if got.baoCA != nil {
+				t.Errorf("loadConfig() with BAO_ADDR=%q and no BAO_CA_FILE baoCA = %q, want nil", tt.addr, got.baoCA)
+			}
+			if !strings.Contains(got.String(), tt.want) {
+				t.Errorf("loadConfig() with BAO_ADDR=%q String() = %q, want it to contain %q", tt.addr, got.String(), tt.want)
+			}
+		})
 	}
 }
 

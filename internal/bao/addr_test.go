@@ -28,14 +28,15 @@ func TestUsesTLS(t *testing.T) {
 		{"HTTPS://openbao.example", true},
 	}
 	for _, tt := range tests {
-		got, err := bao.UsesTLS(tt.addr)
-		if err != nil {
-			t.Errorf("UsesTLS(%q) error = %v", tt.addr, err)
-			continue
-		}
-		if got != tt.want {
-			t.Errorf("UsesTLS(%q) = %t, want %t", tt.addr, got, tt.want)
-		}
+		t.Run(tt.addr, func(t *testing.T) {
+			got, err := bao.UsesTLS(tt.addr)
+			if err != nil {
+				t.Fatalf("UsesTLS(%q) error = %v", tt.addr, err)
+			}
+			if got != tt.want {
+				t.Errorf("UsesTLS(%q) = %t, want %t", tt.addr, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -51,9 +52,11 @@ func TestUsesTLS_Refuses(t *testing.T) {
 		"https://openbao:8200#x",
 		"://bad",
 	} {
-		if got, err := bao.UsesTLS(addr); err == nil {
-			t.Errorf("UsesTLS(%q) = %t, want an error", addr, got)
-		}
+		t.Run(addr, func(t *testing.T) {
+			if got, err := bao.UsesTLS(addr); err == nil {
+				t.Errorf("UsesTLS(%q) = %t, want an error", addr, got)
+			}
+		})
 	}
 }
 
@@ -72,14 +75,15 @@ func TestLoadCA(t *testing.T) {
 		{"https with a CA", "https://openbao:8200", path, true, caPEM},
 	}
 	for _, tt := range tests {
-		gotTLS, gotCA, err := bao.LoadCA(tt.addr, tt.caPath)
-		if err != nil {
-			t.Errorf("LoadCA(%s) error = %v", tt.name, err)
-			continue
-		}
-		if gotTLS != tt.wantTLS || string(gotCA) != string(tt.wantCA) {
-			t.Errorf("LoadCA(%s) = %t, %q, want %t, %q", tt.name, gotTLS, gotCA, tt.wantTLS, tt.wantCA)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			gotTLS, gotCA, err := bao.LoadCA(tt.addr, tt.caPath)
+			if err != nil {
+				t.Fatalf("LoadCA(%q, %q) error = %v", tt.addr, tt.caPath, err)
+			}
+			if gotTLS != tt.wantTLS || string(gotCA) != string(tt.wantCA) {
+				t.Errorf("LoadCA(%q, %q) = %t, %q, want %t, %q", tt.addr, tt.caPath, gotTLS, gotCA, tt.wantTLS, tt.wantCA)
+			}
+		})
 	}
 }
 
@@ -96,9 +100,11 @@ func TestLoadCA_Refuses(t *testing.T) {
 		{"CA file without a certificate", "https://openbao:8200", writeTestFile(t, []byte("not a certificate\n"))},
 	}
 	for _, tt := range tests {
-		if gotTLS, gotCA, err := bao.LoadCA(tt.addr, tt.caPath); err == nil {
-			t.Errorf("LoadCA(%s) = %t, %q, want an error", tt.name, gotTLS, gotCA)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			if gotTLS, gotCA, err := bao.LoadCA(tt.addr, tt.caPath); err == nil {
+				t.Errorf("LoadCA(%q, %q) = %t, %q, want an error", tt.addr, tt.caPath, gotTLS, gotCA)
+			}
+		})
 	}
 }
 
@@ -152,24 +158,26 @@ func TestNewHTTPClient(t *testing.T) {
 		{"the system's roots", nil, true},
 	}
 	for _, tt := range tests {
-		hc, err := bao.NewHTTPClient(tt.ca, 5*time.Second)
-		if err != nil {
-			t.Fatalf("NewHTTPClient(%s) error = %v", tt.name, err)
-		}
-		if hc.Timeout != 5*time.Second {
-			t.Errorf("NewHTTPClient(%s).Timeout = %v, want 5s", tt.name, hc.Timeout)
-		}
-		req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
-		if err != nil {
-			t.Fatalf("building the request: %v", err)
-		}
-		resp, err := hc.Do(req)
-		if err == nil {
-			_ = resp.Body.Close() // the body is empty
-		}
-		if (err != nil) != tt.wantErr {
-			t.Errorf("GET %s through NewHTTPClient(%s) error = %v, want error %t", srv.URL, tt.name, err, tt.wantErr)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			hc, err := bao.NewHTTPClient(tt.ca, 5*time.Second)
+			if err != nil {
+				t.Fatalf("NewHTTPClient(%s) error = %v", tt.name, err)
+			}
+			if hc.Timeout != 5*time.Second {
+				t.Errorf("NewHTTPClient(%s).Timeout = %v, want 5s", tt.name, hc.Timeout)
+			}
+			req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+			if err != nil {
+				t.Fatalf("building the request: %v", err)
+			}
+			resp, err := hc.Do(req)
+			if err == nil {
+				_ = resp.Body.Close() // the body is empty
+			}
+			if (err != nil) != tt.wantErr {
+				t.Errorf("GET %s through NewHTTPClient(%s) error = %v, want error %t", srv.URL, tt.name, err, tt.wantErr)
+			}
+		})
 	}
 }
 

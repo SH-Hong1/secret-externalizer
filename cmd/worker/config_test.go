@@ -349,21 +349,23 @@ func TestLoadConfig_BaoTLS(t *testing.T) {
 		{"https and a CA file", "https://openbao:8200", caPEM, "bao_tls:true"},
 	}
 	for _, tt := range tests {
-		env := validEnv(t)
-		env["BAO_ADDR"] = tt.addr
-		if tt.ca != nil {
-			env["BAO_CA_FILE"] = writeContent(t, tt.ca)
-		}
-		got, err := loadConfig(getenvFrom(env))
-		if err != nil {
-			t.Fatalf("loadConfig() with %s error = %v", tt.name, err)
-		}
-		if diff := cmp.Diff(tt.ca, got.baoCA); diff != "" {
-			t.Errorf("loadConfig() with %s baoCA mismatch (-want +got):\n%s", tt.name, diff)
-		}
-		if !strings.Contains(got.String(), tt.wantTLS) {
-			t.Errorf("loadConfig() with %s String() = %q, want it to contain %q", tt.name, got.String(), tt.wantTLS)
-		}
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv(t)
+			env["BAO_ADDR"] = tt.addr
+			if tt.ca != nil {
+				env["BAO_CA_FILE"] = writeContent(t, tt.ca)
+			}
+			got, err := loadConfig(getenvFrom(env))
+			if err != nil {
+				t.Fatalf("loadConfig() with %s error = %v", tt.name, err)
+			}
+			if diff := cmp.Diff(tt.ca, got.baoCA); diff != "" {
+				t.Errorf("loadConfig() with %s baoCA mismatch (-want +got):\n%s", tt.name, diff)
+			}
+			if !strings.Contains(got.String(), tt.wantTLS) {
+				t.Errorf("loadConfig() with %s String() = %q, want it to contain %q", tt.name, got.String(), tt.wantTLS)
+			}
+		})
 	}
 }
 

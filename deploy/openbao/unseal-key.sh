@@ -7,15 +7,17 @@
 # $HOME/.config/secret-externalizer/openbao-unseal.key when that is unset,
 # the same default compose.yaml uses. It holds 32 random bytes.
 #
-# - When the file exists, it is checked and left alone.
-# - When the openbao-secrets volume still holds the key at unseal/key, as a
-#   volume made before the key moved out does, the key is copied to the file
-#   and then removed from the volume, after reading the file back and
-#   comparing it with the volume's copy.
+# - When the file exists, it is checked and not changed.
+# - When it does not and the openbao-secrets volume holds a key at
+#   unseal/key, that key is copied to the file.
 # - When neither holds a key but the openbao-data volume exists, it stops:
 #   that storage was sealed with a key that is gone, and a new key would not
 #   open it.
 # - Otherwise a new key is made.
+#
+# Then, when the volume holds an unseal/ folder, its key is removed only if
+# it has the same bytes as the file, and the folder with it. A key that
+# differs is left in place and the script fails.
 #
 # The folder of the file is made with mode 0700 and must not let anyone but
 # its owner enter it. The file itself is 0644 so that OpenBao, which runs as

@@ -19,9 +19,9 @@
 # the other role's secret-id.
 #
 # The unseal key is not in this volume. It is a file on the host that
-# deploy/openbao/unseal-key.sh makes and compose hands to OpenBao alone. A
-# volume made before the key moved out still holds it at unseal/key; this
-# script then stops, and unseal-key.sh moves the key out.
+# deploy/openbao/unseal-key.sh makes and compose hands to OpenBao alone.
+# When the volume holds an unseal/ folder, this script stops and asks for
+# unseal-key.sh, which moves a key found there to the host file.
 #
 # The certificate is for the name openbao, which web and the worker use, and
 # for 127.0.0.1, which the health check uses. The CA's private key is made in
