@@ -3,8 +3,8 @@ package db
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
+	"slices"
 
 	"github.com/jackc/pgx/v5"
 
@@ -28,17 +28,16 @@ type detection struct {
 //
 // It holds the project's row FOR NO KEY UPDATE while it stores the findings,
 // so it waits for a Decide or MoveFinding of the project that has started and
-// those wait for it. The bundle a new finding joins therefore cannot be
-// deleted by a move before the finding is stored, and the two never wait on
-// each other's finding and bundle rows. A scan can still be requested
-// meanwhile.
+// those wait for it. The findings and bundles it reads therefore stay as they
+// were until it has stored the scan, and the two never wait on each other's
+// finding and bundle rows. A scan can still be requested meanwhile.
 //
 // A finding is identified by project, fingerprint, file, and configuration
 // key. A finding that an earlier scan stored keeps its ID, its bundle, and its
 // first scan; its last scan becomes this one, and its category, kind,
 // preview, and whether it has an original become what this scan found, since
-// the rules or the masking may have changed in between. Locations belong to the scan that found them, so each
-// scan adds its own.
+// the rules or the masking may have changed in between. Locations belong to
+// the scan that found them, so each scan adds its own.
 func (s *Store) SaveResult(ctx context.Context, jobID int64, workerID string, id scan.ID, r scan.Result) error {
 	return s.closeJob(ctx, jobID, workerID, id, "done", func(tx pgx.Tx) error {
 		var projectID int64
@@ -48,13 +47,9 @@ func (s *Store) SaveResult(ctx context.Context, jobID int64, workerID string, id
 		if err := lockProject(ctx, tx, project.ID(projectID), "FOR NO KEY UPDATE"); err != nil {
 			return err
 		}
-		ids := make([]int64, len(r.Findings))
-		for i, f := range r.Findings {
-			findingID, err := insertFinding(ctx, tx, projectID, id, f)
-			if err != nil {
-				return fmt.Errorf("storing finding %d of scan %d: %w", i, id, err)
-			}
-			ids[i] = findingID
+		ids, err := storeFindings(ctx, tx, projectID, id, r.Findings)
+		if err != nil {
+			return fmt.Errorf("storing findings of scan %d: %w", id, err)
 		}
 		if err := insertLocations(ctx, tx, id, ids, r.Findings); err != nil {
 			return fmt.Errorf("storing locations of scan %d: %w", id, err)
@@ -84,98 +79,290 @@ func (s *Store) SaveResult(ctx context.Context, jobID int64, workerID string, id
 	})
 }
 
-// insertFinding stores f, or updates it when an earlier scan stored it, and
-// returns its ID. A finding stored for the first time joins the bundle
-// bundleForNew gives it; a stored finding keeps its bundle.
+// saveBatch is the number of rows SaveResult sends to the database in one
+// round trip.
+const saveBatch = 1000
+
+// storeFindings stores the findings of scan id of the project, in the rows
+// and bundles planFindings decides, and returns the ID of each finding's
+// row in the order of findings. It reads the project's findings and its
+// shared and frontend bundles once and writes saveBatch rows in a round
+// trip, so a finding does not cost round trips of its own. The caller
+// holds the project's lock, so the rows it read stay as they were until it
+// has written.
 //
-// A keyed finding that matches no stored finding takes over the one stored
-// finding of its fingerprint and file when that one has no key and this scan
-// has not found it yet: a finding stored before keys were read keeps its ID,
-// and with it its bundle, decision and apply records, under the first key of
-// its file that a scan reads. Any other sole keyless finding is taken over
-// the same way, such as one at a place whose key could not be read when a
-// keyed place of the same value is added to the file later, above it, so that
-// the scan stores the keyed finding first.
-func insertFinding(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, f finding.Finding) (int64, error) {
-	var findingID int64
-	err := tx.QueryRow(ctx, `
-		UPDATE finding SET category = $5, kind = $6, preview = $7, has_original = $8, last_scan_id = $9
-		WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3 AND key = $4
-		RETURNING id`,
-		projectID, f.Fingerprint, f.File, f.Key, f.Category, f.Kind, f.Preview, f.HasOriginal, id).Scan(&findingID)
-	if errors.Is(err, pgx.ErrNoRows) && f.Key != "" {
-		err = tx.QueryRow(ctx, `
-			UPDATE finding SET key = $4, category = $5, kind = $6, preview = $7, has_original = $8, last_scan_id = $9
-			WHERE project_id = $1 AND fingerprint = $2 AND file_path = $3 AND key = '' AND last_scan_id <> $9
-				AND (SELECT count(*) FROM finding o
-					WHERE o.project_id = $1 AND o.fingerprint = $2 AND o.file_path = $3) = 1
-			RETURNING id`,
-			projectID, f.Fingerprint, f.File, f.Key, f.Category, f.Kind, f.Preview, f.HasOriginal, id).Scan(&findingID)
-	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		bundleID, berr := bundleForNew(ctx, tx, projectID, f)
-		if berr != nil {
-			return 0, berr
-		}
-		err = tx.QueryRow(ctx, `
-			INSERT INTO finding (project_id, fingerprint, file_path, key, category, kind, preview, has_original,
-				first_scan_id, last_scan_id, bundle_id)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $9, $10)
-			RETURNING id`,
-			projectID, f.Fingerprint, f.File, f.Key, f.Category, f.Kind, f.Preview, f.HasOriginal, id, bundleID).Scan(&findingID)
-	}
+// A finding that an earlier scan stored keeps its ID, its bundle, and its
+// first scan. A keyed finding that takes over a keyless row gives the row its
+// key, so a finding stored before keys were read keeps its ID, and with it
+// its bundle, decision and apply records, under the first key of its file
+// that a scan reads.
+func storeFindings(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, findings []finding.Finding) ([]int64, error) {
+	stored, err := readStoredFindings(ctx, tx, projectID, id)
 	if err != nil {
-		return 0, fmt.Errorf("storing finding: %w", err)
+		return nil, err
 	}
-	return findingID, nil
+	bundles, err := readAutoBundles(ctx, tx, projectID)
+	if err != nil {
+		return nil, err
+	}
+	plan := planFindings(stored, bundles, findings)
+
+	bundleIDs := make([]int64, 0, len(plan.bundles))
+	for chunk := range slices.Chunk(plan.bundles, saveBatch) {
+		created, err := insertBundles(ctx, tx, projectID, chunk)
+		if err != nil {
+			return nil, err
+		}
+		bundleIDs = append(bundleIDs, created...)
+	}
+
+	// A row that is taken over gets its key before any row is inserted, so
+	// that a new keyless finding of the same file does not meet it.
+	var updates, inserts []int
+	rowIDs := make([]int64, len(plan.rows))
+	for i, r := range plan.rows {
+		if r.id == 0 {
+			inserts = append(inserts, i)
+			continue
+		}
+		rowIDs[i] = r.id
+		updates = append(updates, i)
+	}
+	for chunk := range slices.Chunk(updates, saveBatch) {
+		if err := updateFindings(ctx, tx, id, plan.rows, chunk); err != nil {
+			return nil, err
+		}
+	}
+	for chunk := range slices.Chunk(inserts, saveBatch) {
+		if err := insertFindings(ctx, tx, projectID, id, plan.rows, chunk, bundleIDs, rowIDs); err != nil {
+			return nil, err
+		}
+	}
+
+	ids := make([]int64, len(findings))
+	for i, slot := range plan.slots {
+		ids[i] = rowIDs[slot]
+	}
+	return ids, nil
 }
 
-// locationBatch is the number of locations insertLocations sends to the
-// database in one round trip.
-const locationBatch = 1000
+// insertBundles creates bundles in the project, in one statement, and
+// returns their IDs in the order of bundles. The statement does not promise
+// the order of the IDs it returns. Bundles of one fingerprint and origin are
+// alike until a finding joins them, so each takes the lowest ID left among
+// those of its fingerprint and origin.
+func insertBundles(ctx context.Context, tx pgx.Tx, projectID int64, bundles []plannedBundle) ([]int64, error) {
+	fingerprints := make([]string, len(bundles))
+	origins := make([]string, len(bundles))
+	for i, b := range bundles {
+		fingerprints[i], origins[i] = b.fingerprint, b.origin
+	}
+	rows, err := tx.Query(ctx, `
+		INSERT INTO bundle (project_id, fingerprint, origin)
+		SELECT $1, u.fingerprint, u.origin FROM unnest($2::text[], $3::text[]) AS u (fingerprint, origin)
+		RETURNING id, fingerprint, origin`,
+		projectID, fingerprints, origins)
+	if err != nil {
+		return nil, fmt.Errorf("creating bundles: %w", err)
+	}
+	defer rows.Close()
+	created := make(map[plannedBundle][]int64, len(bundles))
+	for rows.Next() {
+		var (
+			id int64
+			b  plannedBundle
+		)
+		if err := rows.Scan(&id, &b.fingerprint, &b.origin); err != nil {
+			return nil, fmt.Errorf("reading created bundle: %w", err)
+		}
+		created[b] = append(created[b], id)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("creating bundles: %w", err)
+	}
+	for _, ids := range created {
+		slices.Sort(ids)
+	}
+	out := make([]int64, len(bundles))
+	for i, b := range bundles {
+		out[i], created[b] = created[b][0], created[b][1:]
+	}
+	return out, nil
+}
+
+// findingColumns holds the values of some finding rows, one slice a column,
+// as a statement takes them to unnest.
+type findingColumns struct {
+	fingerprints, files, keys, categories, kinds, previews []string
+	hasOriginal                                            []bool
+}
+
+// columnsOf returns the columns of the rows of rows that chunk indexes.
+func columnsOf(rows []plannedRow, chunk []int) findingColumns {
+	var c findingColumns
+	for _, i := range chunk {
+		f := rows[i].finding
+		c.fingerprints = append(c.fingerprints, f.Fingerprint)
+		c.files = append(c.files, f.File)
+		c.keys = append(c.keys, f.Key)
+		c.categories = append(c.categories, string(f.Category))
+		c.kinds = append(c.kinds, string(f.Kind))
+		c.previews = append(c.previews, f.Preview)
+		c.hasOriginal = append(c.hasOriginal, f.HasOriginal)
+	}
+	return c
+}
+
+// updateFindings gives the stored rows of rows that chunk indexes their key
+// and the values scan id found, in one statement.
+func updateFindings(ctx context.Context, tx pgx.Tx, id scan.ID, rows []plannedRow, chunk []int) error {
+	ids := make([]int64, len(chunk))
+	for n, i := range chunk {
+		ids[n] = rows[i].id
+	}
+	c := columnsOf(rows, chunk)
+	_, err := tx.Exec(ctx, `
+		UPDATE finding f SET key = u.key, category = u.category, kind = u.kind, preview = u.preview,
+			has_original = u.has_original, last_scan_id = $1
+		FROM unnest($2::bigint[], $3::text[], $4::text[], $5::text[], $6::text[], $7::boolean[])
+			AS u (id, key, category, kind, preview, has_original)
+		WHERE f.id = u.id`,
+		id, ids, c.keys, c.categories, c.kinds, c.previews, c.hasOriginal)
+	if err != nil {
+		return fmt.Errorf("updating findings: %w", err)
+	}
+	return nil
+}
+
+// insertFindings inserts the rows of rows that chunk indexes as findings of
+// the project first found by scan id, in one statement, and puts the ID of
+// each in rowIDs at the row's index. bundleIDs are the IDs of the bundles the
+// plan created. The statement does not promise the order of the IDs it
+// returns, so each is matched to its row by the finding's identity.
+func insertFindings(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, rows []plannedRow, chunk []int, bundleIDs, rowIDs []int64) error {
+	bundles := make([]int64, len(chunk))
+	index := make(map[identity]int, len(chunk))
+	for n, i := range chunk {
+		r := rows[i]
+		bundles[n] = r.bundle.id
+		if r.bundle.planned != 0 {
+			bundles[n] = bundleIDs[r.bundle.planned-1]
+		}
+		index[identity{fileOfValue{r.finding.Fingerprint, r.finding.File}, r.finding.Key}] = i
+	}
+	c := columnsOf(rows, chunk)
+	inserted, err := tx.Query(ctx, `
+		INSERT INTO finding (project_id, fingerprint, file_path, key, category, kind, preview, has_original,
+			first_scan_id, last_scan_id, bundle_id)
+		SELECT $1, u.fingerprint, u.file_path, u.key, u.category, u.kind, u.preview, u.has_original, $2, $2, u.bundle_id
+		FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::boolean[], $10::bigint[])
+			AS u (fingerprint, file_path, key, category, kind, preview, has_original, bundle_id)
+		RETURNING id, fingerprint, file_path, key`,
+		projectID, id, c.fingerprints, c.files, c.keys, c.categories, c.kinds, c.previews, c.hasOriginal, bundles)
+	if err != nil {
+		return fmt.Errorf("inserting findings: %w", err)
+	}
+	defer inserted.Close()
+	for inserted.Next() {
+		var (
+			rowID int64
+			of    identity
+		)
+		if err := inserted.Scan(&rowID, &of.fingerprint, &of.file, &of.key); err != nil {
+			return fmt.Errorf("reading inserted finding: %w", err)
+		}
+		rowIDs[index[of]] = rowID
+	}
+	if err := inserted.Err(); err != nil {
+		return fmt.Errorf("inserting findings: %w", err)
+	}
+	return nil
+}
+
+// readStoredFindings returns every finding of the project, each marked as
+// seen when scan id stored it.
+func readStoredFindings(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID) ([]storedFinding, error) {
+	rows, err := tx.Query(ctx, `
+		SELECT id, fingerprint, file_path, key, bundle_id, last_scan_id = $2
+		FROM finding WHERE project_id = $1`, projectID, id)
+	if err != nil {
+		return nil, fmt.Errorf("reading stored findings: %w", err)
+	}
+	defer rows.Close()
+	var out []storedFinding
+	for rows.Next() {
+		var f storedFinding
+		if err := rows.Scan(&f.id, &f.fingerprint, &f.file, &f.key, &f.bundle, &f.seen); err != nil {
+			return nil, fmt.Errorf("reading stored finding: %w", err)
+		}
+		out = append(out, f)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading stored findings: %w", err)
+	}
+	return out, nil
+}
+
+// readAutoBundles returns the shared and frontend bundles of the project.
+func readAutoBundles(ctx context.Context, tx pgx.Tx, projectID int64) ([]autoBundle, error) {
+	rows, err := tx.Query(ctx,
+		"SELECT id, fingerprint, origin FROM bundle WHERE project_id = $1 AND origin <> $2", projectID, originOwn)
+	if err != nil {
+		return nil, fmt.Errorf("reading bundles: %w", err)
+	}
+	defer rows.Close()
+	var out []autoBundle
+	for rows.Next() {
+		var b autoBundle
+		if err := rows.Scan(&b.id, &b.fingerprint, &b.origin); err != nil {
+			return nil, fmt.Errorf("reading bundle: %w", err)
+		}
+		out = append(out, b)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading bundles: %w", err)
+	}
+	return out, nil
+}
 
 // insertLocations adds the locations the scan found for findings, whose
-// stored IDs are ids in the same order. It sends them locationBatch at a
-// time, so a scan costs one round trip per batch rather than one per finding.
+// stored IDs are ids in the same order. It copies them to the database in
+// one stream, so their number adds no round trips.
 func insertLocations(ctx context.Context, tx pgx.Tx, id scan.ID, ids []int64, findings []finding.Finding) error {
-	batch := &pgx.Batch{}
-	send := func() error {
-		if batch.Len() == 0 {
-			return nil
+	i, next := 0, 0
+	source := pgx.CopyFromFunc(func() ([]any, error) {
+		for i < len(findings) && next == len(findings[i].Locations) {
+			i, next = i+1, 0
 		}
-		if err := tx.SendBatch(ctx, batch).Close(); err != nil {
-			return fmt.Errorf("inserting locations: %w", err)
+		if i == len(findings) {
+			return nil, nil
 		}
-		batch = &pgx.Batch{}
-		return nil
+		l := findings[i].Locations[next]
+		next++
+		detections := make([]detection, 0, len(l.Detections))
+		for _, d := range l.Detections {
+			detections = append(detections, detection(d))
+		}
+		encoded, err := json.Marshal(detections)
+		if err != nil {
+			return nil, fmt.Errorf("encoding detections: %w", err)
+		}
+		lines := l.Context
+		if lines == nil {
+			lines = []string{}
+		}
+		return []any{
+			ids[i], id, l.StartLine, l.StartCol, l.EndLine, l.EndCol, lines, l.ContextFirstLine, l.FileHash, encoded,
+		}, nil
+	})
+	_, err := tx.CopyFrom(ctx, pgx.Identifier{"location"}, []string{
+		"finding_id", "scan_id", "start_line", "start_col", "end_line", "end_col",
+		"context", "context_first_line", "file_hash", "detections",
+	}, source)
+	if err != nil {
+		return fmt.Errorf("inserting locations: %w", err)
 	}
-	for i, f := range findings {
-		for _, l := range f.Locations {
-			detections := make([]detection, 0, len(l.Detections))
-			for _, d := range l.Detections {
-				detections = append(detections, detection(d))
-			}
-			encoded, err := json.Marshal(detections)
-			if err != nil {
-				return fmt.Errorf("encoding detections: %w", err)
-			}
-			lines := l.Context
-			if lines == nil {
-				lines = []string{}
-			}
-			batch.Queue(`
-				INSERT INTO location (finding_id, scan_id, start_line, start_col, end_line, end_col,
-					context, context_first_line, file_hash, detections)
-				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-				ids[i], id, l.StartLine, l.StartCol, l.EndLine, l.EndCol, lines, l.ContextFirstLine, l.FileHash, encoded)
-			if batch.Len() == locationBatch {
-				if err := send(); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	return send()
+	return nil
 }
 
 // locationColumns are the columns of location l that scanLocation reads.
