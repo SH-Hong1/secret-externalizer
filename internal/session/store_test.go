@@ -50,7 +50,11 @@ func valkeyClient(t *testing.T) valkey.Client {
 	if addr == "" {
 		t.Skip("set TEST_VALKEY_ADDR to run against valkey")
 	}
-	c, err := valkey.NewClient(valkey.ClientOption{InitAddress: []string{addr}})
+	password := os.Getenv("TEST_VALKEY_PASSWORD")
+	if password == "" {
+		t.Skip("set TEST_VALKEY_PASSWORD to the password of the valkey in TEST_VALKEY_ADDR")
+	}
+	c, err := valkey.NewClient(valkey.ClientOption{InitAddress: []string{addr}, Password: password})
 	if err != nil {
 		t.Fatalf("valkey.NewClient(%q) error = %v", addr, err)
 	}

@@ -174,6 +174,26 @@ worker 정책에 `secret/data/projects/*`의 `read`가 더해졌고, KV v2 마�
 
 > **경고:** `down -v`로 볼륨을 지우는 것은 **적용을 한 번도 하지 않은 환경에서만** 안전하다. 적용을 한 번이라도 한 환경에서는 `openbao-data` 볼륨에, git이 추적하지 않는 파일(키 파일, 무시된 설정 파일)에서 빼낸 값의 유일한 사본이 있을 수 있다. 그 파일은 적용이 지웠거나 자리표시자로 바꾸었으므로, 볼륨을 지우면 값이 영영 사라진다. 그런 환경에서 정책을 바꾸는 방법은 아직 없다(`docs/next-steps.md`).
 
+## valkey
+
+valkey는 세션과 진행 중인 로그인 시도를 가진다. TLS만 받고 ACL 사용자로만 쓸 수 있다(`docs/decisions/0066-valkey-auth-and-tls.md`).
+
+| 서비스 | 내용 |
+|---|---|
+| `valkey-secrets` | 한 번 실행되고 끝난다. `valkey-secrets` 볼륨에 사설 CA와 valkey의 서버 인증서(`valkey/tls.crt`, `valkey/tls.key`, `valkey/ca.crt`), ACL 파일(`valkey/users.acl`), web의 비밀번호와 CA 인증서(`web/password`, `web/ca.crt`)를 만든다. 하나라도 없으면 모두 새로 만들고, 모두 있으면 그대로 둔다. CA의 개인 키는 남기지 않는다. 스크립트는 `deploy/valkey/make-secrets.sh`다 |
+| `valkey` | 호스트에 포트를 열지 않고, 내부 네트워크 `valkey`의 web만 쓴다. 사용자는 web의 `se-web`(세션과 로그인 시도 키, web이 쓰는 명령만), 상태 확인의 `health`(`PING`만)이고 `default`는 꺼져 있다 |
+| `valkey-test` | `test` 프로필에서만 뜬다. 통합 테스트용이며 평문으로 `127.0.0.1:16379`에 열린다. 비밀번호는 `dev-only-valkey-test-password`다 |
+
+- 인증서는 10년짜리이고 갱신하지 않는다. 비밀번호나 인증서를 바꾸려면 볼륨을 지우고 valkey와 web을 다시 띄운다. 모든 사람이 다시 로그인해야 하는 것 말고 잃는 것은 없다.
+
+  ```sh
+  docker compose rm -sf valkey valkey-secrets
+  docker volume rm secret-externalizer_valkey-secrets
+  docker compose up -d --force-recreate valkey web
+  ```
+
+- 이 변경 전에 띄운 스택에서는 `docker compose up -d`가 `valkey-secrets`를 처음 실행하고 valkey와 web을 다시 만든다. web 이미지도 다시 빌드해야 한다(`VALKEY_USERNAME`, `VALKEY_PASSWORD_FILE`이 없으면 이전 이미지는 그 설정을 읽지 않고 평문으로 붙다가 실패한다).
+
 ## PDF 변환기
 
 리포트의 PDF는 web이 `pdf` 서비스(Gotenberg 9.9.1의 Chromium 전용 이미지)에 HTML, 스타일시트, 글꼴을 한 요청으로 보내 만든다. 설정과 이유는 `docs/decisions/0043-pdf-converter-setup.md`에 있다.
@@ -203,12 +223,12 @@ realm 설정은 `deploy/keycloak/realm.json`에 있다. Keycloak은 기동할 �
 |---|---|---|
 | web | `http://localhost:8080` | 화면 |
 | keycloak | `http://localhost:8081` | 로그인 화면, 관리 콘솔 |
-| valkey | `127.0.0.1:16379` | 통합 테스트. 로컬에 설치한 redis가 6379를 쓰는 경우가 많아 16379로 연다 |
 | postgres | `127.0.0.1:15432` | 통합 테스트. 컨테이너끼리는 `postgres:5432`로 쓴다 |
+| valkey-test | `127.0.0.1:16379` | 통합 테스트. `test` 프로필에서만 뜬다. 로컬에 설치한 redis가 6379를 쓰는 경우가 많아 16379로 연다 |
 | openbao-test | `127.0.0.1:18200` | 통합 테스트. `test` 프로필에서만 뜬다 |
 | pdf-test | `http://127.0.0.1:13000` | 통합 테스트. `test` 프로필에서만 뜬다 |
 
-`openbao`는 호스트에 포트를 열지 않는다. web과 worker만 내부 네트워크 `bao`에서 `openbao:8200`으로 접속한다. `pdf`도 포트를 열지 않고, web만 내부 네트워크 `pdf`에서 `pdf:3000`으로 접속한다.
+`openbao`는 호스트에 포트를 열지 않는다. web과 worker만 내부 네트워크 `bao`에서 `openbao:8200`으로 접속한다. `pdf`도 포트를 열지 않고, web만 내부 네트워크 `pdf`에서 `pdf:3000`으로 접속한다. `valkey`도 포트를 열지 않고, web만 내부 네트워크 `valkey`에서 TLS로 `valkey:6379`에 접속한다.
 
 ## 네트워크
 
@@ -216,14 +236,15 @@ realm 설정은 `deploy/keycloak/realm.json`에 있다. Keycloak은 기동할 �
 
 | 네트워크 | 종류 | 붙는 서비스 |
 |---|---|---|
-| `edge` | bridge, NAT 끔. 호스트 포트를 연다 | web, keycloak, postgres, valkey |
+| `edge` | bridge, NAT 끔. 호스트 포트를 연다 | web, keycloak, postgres |
 | `db` | internal | postgres, worker |
+| `valkey` | internal | valkey, web |
 | `bao` | internal | openbao, web, worker |
 | `pdf` | internal | pdf, web |
-| `test` | bridge, NAT 끔. 호스트 포트를 연다 | openbao-test, pdf-test (`test` 프로필) |
+| `test` | bridge, NAT 끔. 호스트 포트를 연다 | valkey-test, openbao-test, pdf-test (`test` 프로필) |
 
 - worker와 스캐너는 postgres와 OpenBao에만 닿고 바깥 이름도 풀지 못한다. 스캐너를 올리거나 바꿀 때 바깥 연결이 필요한 기능(규칙 내려받기, 버전 확인 등)을 켜면 스캔이 실패한다.
-- `openbao-secrets`는 네트워크 없이(`network_mode: none`) 뜬다.
+- `openbao-secrets`와 `valkey-secrets`는 네트워크 없이(`network_mode: none`) 뜬다.
 - 네트워크 구성을 바꾼 `compose.yaml`을 처음 받으면 `docker compose up -d`가 컨테이너를 새 네트워크로 다시 만든다. 이전의 `secret-externalizer_default` 네트워크는 남아 있으면 `docker network rm secret-externalizer_default`로 지운다.
 
 ## 발급자 주소
@@ -238,7 +259,10 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 |---|---|---|
 | `WEB_ADDR` | | 듣는 주소. 기본값 `:8080` |
 | `WEB_BASE_URL` | 예 | 브라우저에서 보는 주소. 콜백 주소(`/auth/callback`)와 로그아웃 뒤 주소(`/`)를 여기서 만든다. `/` 말고 다른 경로, 쿼리, 프래그먼트는 둘 수 없다 |
-| `VALKEY_ADDR` | 예 | 예 `valkey:6379` |
+| `VALKEY_ADDR` | 예 | 예 `valkey:6379`. TLS를 쓰면 valkey의 인증서를 이 주소의 호스트 이름으로 확인한다 |
+| `VALKEY_USERNAME` | 예 | valkey ACL 사용자. compose에서는 `se-web` |
+| `VALKEY_PASSWORD_FILE` | 예 | 그 사용자의 비밀번호가 든 파일. 앞뒤 공백은 뗀다. compose에서는 `valkey-secrets` 볼륨의 `web` 폴더를 `/run/secrets/valkey`에 읽기 전용으로 마운트하고 `/run/secrets/valkey/password`를 쓴다. 비밀번호는 로그와 오류 메시지에 남지 않는다 |
+| `VALKEY_CA_FILE` | | valkey의 인증서를 서명한 CA 인증서(PEM). 주면 TLS로 붙고 이 파일의 인증서만 믿는다. 비우면 평문으로 붙고 시작할 때 `valkey connection is not encrypted` 경고를 남긴다. compose에서는 `/run/secrets/valkey/ca.crt`. 공유하거나 배포하는 환경에서는 반드시 준다 |
 | `DATABASE_URL` | 예 | postgres 주소. 예 `postgres://se_app:dev-only-se-app-password@postgres:5432/secret_externalizer`. 로그와 오류 메시지에 남지 않는다. web은 기동할 때 마이그레이션을 실행한다 |
 | `OIDC_ISSUER_URL` | 예 | 토큰의 발급자. 예 `http://localhost:8081/realms/secret-externalizer` |
 | `OIDC_DISCOVERY_URL` | | web이 발급자에 닿는 주소. 비우면 `OIDC_ISSUER_URL`을 쓴다. 여기서 읽은 discovery 문서의 `issuer`가 `OIDC_ISSUER_URL`과 다르면 web이 기동하지 않는다 |
@@ -313,16 +337,17 @@ go test -count=1 -v -run 'TestRules|TestVersion' ./internal/ruleset/
 
 ## 통합 테스트
 
-valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이, OpenBao가 필요한 테스트는 `TEST_BAO_ADDR`가, PDF 변환기가 필요한 테스트는 `TEST_PDF_URL`이 없으면 건너뛴다. `make test-integration`은 넷 다 요구한다. PDF 테스트는 `test` 프로필의 `pdf-test`(`http://127.0.0.1:13000`)를 쓴다. OpenBao 테스트는 원본을 보관하는 `openbao`가 아니라 `test` 프로필의 `openbao-test`를 쓰고, 테스트가 개발용 루트 토큰으로 transit, KV, AppRole을 직접 만든다. compose의 서비스로 실행하려면 다음과 같이 한다. 새 셸에서는 compose 명령마다 `SE_WORKSPACE`가 설정되어 있어야 한다. 없으면 compose가 파일을 읽다가 멈춘다(worker를 띄우지 않는 명령도 같다).
+valkey가 필요한 테스트는 `TEST_VALKEY_ADDR`와 `TEST_VALKEY_PASSWORD`가, postgres가 필요한 테스트는 `TEST_DATABASE_URL`이, OpenBao가 필요한 테스트는 `TEST_BAO_ADDR`가, PDF 변환기가 필요한 테스트는 `TEST_PDF_URL`이 없으면 건너뛴다. `make test-integration`은 넷 다 요구한다. PDF 테스트는 `test` 프로필의 `pdf-test`(`http://127.0.0.1:13000`)를 쓴다. OpenBao 테스트는 원본을 보관하는 `openbao`가 아니라 `test` 프로필의 `openbao-test`를 쓰고, 테스트가 개발용 루트 토큰으로 transit, KV, AppRole을 직접 만든다. compose의 서비스로 실행하려면 다음과 같이 한다. 새 셸에서는 compose 명령마다 `SE_WORKSPACE`가 설정되어 있어야 한다. 없으면 compose가 파일을 읽다가 멈춘다(worker를 띄우지 않는 명령도 같다).
 
 실제 스캐너를 쓰는 테스트(`internal/scan`의 `TestHandle_RealScanners…`, `internal/ruleset`의 규칙 테스트 등)는 `bin/`에 스캐너가 없으면 실패하지 않고 건너뛴다. 통합 테스트를 돌리기 전에 `make scanners`를 먼저 실행하고, `-v` 출력에서 이 테스트가 `SKIP`이 아닌지 확인한다.
 
 ```sh
 export SE_WORKSPACE=$HOME/work     # 값은 존재하는 폴더면 된다
-docker compose up -d valkey postgres
-docker compose --profile test up -d openbao-test pdf-test
+docker compose up -d postgres
+docker compose --profile test up -d valkey-test openbao-test pdf-test
 make scanners                      # 처음 한 번. 없으면 실제 스캐너 테스트가 건너뛰어진다
 TEST_VALKEY_ADDR=127.0.0.1:16379 \
+TEST_VALKEY_PASSWORD=dev-only-valkey-test-password \
 TEST_DATABASE_URL=postgres://se_app:dev-only-se-app-password@127.0.0.1:15432/secret_externalizer_test \
 TEST_BAO_ADDR=http://127.0.0.1:18200 \
 TEST_PDF_URL=http://127.0.0.1:13000 \
@@ -330,6 +355,8 @@ make test-integration
 ```
 
 Chromium이 든 `pdf`와 `pdf-test`는 쉬고 있을 때 각각 200MB 안팎을 쓰고, 컨테이너마다 1GB 한도가 있다. Docker VM의 메모리가 2GB(colima 기본값)인 기계에서 전체 스택과 `pdf-test`를 함께 띄운 채 `make test-integration`이 통과했다. VM 메모리가 그보다 작거나 다른 컨테이너가 더 떠 있어 `openbao-test`가 메모리 부족으로 죽으면(`docker inspect`의 `OOMKilled`, `internal/apply`가 `store-failed`나 연결 거부로 실패) `docker compose stop pdf`로 `pdf`를 멈추고 `openbao-test`를 다시 띄운 뒤 돌리거나 VM 메모리를 늘린다.
+
+valkey 테스트는 `test` 프로필의 `valkey-test`를 쓴다. 평문이고 비밀번호는 `dev-only-valkey-test-password`다. 테스트는 그 `default` 사용자로 붙는다.
 
 valkey는 디스크에 아무것도 남기지 않는다. valkey를 다시 띄우면 모든 세션이 사라지고 다시 로그인해야 한다. 메모리는 64MB로 제한하며, 다 차면 기존 키를 지우지 않고 새 쓰기만 거부한다(`noeviction`). 이때 새 로그인은 503 화면을 보고, 이미 로그인한 세션은 그대로 쓸 수 있다.
 

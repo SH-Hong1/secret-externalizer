@@ -8,9 +8,10 @@
 # Published ports bind to 127.0.0.1 only:
 #   web       http://localhost:8080
 #   keycloak  http://localhost:8081  (admin console user: dev-only-admin)
-#   valkey    127.0.0.1:16379        (for integration tests; 6379 is often taken
-#                                     by a locally installed redis)
 #   postgres  127.0.0.1:15432        (for integration tests)
+#   valkey-test  127.0.0.1:16379     (profile "test", for integration tests;
+#                                     6379 is often taken by a locally
+#                                     installed redis)
 #   openbao-test 127.0.0.1:18200     (profile "test", for integration tests)
 #   pdf-test  127.0.0.1:13000        (profile "test", for integration tests)
 #
@@ -18,7 +19,8 @@
 # and the networks section at the end of this file. No service can open a
 # connection outside the host's container network: the networks with
 # published ports have NAT turned off, and the others are internal. openbao
-# publishes no port and only web and the worker reach it. The worker, and so
+# publishes no port and only web and the worker reach it. valkey publishes no
+# port either and only web reaches it, over TLS and as its own ACL user. The worker, and so
 # the scanners it runs, is only on internal networks. pdf publishes no port
 # either and sits alone with web on the internal network "pdf"; see decision
 # 0043.
@@ -49,7 +51,40 @@ services:
       timeout: 3s
       retries: 30
 
-  valkey:
+  # Writes valkey's TLS certificate, its ACL file, and web's valkey password
+  # into the valkey-secrets volume on the first start, and leaves existing
+  # files alone afterwards. See deploy/valkey/make-secrets.sh. It uses the
+  # converter's image because that is the one pinned image here that has
+  # openssl; it runs nothing else from it.
+  valkey-secrets:
+    image: gotenberg/gotenberg:9.9.1-chromium@sha256:d722dfb3105c00f775125f13e3613ecbdb0040b12a7b8245c1d98ebafaefedd4
+    entrypoint: ["/bin/sh", "/make-secrets.sh"]
+    environment:
+      HOME: /tmp
+    volumes:
+      - ./deploy/valkey/make-secrets.sh:/make-secrets.sh:ro
+      - valkey-secrets:/secrets
+    # It only writes files into the volume.
+    network_mode: none
+    # Root is needed to give each file its owner. It keeps only the
+    # capabilities for that: changing owners and modes, and reaching files
+    # that already belong to another user.
+    user: "0:0"
+    read_only: true
+    tmpfs:
+      # The CA's private key lives here and goes with the container.
+      - /tmp
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+
+  valkey: &valkey
     image: valkey/valkey:9.1.3@sha256:3add1a336a920ea54770a001ab6feb3da5fceea96a40373a3a2cd469b815f0b7
     # Sessions and login attempts are short-lived, so valkey keeps nothing on
     # disk: restarting it signs everyone out.
@@ -59,6 +94,11 @@ services:
     # new logins see the 503 page, while existing sessions keep working and
     # expire as usual. Any evicting policy would instead drop live sessions or
     # pending login attempts without telling anyone.
+    #
+    # It answers only TLS, on 6379, and only to the users in users.acl: web
+    # signs in as se-web, and the health check as health, which may only
+    # PING. Clients show no certificate; web's password is the client's
+    # proof.
     command:
       - valkey-server
       - --save
@@ -69,12 +109,72 @@ services:
       - 64mb
       - --maxmemory-policy
       - noeviction
+      - --port
+      - "0"
+      - --tls-port
+      - "6379"
+      - --tls-cert-file
+      - /run/secrets/valkey/tls.crt
+      - --tls-key-file
+      - /run/secrets/valkey/tls.key
+      - --tls-ca-cert-file
+      - /run/secrets/valkey/ca.crt
+      - --tls-auth-clients
+      - "no"
+      - --aclfile
+      - /run/secrets/valkey/users.acl
+    volumes:
+      # Only valkey's own directory of the valkey-secrets volume, so valkey
+      # cannot read web's password.
+      - type: volume
+        source: valkey-secrets
+        target: /run/secrets/valkey
+        read_only: true
+        volume:
+          subpath: valkey
+    networks:
+      - valkey
+    user: "999:999"
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      valkey-secrets:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          valkey-cli --tls --cacert /run/secrets/valkey/ca.crt
+          --user health --pass health --no-auth-warning ping | grep -q PONG
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # A valkey for the integration tests, started only with --profile test. It
+  # answers plain connections with a fixed password, and never holds a real
+  # session.
+  valkey-test:
+    <<: *valkey
+    profiles: ["test"]
+    command:
+      - valkey-server
+      - --save
+      - ""
+      - --appendonly
+      - "no"
+      - --requirepass
+      - dev-only-valkey-test-password # local tests only
+    volumes: []
     ports:
       - "127.0.0.1:16379:6379"
     networks:
-      - edge
+      - test
+    depends_on: {}
     healthcheck:
-      test: ["CMD", "valkey-cli", "ping"]
+      test: ["CMD", "valkey-cli", "--no-auth-warning", "-a", "dev-only-valkey-test-password", "ping"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -293,6 +393,9 @@ services:
       WEB_ADDR: ":8080"
       WEB_BASE_URL: http://localhost:8080
       VALKEY_ADDR: valkey:6379
+      VALKEY_USERNAME: se-web
+      VALKEY_PASSWORD_FILE: /run/secrets/valkey/password
+      VALKEY_CA_FILE: /run/secrets/valkey/ca.crt
       DATABASE_URL: postgres://se_app:dev-only-se-app-password@postgres:5432/secret_externalizer # local development only
       OIDC_ISSUER_URL: http://localhost:8081/realms/secret-externalizer
       OIDC_DISCOVERY_URL: http://keycloak:8080/realms/secret-externalizer
@@ -314,6 +417,14 @@ services:
         read_only: true
         volume:
           subpath: web
+      # Only web's own directory of the valkey-secrets volume: its password
+      # and the CA, not valkey's private key.
+      - type: volume
+        source: valkey-secrets
+        target: /run/secrets/valkey
+        read_only: true
+        volume:
+          subpath: web
     user: "65532:65532"
     read_only: true
     cap_drop:
@@ -321,10 +432,11 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 15s
-    # edge for the host port, postgres, valkey, and keycloak; bao for
-    # OpenBao; pdf for the converter.
+    # edge for the host port, postgres, and keycloak; valkey for valkey;
+    # bao for OpenBao; pdf for the converter.
     networks:
       - edge
+      - valkey
       - bao
       - pdf
     depends_on:
@@ -407,7 +519,7 @@ services:
         condition: service_healthy
 
 networks:
-  # Carries the published ports of web, keycloak, postgres, and valkey, and
+  # Carries the published ports of web, keycloak, and postgres, and
   # the connections among them. A published port needs a network that is not
   # internal, so this one is a bridge with NAT turned off: its members answer
   # on their host ports but cannot open a connection outside the host's
@@ -418,6 +530,9 @@ networks:
   # The worker to postgres.
   db:
     internal: true
+  # Web to valkey.
+  valkey:
+    internal: true
   # Web and the worker to OpenBao.
   bao:
     internal: true
@@ -425,13 +540,14 @@ networks:
   # on it.
   pdf:
     internal: true
-  # The published ports of openbao-test and pdf-test (profile "test"), with
-  # NAT turned off as on edge.
+  # The published ports of valkey-test, openbao-test, and pdf-test (profile
+  # "test"), with NAT turned off as on edge.
   test:
     driver_opts:
       com.docker.network.bridge.enable_ip_masquerade: "false"
 
 volumes:
   postgres-data:
+  valkey-secrets:
   openbao-data:
   openbao-secrets:

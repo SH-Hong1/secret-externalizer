@@ -87,7 +87,8 @@ func (f *fakeIssuer) discovery(w http.ResponseWriter, _ *http.Request) {
 }
 
 // runEnv returns an environment that points run at issuerURL and at the
-// valkey in TEST_VALKEY_ADDR and the postgres in TEST_DATABASE_URL, listening
+// valkey in TEST_VALKEY_ADDR, signing in as its default user with the
+// password in TEST_VALKEY_PASSWORD when that is set, and the postgres in TEST_DATABASE_URL, listening
 // on a free local port. OpenBao is at an address where nothing listens, since
 // web starts without reaching it.
 func runEnv(t *testing.T, issuerURL, valkeyAddr, databaseURL string) func(string) string {
@@ -96,6 +97,10 @@ func runEnv(t *testing.T, issuerURL, valkeyAddr, databaseURL string) func(string
 	env["BAO_ADDR"] = "http://127.0.0.1:1"
 	env["WEB_ADDR"] = "127.0.0.1:0"
 	env["VALKEY_ADDR"] = valkeyAddr
+	if password := os.Getenv("TEST_VALKEY_PASSWORD"); password != "" {
+		env["VALKEY_USERNAME"] = "default"
+		env["VALKEY_PASSWORD_FILE"] = writeFile(t, password)
+	}
 	env["DATABASE_URL"] = databaseURL
 	env["OIDC_ISSUER_URL"] = issuerURL
 	delete(env, "OIDC_DISCOVERY_URL")
@@ -107,6 +112,9 @@ func testValkeyAddr(t *testing.T) string {
 	addr := os.Getenv("TEST_VALKEY_ADDR")
 	if addr == "" {
 		t.Skip("set TEST_VALKEY_ADDR to run against valkey")
+	}
+	if os.Getenv("TEST_VALKEY_PASSWORD") == "" {
+		t.Skip("set TEST_VALKEY_PASSWORD to the password of the valkey in TEST_VALKEY_ADDR")
 	}
 	return addr
 }
@@ -406,7 +414,10 @@ func TestValkeyRetryDelay_GivesUp(t *testing.T) {
 }
 
 func TestValkeyOption_BoundsWaiting(t *testing.T) {
-	opt := valkeyOption("valkey:6379")
+	opt, err := valkeyOption(config{valkeyAddr: "valkey:6379"})
+	if err != nil {
+		t.Fatalf("valkeyOption() error = %v", err)
+	}
 	if diff := cmp.Diff([]string{"valkey:6379"}, opt.InitAddress); diff != "" {
 		t.Errorf("valkeyOption().InitAddress mismatch (-want +got):\n%s", diff)
 	}
