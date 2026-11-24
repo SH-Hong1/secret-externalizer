@@ -2,11 +2,8 @@ package scan
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -81,7 +78,7 @@ func listFiles(ctx context.Context, dir string, excludes []string, maxBytes int6
 			l.skippedPaths = append(l.skippedPaths, rel)
 			return nil
 		}
-		f, err := textfile.Read(filepath.Join(dir, filepath.FromSlash(rel)), maxBytes)
+		f, err := textfile.Read(dir, rel, maxBytes)
 		if notText(err) {
 			l.files[rel] = sourceFile{}
 			l.skipped++
@@ -144,44 +141,9 @@ func writeCopy(copies, rel string, text []byte) error {
 // as they are on disk, and their hex SHA-256. It does not follow a symbolic
 // link and fails for a file longer than maxBytes.
 func readOriginal(dir, rel string, maxBytes int64) (_ []byte, hash string, err error) {
-	root, err := os.OpenRoot(dir)
+	data, err := textfile.ReadRaw(dir, rel, maxBytes)
 	if err != nil {
-		return nil, "", fmt.Errorf("opening project folder: %w", err)
+		return nil, "", err
 	}
-	defer func() {
-		// Only read, so a close failure loses nothing.
-		_ = root.Close()
-	}()
-	name := filepath.FromSlash(rel)
-	before, err := root.Lstat(name)
-	if err != nil {
-		return nil, "", fmt.Errorf("reading %s: %w", rel, err)
-	}
-	if !before.Mode().IsRegular() {
-		return nil, "", fmt.Errorf("reading %s: %w", rel, textfile.ErrNotRegular)
-	}
-	f, err := root.Open(name)
-	if err != nil {
-		return nil, "", fmt.Errorf("reading %s: %w", rel, err)
-	}
-	defer func() {
-		// Only read, so a close failure loses nothing.
-		_ = f.Close()
-	}()
-	after, err := f.Stat()
-	if err != nil {
-		return nil, "", fmt.Errorf("reading %s: %w", rel, err)
-	}
-	if !os.SameFile(before, after) {
-		return nil, "", fmt.Errorf("reading %s: %w", rel, textfile.ErrNotRegular)
-	}
-	data, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
-	if err != nil {
-		return nil, "", fmt.Errorf("reading %s: %w", rel, err)
-	}
-	if int64(len(data)) > maxBytes {
-		return nil, "", fmt.Errorf("reading %s: %w", rel, textfile.ErrTooLarge)
-	}
-	sum := sha256.Sum256(data)
-	return data, hex.EncodeToString(sum[:]), nil
+	return data, hexSHA256(data), nil
 }

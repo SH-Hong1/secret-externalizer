@@ -109,7 +109,7 @@ func utf8Copy(t *testing.T, project, parent string) string {
 	}
 	dst := filepath.Join(tmp, filepath.FromSlash(parent), project)
 	_, err = textfile.Walk(src, nil, func(rel string, _ fs.DirEntry) error {
-		f, err := textfile.Read(filepath.Join(src, filepath.FromSlash(rel)), maxFileBytes)
+		f, err := textfile.Read(src, rel, maxFileBytes)
 		if err != nil {
 			return err
 		}
@@ -168,7 +168,7 @@ func scanExample(t *testing.T, project, parent string) []result {
 // place finds where r is in the scanned copy and which bytes it covers.
 func place(t *testing.T, dir string, r scan.Raw) result {
 	t.Helper()
-	f, err := textfile.Read(filepath.Join(dir, filepath.FromSlash(r.File)), maxFileBytes)
+	f, err := textfile.Read(dir, r.File, maxFileBytes)
 	if err != nil {
 		t.Fatalf("reading %s for %s %s: %v", r.File, r.Tool, r.Rule, err)
 	}

@@ -11,9 +11,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"unicode/utf8"
 
 	"golang.org/x/text/encoding/korean"
@@ -101,34 +104,113 @@ func (f File) MarshalJSON() ([]byte, error) {
 	}{f.Encoding.String(), len(f.Text), f.Hash})
 }
 
-// Read reads the regular file at path and returns it as UTF-8. It never
-// reads more than maxBytes+1 bytes. It fails with ErrNotRegular for anything
-// but a regular file (a symbolic link included), ErrTooLarge when the file is
-// longer than maxBytes, ErrBinary when a NUL byte appears in the first 8,000
-// bytes after any UTF-8 byte order mark, and ErrUnknownEncoding for UTF-16,
-// for a byte order mark followed by bytes that are not UTF-8, and for bytes
-// that are neither UTF-8 nor EUC-KR. A NUL byte further into the file does
-// not make it binary.
-func Read(path string, maxBytes int64) (File, error) {
-	info, err := os.Lstat(path)
-	if err != nil {
-		return File{}, fmt.Errorf("reading %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return File{}, fmt.Errorf("reading %s: %w", path, ErrNotRegular)
-	}
-	if info.Size() > maxBytes {
-		return File{}, fmt.Errorf("reading %s: %w", path, ErrTooLarge)
-	}
-	raw, err := readLimited(path, maxBytes)
+// Read reads the regular file rel under the folder dir and returns it as
+// UTF-8. It opens the file as ReadRaw does and fails as ReadRaw does. It also
+// fails with ErrBinary when a NUL byte appears in the first 8,000 bytes after
+// any UTF-8 byte order mark, and with ErrUnknownEncoding for UTF-16, for a
+// byte order mark followed by bytes that are not UTF-8, and for bytes that
+// are neither UTF-8 nor EUC-KR. A NUL byte further into the file does not
+// make it binary.
+func Read(dir, rel string, maxBytes int64) (File, error) {
+	raw, err := ReadRaw(dir, rel, maxBytes)
 	if err != nil {
 		return File{}, err
 	}
 	f, err := Decode(raw)
 	if err != nil {
-		return File{}, fmt.Errorf("reading %s: %w", path, err)
+		return File{}, fmt.Errorf("reading %s: %w", rel, err)
 	}
 	return f, nil
+}
+
+// ReadRaw returns the bytes of the regular file rel under the folder dir
+// exactly as they are on disk. rel is a path with forward slashes. It never
+// reads more than maxBytes+1 bytes and fails with ErrTooLarge when the file
+// is longer than maxBytes.
+//
+// It fails with ErrNotRegular for anything but a regular file, a symbolic
+// link included, and for a name that stops being that regular file while it
+// is opened. It fails for a path that leaves dir, also through a symbolic
+// link, and with an error wrapping fs.ErrNotExist for a missing file. A FIFO
+// put in the file's place never blocks it. A folder on the way to the file
+// may be a symbolic link to another folder inside dir.
+func ReadRaw(dir, rel string, maxBytes int64) ([]byte, error) {
+	f, info, err := open(dir, rel)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		// The file was only read, so a close failure loses nothing.
+		_ = f.Close()
+	}()
+	if info.Size() > maxBytes {
+		return nil, fmt.Errorf("reading %s: %w", rel, ErrTooLarge)
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", rel, err)
+	}
+	if int64(len(raw)) > maxBytes {
+		return nil, fmt.Errorf("reading %s: %w", rel, ErrTooLarge)
+	}
+	return raw, nil
+}
+
+// ReadHead returns the first n bytes of the regular file rel under the
+// folder dir, or all of a shorter file. It opens the file as ReadRaw does.
+func ReadHead(dir, rel string, n int64) ([]byte, error) {
+	f, _, err := open(dir, rel)
+	if err != nil {
+		return nil, err
+	}
+	defer func() {
+		// The file was only read, so a close failure loses nothing.
+		_ = f.Close()
+	}()
+	head, err := io.ReadAll(io.LimitReader(f, n))
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", rel, err)
+	}
+	return head, nil
+}
+
+// open opens the regular file rel under the folder dir for reading and
+// returns what the opened file looks like. The caller closes the file.
+func open(dir, rel string) (*os.File, fs.FileInfo, error) {
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening the folder of %s: %w", rel, err)
+	}
+	defer func() {
+		// Nothing was written through the folder, and the opened file does
+		// not depend on it, so a close failure loses nothing.
+		_ = root.Close()
+	}()
+	name := filepath.FromSlash(rel)
+	before, err := root.Lstat(name)
+	if err != nil {
+		return nil, nil, fmt.Errorf("reading %s: %w", rel, err)
+	}
+	if !before.Mode().IsRegular() {
+		return nil, nil, fmt.Errorf("reading %s: %w", rel, ErrNotRegular)
+	}
+	// os.Root resolves a symbolic link that stays inside the folder even
+	// with O_NOFOLLOW, so the opened file is compared with what Lstat saw.
+	// O_NONBLOCK keeps a FIFO swapped in after Lstat from blocking the open.
+	f, err := root.OpenFile(name, os.O_RDONLY|syscall.O_NOFOLLOW|syscall.O_NONBLOCK, 0)
+	if err != nil {
+		return nil, nil, fmt.Errorf("opening %s: %w", rel, err)
+	}
+	after, err := f.Stat()
+	if err == nil && (!after.Mode().IsRegular() || !os.SameFile(before, after)) {
+		err = ErrNotRegular
+	}
+	if err != nil {
+		// The file was not read, so a close failure loses nothing.
+		_ = f.Close()
+		return nil, nil, fmt.Errorf("reading %s: %w", rel, err)
+	}
+	return f, after, nil
 }
 
 // Decode returns raw, the bytes of a file on disk, as a File. It fails as
@@ -140,34 +222,6 @@ func Decode(raw []byte) (File, error) {
 		return File{}, err
 	}
 	return File{Encoding: enc, Text: text, Hash: hex.EncodeToString(sum[:])}, nil
-}
-
-// readLimited reads the file at path, which must still be a regular file once
-// opened, and fails with ErrTooLarge when it holds more than maxBytes.
-func readLimited(path string, maxBytes int64) (_ []byte, err error) {
-	f, err := os.Open(path) //nolint:gosec // G304: the caller has confirmed the path is inside the walk
-	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", path, err)
-	}
-	defer func() {
-		// The file was only read, so a close failure loses nothing.
-		_ = f.Close()
-	}()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", path, err)
-	}
-	if !info.Mode().IsRegular() {
-		return nil, fmt.Errorf("reading %s: %w", path, ErrNotRegular)
-	}
-	raw, err := io.ReadAll(io.LimitReader(f, maxBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", path, err)
-	}
-	if int64(len(raw)) > maxBytes {
-		return nil, fmt.Errorf("reading %s: %w", path, ErrTooLarge)
-	}
-	return raw, nil
 }
 
 // decode converts raw to UTF-8 and reports the encoding it had. The bytes

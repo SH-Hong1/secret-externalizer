@@ -6,9 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
-	"os"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -73,7 +71,7 @@ func (s *Scanner) Scan(ctx context.Context, dir string) ([]scan.Raw, error) {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		rule, err := s.match(filepath.Join(dir, filepath.FromSlash(rel)))
+		rule, err := s.match(dir, rel)
 		if err != nil {
 			return err
 		}
@@ -91,9 +89,11 @@ func (s *Scanner) Scan(ctx context.Context, dir string) ([]scan.Raw, error) {
 	return raws, nil
 }
 
-// match returns the rule that makes the file at p a key file, or "".
-func (s *Scanner) match(p string) (string, error) {
-	base := strings.ToLower(path.Base(filepath.ToSlash(p)))
+// match returns the rule that makes the file rel under dir a key file, or
+// "". A file that is gone, cannot be read, or is no longer a regular file
+// matches no rule by its content.
+func (s *Scanner) match(dir, rel string) (string, error) {
+	base := strings.ToLower(path.Base(rel))
 	switch base {
 	case "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519":
 		return ruleName, nil
@@ -102,8 +102,8 @@ func (s *Scanner) match(p string) (string, error) {
 	case ".jks", ".p12", ".pfx", ".keystore", ".ppk":
 		return ruleExtension, nil
 	}
-	head, err := readHead(p)
-	if errors.Is(err, fs.ErrPermission) || errors.Is(err, fs.ErrNotExist) {
+	head, err := textfile.ReadHead(dir, rel, headLen)
+	if errors.Is(err, fs.ErrPermission) || errors.Is(err, fs.ErrNotExist) || errors.Is(err, textfile.ErrNotRegular) {
 		return "", nil
 	}
 	if err != nil {
@@ -116,29 +116,4 @@ func (s *Scanner) match(p string) (string, error) {
 		return ruleCert, nil
 	}
 	return "", nil
-}
-
-// readHead returns the first headLen bytes of the regular file at p.
-func readHead(p string) ([]byte, error) {
-	f, err := os.Open(p) //nolint:gosec // G304: p is a regular file found by the walk under the scanned folder
-	if err != nil {
-		return nil, fmt.Errorf("opening %s: %w", p, err)
-	}
-	defer func() {
-		// The file was only read, so a close failure loses nothing.
-		_ = f.Close()
-	}()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", p, err)
-	}
-	if !info.Mode().IsRegular() {
-		// Replaced by something else since the walk listed it.
-		return nil, nil
-	}
-	head, err := io.ReadAll(io.LimitReader(f, headLen))
-	if err != nil {
-		return nil, fmt.Errorf("reading %s: %w", p, err)
-	}
-	return head, nil
 }

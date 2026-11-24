@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -37,6 +38,109 @@ func writeFile(t *testing.T, content []byte) string {
 	return p
 }
 
+// readPath reads the file at path through the folder that holds it.
+func readPath(path string, maxBytes int64) (textfile.File, error) {
+	return textfile.Read(filepath.Dir(path), filepath.Base(path), maxBytes)
+}
+
+// linkedDir returns a folder holding the regular file sub/a.txt, the symbolic
+// link link.txt to it, the FIFO pipe, the folder sub, and the symbolic link
+// out to a folder outside that holds x.txt.
+func linkedDir(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dir, "sub"), 0o700); err != nil {
+		t.Fatalf("Mkdir error = %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "a.txt"), []byte("pw=dev-only-fake-pw\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	if err := os.Symlink(filepath.Join("sub", "a.txt"), filepath.Join(dir, "link.txt")); err != nil {
+		t.Fatalf("Symlink error = %v", err)
+	}
+	if err := syscall.Mkfifo(filepath.Join(dir, "pipe"), 0o600); err != nil {
+		t.Fatalf("Mkfifo error = %v", err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "x.txt"), []byte("outside\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	if err := os.Symlink(outside, filepath.Join(dir, "out")); err != nil {
+		t.Fatalf("Symlink error = %v", err)
+	}
+	return dir
+}
+
+// readers are the three ways to read a file, reduced to their error.
+var readers = []struct {
+	name string
+	read func(dir, rel string) error
+}{
+	{"Read", func(dir, rel string) error { _, err := textfile.Read(dir, rel, 1<<20); return err }},
+	{"ReadRaw", func(dir, rel string) error { _, err := textfile.ReadRaw(dir, rel, 1<<20); return err }},
+	{"ReadHead", func(dir, rel string) error { _, err := textfile.ReadHead(dir, rel, 16); return err }},
+}
+
+func TestReaders_RefuseWhatIsNotARegularFile(t *testing.T) {
+	dir := linkedDir(t)
+	for _, r := range readers {
+		for _, rel := range []string{"link.txt", "pipe", "sub"} {
+			if err := r.read(dir, rel); !errors.Is(err, textfile.ErrNotRegular) {
+				t.Errorf("%s(%q) error = %v, want ErrNotRegular", r.name, rel, err)
+			}
+		}
+		if err := r.read(dir, "sub/a.txt"); err != nil {
+			t.Errorf("%s(sub/a.txt) error = %v, want nil", r.name, err)
+		}
+		if err := r.read(dir, "sub/missing.txt"); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s(sub/missing.txt) error = %v, want fs.ErrNotExist", r.name, err)
+		}
+	}
+}
+
+func TestReaders_StayInsideTheFolder(t *testing.T) {
+	dir := linkedDir(t)
+	abs := filepath.Join(dir, "sub", "a.txt")
+	for _, r := range readers {
+		for _, rel := range []string{"out/x.txt", "../x.txt", "sub/../../x.txt", abs, ""} {
+			if err := r.read(dir, rel); err == nil {
+				t.Errorf("%s(%q) error = nil, want an error", r.name, rel)
+			}
+		}
+	}
+}
+
+func TestReadRaw(t *testing.T) {
+	dir := t.TempDir()
+	content := "\xEF\xBB\xBFkey=\x00value\r\n"
+	if err := os.WriteFile(filepath.Join(dir, "f.bin"), []byte(content), 0o600); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	got, err := textfile.ReadRaw(dir, "f.bin", int64(len(content)))
+	if err != nil || string(got) != content {
+		t.Errorf("ReadRaw(f.bin, %d) = %q, %v, want the bytes on disk", len(content), got, err)
+	}
+	if _, err := textfile.ReadRaw(dir, "f.bin", int64(len(content))-1); !errors.Is(err, textfile.ErrTooLarge) {
+		t.Errorf("ReadRaw(f.bin, %d) error = %v, want ErrTooLarge", len(content)-1, err)
+	}
+}
+
+func TestReadHead(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("abcdef"), 0o600); err != nil {
+		t.Fatalf("WriteFile error = %v", err)
+	}
+	for _, tt := range []struct {
+		n    int64
+		want string
+	}{{4, "abcd"}, {6, "abcdef"}, {100, "abcdef"}, {0, ""}} {
+		got, err := textfile.ReadHead(dir, "f.txt", tt.n)
+		if err != nil || string(got) != tt.want {
+			t.Errorf("ReadHead(f.txt, %d) = %q, %v, want %q", tt.n, got, err, tt.want)
+		}
+	}
+}
+
 func TestRead(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -54,7 +158,7 @@ func TestRead(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := filepath.Join("testdata", tt.file)
-			got, err := textfile.Read(path, 1<<20)
+			got, err := readPath(path, 1<<20)
 			if err != nil {
 				t.Fatalf("Read(%q) error = %v", path, err)
 			}
@@ -86,7 +190,7 @@ func TestRead_Errors(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			path := filepath.Join("testdata", tt.file)
-			_, err := textfile.Read(path, tt.max)
+			_, err := readPath(path, tt.max)
 			if !errors.Is(err, tt.wantErr) {
 				t.Errorf("Read(%q, %d) error = %v, want %v", path, tt.max, err, tt.wantErr)
 			}
@@ -96,10 +200,10 @@ func TestRead_Errors(t *testing.T) {
 
 func TestRead_SizeLimitIsInclusive(t *testing.T) {
 	p := writeFile(t, []byte("abcde"))
-	if _, err := textfile.Read(p, 5); err != nil {
+	if _, err := readPath(p, 5); err != nil {
 		t.Errorf("Read(5-byte file, 5) error = %v, want nil", err)
 	}
-	if _, err := textfile.Read(p, 4); !errors.Is(err, textfile.ErrTooLarge) {
+	if _, err := readPath(p, 4); !errors.Is(err, textfile.ErrTooLarge) {
 		t.Errorf("Read(5-byte file, 4) error = %v, want ErrTooLarge", err)
 	}
 }
@@ -117,13 +221,13 @@ func TestRead_HugeSparseFileIsRefused(t *testing.T) {
 	if err := f.Close(); err != nil {
 		t.Fatalf("Close error = %v", err)
 	}
-	if _, err := textfile.Read(p, 1<<20); !errors.Is(err, textfile.ErrTooLarge) {
+	if _, err := readPath(p, 1<<20); !errors.Is(err, textfile.ErrTooLarge) {
 		t.Errorf("Read(1 TiB sparse file, 1 MiB) error = %v, want ErrTooLarge", err)
 	}
 }
 
 func TestRead_EmptyFile(t *testing.T) {
-	got, err := textfile.Read(writeFile(t, nil), 10)
+	got, err := readPath(writeFile(t, nil), 10)
 	if err != nil {
 		t.Fatalf("Read(empty file) error = %v", err)
 	}
@@ -150,7 +254,7 @@ func TestRead_NotRegular(t *testing.T) {
 		t.Fatalf("Mkfifo error = %v", err)
 	}
 	for _, p := range []string{dir, link, fifo} {
-		if _, err := textfile.Read(p, 10); !errors.Is(err, textfile.ErrNotRegular) {
+		if _, err := readPath(p, 10); !errors.Is(err, textfile.ErrNotRegular) {
 			t.Errorf("Read(%q) error = %v, want ErrNotRegular", filepath.Base(p), err)
 		}
 	}
@@ -159,7 +263,7 @@ func TestRead_NotRegular(t *testing.T) {
 func TestRead_MultiByteAcrossProbeBoundary(t *testing.T) {
 	// A three-byte character straddles byte 8,000, where the NUL probe ends.
 	body := strings.Repeat("a", 7999) + "한" + strings.Repeat("b", 100)
-	got, err := textfile.Read(writeFile(t, []byte(body)), 1<<20)
+	got, err := readPath(writeFile(t, []byte(body)), 1<<20)
 	if err != nil || got.Encoding != textfile.UTF8 || string(got.Text) != body {
 		t.Errorf("Read(text with character at the probe boundary) = %v, %v, want UTF8 and the same text", got.Encoding, err)
 	}
@@ -167,11 +271,11 @@ func TestRead_MultiByteAcrossProbeBoundary(t *testing.T) {
 
 func TestRead_NULProbeWindow(t *testing.T) {
 	inside := []byte(strings.Repeat("a", 7999) + "\x00")
-	if _, err := textfile.Read(writeFile(t, inside), 1<<20); !errors.Is(err, textfile.ErrBinary) {
+	if _, err := readPath(writeFile(t, inside), 1<<20); !errors.Is(err, textfile.ErrBinary) {
 		t.Errorf("Read(NUL at byte 8000) error = %v, want ErrBinary", err)
 	}
 	outside := []byte(strings.Repeat("a", 8000) + "\x00")
-	if _, err := textfile.Read(writeFile(t, outside), 1<<20); err != nil {
+	if _, err := readPath(writeFile(t, outside), 1<<20); err != nil {
 		t.Errorf("Read(NUL at byte 8001) error = %v, want nil", err)
 	}
 }
@@ -251,7 +355,7 @@ func TestOffset(t *testing.T) {
 }
 
 func TestOffset_RoundTrip(t *testing.T) {
-	f, err := textfile.Read(filepath.Join("testdata", "euckr-crlf.properties"), 1<<20)
+	f, err := readPath(filepath.Join("testdata", "euckr-crlf.properties"), 1<<20)
 	if err != nil {
 		t.Fatalf("Read error = %v", err)
 	}
@@ -314,7 +418,7 @@ func TestRead_BOMFileIsValidated(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := textfile.Read(writeFile(t, []byte(tt.content)), 1<<20)
+			got, err := readPath(writeFile(t, []byte(tt.content)), 1<<20)
 			if !errors.Is(err, tt.wantErr) {
 				t.Errorf("Read(%q) = %v, %v, want error %v", tt.content, got.Encoding, err, tt.wantErr)
 			}
@@ -334,7 +438,7 @@ func TestDecode(t *testing.T) {
 			if err != nil {
 				t.Fatalf("ReadFile(%q) error = %v", path, err)
 			}
-			want, wantErr := textfile.Read(path, 1<<20)
+			want, wantErr := readPath(path, 1<<20)
 			got, gotErr := textfile.Decode(raw)
 			if (gotErr == nil) != (wantErr == nil) || (gotErr != nil && !sameSentinel(gotErr, wantErr)) {
 				t.Fatalf("Decode(%s) error = %v, want the error Read gives, %v", e.Name(), gotErr, wantErr)
@@ -371,7 +475,7 @@ func charBoundaries(text []byte) []int {
 func TestCharOffset(t *testing.T) {
 	for _, name := range []string{"utf8.txt", "euckr-crlf.properties", "cp949-extended.txt"} {
 		t.Run(name, func(t *testing.T) {
-			f, err := textfile.Read(filepath.Join("testdata", name), 1<<20)
+			f, err := readPath(filepath.Join("testdata", name), 1<<20)
 			if err != nil {
 				t.Fatalf("Read(%s) error = %v", name, err)
 			}

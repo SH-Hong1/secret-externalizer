@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"maps"
-	"path/filepath"
 	"slices"
 	"unicode/utf8"
 
@@ -109,7 +108,7 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 	}
 	bom := 0
 	if src.text {
-		f, err := textfile.Read(filepath.Join(dir, filepath.FromSlash(rel)), maxBytes)
+		f, err := textfile.Read(dir, rel, maxBytes)
 		if err != nil || f.Hash != src.hash {
 			return pf, len(raws)
 		}
