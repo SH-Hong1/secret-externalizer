@@ -79,3 +79,69 @@ jobs:
           sh scripts/commit-lint.sh --title "$PR_TITLE"
           printf '%s\n' "$PR_BODY" | tr -d '\r' > "$RUNNER_TEMP/body"
           sh scripts/commit-lint.sh --closes "$RUNNER_TEMP/body"
+
+  review:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      BASE_REF: ${{ github.base_ref }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Collect the change
+        id: change
+        run: |
+          files=$(git diff --name-only "origin/$BASE_REF...HEAD" -- '*.go' go.mod '*.html' '*.tmpl' '*.sql')
+          if [ -z "$files" ]; then
+            echo "No Go source, go.mod, template, or migration changed; nothing to review."
+            echo "reviewable=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          mkdir -p .review
+          git diff "origin/$BASE_REF...HEAD" > .review/change.diff
+          echo "reviewable=true" >> "$GITHUB_OUTPUT"
+      - name: Check the reviewer credentials
+        if: steps.change.outputs.reviewable == 'true'
+        env:
+          OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+        run: |
+          if [ -z "$OAUTH_TOKEN" ] && [ -z "$API_KEY" ]; then
+            echo "::error::Neither CLAUDE_CODE_OAUTH_TOKEN nor ANTHROPIC_API_KEY is set; the rules review cannot run."
+            exit 1
+          fi
+      - name: Review the change
+        id: review
+        if: steps.change.outputs.reviewable == 'true'
+        continue-on-error: true
+        uses: anthropics/claude-code-action@eb56b6666facdbd501035f4a0269d8caee2e7a8b # v1.0.289
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          github_token: ${{ github.token }}
+          prompt: Follow the instructions in .github/review-prompt.md.
+          claude_args: >-
+            --model sonnet
+            --tools Read,Grep,Glob
+            --json-schema '{"type":"object","properties":{"violations":{"type":"array","items":{"type":"object","properties":{"file":{"type":"string"},"line":{"type":"integer"},"section":{"type":"string"},"fix":{"type":"string"}},"required":["file","line","section","fix"],"additionalProperties":false}}},"required":["violations"],"additionalProperties":false}'
+      - name: Report the verdict
+        if: steps.change.outputs.reviewable == 'true'
+        env:
+          VERDICT: ${{ steps.review.outputs.structured_output }}
+          OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'review: override') }}
+        run: |
+          printf '%s' "$VERDICT" > "$RUNNER_TEMP/verdict.json"
+          status=0
+          sh scripts/review-verdict.sh "$RUNNER_TEMP/verdict.json" "$OVERRIDE" > "$RUNNER_TEMP/comment.md" || status=$?
+          if [ ! -s "$RUNNER_TEMP/comment.md" ]; then
+            printf '## AI 규칙 검토\n\nAGENTS.md의 규칙과 어긋나는 곳이 없습니다.\n' > "$RUNNER_TEMP/comment.md"
+          fi
+          cat "$RUNNER_TEMP/comment.md"
+          gh pr comment "$PR_NUMBER" --edit-last --create-if-none --body-file "$RUNNER_TEMP/comment.md"
+          exit "$status"

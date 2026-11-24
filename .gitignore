@@ -1,3 +1,6 @@
 .superpowers/
 .playwright-mcp/
 bin/
+
+# The diff the CI rules review reads.
+/.review/

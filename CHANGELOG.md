@@ -6,6 +6,7 @@
 
 ### 변경
 
+- AGENTS.md 규칙 검토를 PR마다 CI의 `review` 작업이 한다. 검토자(Claude)가 Go 소스, `go.mod`, 템플릿, SQL이 바뀐 PR의 diff를 읽고 위반 목록을 내면, PR에 댓글 하나를 남기고 위반이 있으면 체크를 실패시킨다. `review: override` 라벨은 Security 절이 아닌 위반만 통과시키고, 판정을 내지 못하면 체크가 실패한다. 저장소 secret `CLAUDE_CODE_OAUTH_TOKEN`이나 `ANTHROPIC_API_KEY`가 필요하다. `main`은 `check`, `integration`, `pull-request`, `review`가 통과해야 병합된다(`docs/decisions/0073-rules-review-runs-in-ci.md`)
 - PR과 `main` push마다 GitHub Actions가 `make check`(`check`), compose 테스트 서비스로 `make test-integration`(`integration`), PR 제목과 `Closes #N` 줄(`pull-request`)을 검사한다. 병합은 스쿼시만 허용하고, 스쿼시 커밋의 제목과 본문은 PR의 제목과 본문이다. PR과 Issue 템플릿을 두었다(`docs/decisions/0074-one-task-one-squashed-pr-merged-by-ci.md`)
 - 검사를 Claude Code hook이 아니라 커밋할 때 git hook이 한다. `pre-commit`은 검사 대상 파일이 스테이징되어 있으면 Go 파일을 포맷하고 `make check`를 실행하고, `commit-msg`는 커밋 메시지가 Angular 형식이고 이슈를 가리키는지 확인한다. 새로 받은 저장소에서는 `make setup`을 실행한다. Claude Code의 편집 hook과 종료 hook(`make check`, 규칙 검토)은 없앴다(`docs/decisions/0072-checks-run-in-git-hooks-and-ci.md`)
 - betterleaks가 base64, hex, 퍼센트 인코딩을 풀어 찾은 비밀을 버리지 않고 항목으로 보고한다. 항목의 값은 파일에 적힌 인코딩된 글자이고, 스캔이 그 글자를 직접 풀어 보고된 값이 나올 때만 항목으로 삼는다. 그래서 판정하고 외부화할 수 있으며(소스의 인코딩된 글자가 placeholder로 바뀌고 OpenBao에 그 글자가 저장된다), 같은 파일의 다른 항목도 주변 줄을 잃지 않는다. 판정 화면의 탐지 표시에 "(base64 디코딩)"처럼 인코딩이 보인다. 확인하지 못한 결과와 고객정보는 전처럼 버린다(`docs/decisions/0071-encoded-values-are-findings.md`)

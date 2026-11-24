@@ -157,6 +157,7 @@ test-integration:
 # hooks tests the git hooks, the commit message check, and the linter rules.
 hooks: $(BIN)/gofumpt $(BIN)/golangci-lint
 	sh scripts/hooks_test.sh
+	sh scripts/review-verdict_test.sh
 	bash scripts/lint-rules_test.sh
 
 scanners-test:
