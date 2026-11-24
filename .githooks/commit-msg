@@ -1,0 +1,4 @@
+#!/bin/sh
+# Checks the commit message. See AGENTS.md, "Commit messages".
+set -eu
+exec sh "$(git rev-parse --show-toplevel)/scripts/commit-lint.sh" "$1"
