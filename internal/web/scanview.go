@@ -11,6 +11,11 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 )
 
+// workerSeenWithin is how long a worker may go without asking the queue for
+// a job before a queued request says that no worker answers. A worker asks
+// every couple of seconds.
+const workerSeenWithin = 30 * time.Second
+
 // timeLayout formats times for the pages. Times are shown in UTC with the
 // zone named, so a reader never has to guess.
 const timeLayout = "2006-01-02 15:04:05 UTC"
@@ -39,6 +44,7 @@ func categoryOrder() []finding.Category {
 // path of the report of a succeeded scan. Confirmation is set for a scan
 // that confirms an apply.
 type scanPage struct {
+	NoWorker      bool
 	User          auth.User
 	ProjectName   string
 	Scan          scan.Scan

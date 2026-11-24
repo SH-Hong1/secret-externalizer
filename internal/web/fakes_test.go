@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"slices"
 	"sync"
+	"time"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
@@ -255,6 +256,9 @@ type fakeScans struct {
 	getErr     error
 	listErr    error
 	countsErr  error
+	aliveErr   error
+	// noWorker makes WorkerAlive report that no worker is serving the queue.
+	noWorker bool
 
 	mu     sync.Mutex
 	scans  map[scan.ID]scan.Scan
@@ -280,6 +284,10 @@ func (f *fakeScans) RequestScan(_ context.Context, projectID project.ID, by audi
 	f.next++
 	f.scans[f.next] = scan.Scan{ID: f.next, ProjectID: projectID, Status: scan.StatusQueued, RequestedBy: by.Subject, RequesterName: by.Name}
 	return f.next, nil
+}
+
+func (f *fakeScans) WorkerAlive(_ context.Context, _ time.Duration) (bool, error) {
+	return !f.noWorker, f.aliveErr
 }
 
 func (f *fakeScans) Scan(_ context.Context, id scan.ID) (scan.Scan, error) {
@@ -403,6 +411,10 @@ func (b *blockingStore) ScansByProject(ctx context.Context, _ project.ID) ([]sca
 
 func (b *blockingStore) CategoryCounts(ctx context.Context, _ scan.ID) ([]scan.CategoryCount, error) {
 	return nil, b.wait(ctx)
+}
+
+func (b *blockingStore) WorkerAlive(ctx context.Context, _ time.Duration) (bool, error) {
+	return true, b.wait(ctx)
 }
 
 func (b *blockingStore) LatestScan(ctx context.Context, _ project.ID) (scan.Scan, error) {

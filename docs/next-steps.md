@@ -108,7 +108,7 @@
 - [ ] `db.Store.Report`의 작은 정리: 판정 이력 쿼리가 전체 줄 수를 줄마다 되풀이한다. 건수가 `run_mark`를 계산하던 것과 주석의 줄바꿈은 2026-11-24에 고쳤다(0059).
 - [ ] 프론트엔드 파일의 확장자 목록이 `triage.Frontend`와 `db`의 `frontendFile`(리포트의 절을 나누는 SQL) 두 곳에 있다. 확장자를 바꿀 때 함께 바꾼다. `TestReport_Sections`가 어긋남을 잡는다(0059).
 - [ ] pdf 컨테이너에 `memswap_limit`이 없다. VM에 스왑이 있으면 메모리 한도를 넘어 스왑을 쓸 수 있다.
-- [ ] web이 새 마이그레이션을 적용한 뒤 이전 worker 이미지가 다시 시작하면 `schema_migration records versions [N] …`로 뜨지 않고 `restart: unless-stopped`로 계속 다시 시작한다. 계획 6 Task 6에서 실제로 일어났다(worker를 다시 빌드해 풀었다). 화면에는 스캔이 "대기"로만 보인다. 배포 순서를 문서로만 막고 있으므로(`docs/local-run.md`의 "이미지를 다시 빌드할 때"), web이 worker의 상태를 보이거나 worker가 같은 오류로 멈춘 것을 알리는 방법을 정한다.
+- [x] web이 새 마이그레이션을 적용한 뒤 이전 worker 이미지가 계속 다시 시작해도 화면에는 스캔이 "대기"로만 보인다. 2026-11-24에 worker가 가져가기를 시도할 때마다 시각을 남기게 하고, 대기 중인 스캔 화면과 적용 결과 화면이 최근에 worker가 없으면 "worker가 응답하지 않습니다"를 보이게 했다. 프로젝트 화면과 점검 중인 적용 화면에는 넣지 않았다(`docs/decisions/0062-worker-liveness-notice.md`).
 - [ ] 다음에 web 이미지를 빌드하면 판정 화면에서 세션을 지운 뒤 목록 줄과 원본 보기를 눌러, 로그인으로 옮겨 가는지와 오류 화면이 보이는지 실제 스택에서 확인한다(0055의 "알려진 한계").
 - [ ] 2GB Docker VM에서 web 이미지 빌드가 다른 서비스와 겹치면 VM이 메모리 부족으로 멈추고 Keycloak이 죽었다(90분 넘게 끝나지 않음). worker 하나만 빌드해도 약 16분 걸렸다. VM 메모리를 늘리거나, Go 빌드를 호스트에서 하고 이미지는 결과만 복사하는 방법을 정한다. 2026-11-23에는 `make test-integration` 전체를 로컬 스택(web, worker, Keycloak)이 떠 있는 채로 돌리자 `openbao-test`가 메모리 부족으로 죽었고(종료 코드 137), `TestReportPDF_PrintsAtEveryCap`이 변환기의 503/400으로 실패했다. `openbao-test`를 다시 띄워 `internal/apply`를, 그것을 멈추고 `internal/web`의 PDF 테스트를 따로 돌리면 통과한다.
 - [ ] "확인 스캔의 리포트 요약이 판정 화면 탭과 같다"는 확인 스캔이 마지막 스캔일 때만 확인할 수 있다. Task 6에서는 마지막 스캔(#7, #8)으로 확인했다.
