@@ -47,7 +47,7 @@ Three sections need particular care, because no linter covers them:
   error message, a template, a database column, a report, the manifest, or a
   session. Flag any copy of customer data.
 - **Formatting and tooling.** Flag a dependency added to `go.mod` that has no
-  record in `docs/decisions/`. `make check` enforces the rest of this section.
+  record in `docs/adr/`. `make check` enforces the rest of this section.
 
 ## What not to report
 

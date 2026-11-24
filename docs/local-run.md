@@ -32,7 +32,7 @@ docker compose down -v         # 볼륨까지 지운다. 다음 기동 때 realm
 | worker | `/workspace` (`WORKSPACE_ROOT`) | 읽기 전용 | 스캔과 스캐너(betterleaks, opengrep) |
 | applier | `/workspace-rw` (`APPLY_WORKSPACE_ROOT`) | 읽기-쓰기 | 사용자가 확인한 적용과 그 점검 |
 
-스캐너는 worker 컨테이너에서만 돌고, 그 컨테이너에는 읽기 전용 마운트만 있다. 그래서 잘못 만들어졌거나 바뀐 스캐너도 소스를 바꿀 수 없다. applier는 스캐너를 실행하지 않는다. 적용이 끝난 뒤의 확인 스캔은 스캔이므로 worker가 한다. 두 서비스는 서로 다른 AppRole을 쓴다. worker(`se-worker`)는 지문 계산과 원본 보관·정리만 할 수 있고 외부화한 값에는 닿지 못하며, applier(`se-applier`)는 외부화한 값을 쓰고 읽을 수 있지만 원본을 보관하거나 읽지 못한다(`docs/decisions/0068-scan-and-apply-in-separate-containers.md`, `docs/decisions/0069-separate-approles-and-role-sync.md`).
+스캐너는 worker 컨테이너에서만 돌고, 그 컨테이너에는 읽기 전용 마운트만 있다. 그래서 잘못 만들어졌거나 바뀐 스캐너도 소스를 바꿀 수 없다. applier는 스캐너를 실행하지 않는다. 적용이 끝난 뒤의 확인 스캔은 스캔이므로 worker가 한다. 두 서비스는 서로 다른 AppRole을 쓴다. worker(`se-worker`)는 지문 계산과 원본 보관·정리만 할 수 있고 외부화한 값에는 닿지 못하며, applier(`se-applier`)는 외부화한 값을 쓰고 읽을 수 있지만 원본을 보관하거나 읽지 못한다(`docs/adr/0068-scan-and-apply-in-separate-containers.md`, `docs/adr/0069-separate-approles-and-role-sync.md`).
 
 ```sh
 export SE_WORKSPACE=$HOME/work     # 프로젝트 폴더들이 들어 있는 폴더
@@ -108,7 +108,7 @@ git add -A && git -c user.name=dev -c user.email=dev@example.invalid commit -q -
 
 ### 저장된 값을 확인하기
 
-루트 토큰은 초기화 뒤 폐기되므로 applier의 AppRole로 로그인해 읽는다. 값은 base64로 저장되어 있고, 디코딩하면 소스의 글자에서 그 파일 종류의 이스케이프를 푼 값이다(`docs/decisions/0070-store-the-value-the-text-stands-for.md`). 이 명령은 값을 터미널에 출력하므로 로컬 개발 환경의 가짜 값에만 쓴다.
+루트 토큰은 초기화 뒤 폐기되므로 applier의 AppRole로 로그인해 읽는다. 값은 base64로 저장되어 있고, 디코딩하면 소스의 글자에서 그 파일 종류의 이스케이프를 푼 값이다(`docs/adr/0070-store-the-value-the-text-stands-for.md`). 이 명령은 값을 터미널에 출력하므로 로컬 개발 환경의 가짜 값에만 쓴다.
 
 ```sh
 docker compose exec -e BAO_ADDR=https://127.0.0.1:8200 -e BAO_CACERT=/openbao/secrets/tls/ca.crt openbao sh -c '
@@ -150,7 +150,7 @@ docker compose exec -e BAO_ADDR=https://127.0.0.1:8200 -e BAO_CACERT=/openbao/se
 
 ## OpenBao
 
-worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하고, 판정 전의 원본을 OpenBao KV v2에 보관한다. applier는 외부화한 값을 KV v2에 쓴다. 설정은 `deploy/openbao/config.hcl`과 봉인만 담은 `deploy/openbao/seal-static.hcl`에, 역할과 정책은 `deploy/openbao/roles.sh`와 `deploy/openbao/policies/`에 있다. 이유는 `docs/decisions/0017-openbao-setup.md`, `docs/decisions/0067-openbao-seal-key-on-host-and-tls.md`, `docs/decisions/0069-separate-approles-and-role-sync.md`에 있다.
+worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하고, 판정 전의 원본을 OpenBao KV v2에 보관한다. applier는 외부화한 값을 KV v2에 쓴다. 설정은 `deploy/openbao/config.hcl`과 봉인만 담은 `deploy/openbao/seal-static.hcl`에, 역할과 정책은 `deploy/openbao/roles.sh`와 `deploy/openbao/policies/`에 있다. 이유는 `docs/adr/0017-openbao-setup.md`, `docs/adr/0067-openbao-seal-key-on-host-and-tls.md`, `docs/adr/0069-separate-approles-and-role-sync.md`에 있다.
 
 | 서비스 | 내용 |
 |---|---|
@@ -184,7 +184,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
 
 - 호스트 파일과 볼륨의 키가 다르면 아무것도 바꾸지 않고 멈춘다. `openbao-data`를 연 키를 호스트 파일 자리에 두고 다시 실행한다.
 - `openbao-data` 볼륨은 있는데 어디에도 키가 없으면 새 키를 만들지 않고 멈춘다. 새 키로는 그 저장소를 열 수 없다.
-- 적용은 외부화한 값을 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 쓴다. 이미 값이 있으면 저장된 바이트를 다시 읽어 지문을 비교하고, 다를 때만 check-and-set으로 새 버전을 쓴다. 이전 값은 이전 버전에 남는다. applier 정책은 이 경로를 쓰고 읽을 수만 있고 지우거나 메타데이터를 볼 수 없다. KV v2 마운트는 경로마다 버전을 100개 남긴다. 값 하나는 16MiB까지 저장하고, 그보다 큰 값(큰 키 파일)은 `too-large`로 건너뛰어 소스에 남는다. OpenBao는 요청 하나를 32MiB까지 받는다(`docs/decisions/0035-externalized-values-in-openbao.md`).
+- 적용은 외부화한 값을 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 쓴다. 이미 값이 있으면 저장된 바이트를 다시 읽어 지문을 비교하고, 다를 때만 check-and-set으로 새 버전을 쓴다. 이전 값은 이전 버전에 남는다. applier 정책은 이 경로를 쓰고 읽을 수만 있고 지우거나 메타데이터를 볼 수 없다. KV v2 마운트는 경로마다 버전을 100개 남긴다. 값 하나는 16MiB까지 저장하고, 그보다 큰 값(큰 키 파일)은 `too-large`로 건너뛰어 소스에 남는다. OpenBao는 요청 하나를 32MiB까지 받는다(`docs/adr/0035-externalized-values-in-openbao.md`).
 
 ### 역할을 나누기 전에 만든 저장소
 
@@ -213,7 +213,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
 
 ## valkey
 
-valkey는 세션과 진행 중인 로그인 시도를 가진다. TLS만 받고 ACL 사용자로만 쓸 수 있다(`docs/decisions/0066-valkey-auth-and-tls.md`).
+valkey는 세션과 진행 중인 로그인 시도를 가진다. TLS만 받고 ACL 사용자로만 쓸 수 있다(`docs/adr/0066-valkey-auth-and-tls.md`).
 
 | 서비스 | 내용 |
 |---|---|
@@ -233,7 +233,7 @@ valkey는 세션과 진행 중인 로그인 시도를 가진다. TLS만 받고 A
 
 ## PDF 변환기
 
-리포트의 PDF는 web이 `pdf` 서비스(Gotenberg 9.9.1의 Chromium 전용 이미지)에 HTML, 스타일시트, 글꼴을 한 요청으로 보내 만든다. 설정과 이유는 `docs/decisions/0043-pdf-converter-setup.md`에 있다.
+리포트의 PDF는 web이 `pdf` 서비스(Gotenberg 9.9.1의 Chromium 전용 이미지)에 HTML, 스타일시트, 글꼴을 한 요청으로 보내 만든다. 설정과 이유는 `docs/adr/0043-pdf-converter-setup.md`에 있다.
 
 | 서비스 | 내용 |
 |---|---|
@@ -269,7 +269,7 @@ realm 설정은 `deploy/keycloak/realm.json`에 있다. Keycloak은 기동할 �
 
 ## 네트워크
 
-서비스는 필요한 연결만 나르는 네트워크에 붙는다. 어느 서비스도 Docker 네트워크 밖으로 연결하지 못한다(`docs/decisions/0065-compose-networks.md`).
+서비스는 필요한 연결만 나르는 네트워크에 붙는다. 어느 서비스도 Docker 네트워크 밖으로 연결하지 못한다(`docs/adr/0065-compose-networks.md`).
 
 | 네트워크 | 종류 | 붙는 서비스 |
 |---|---|---|

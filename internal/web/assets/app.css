@@ -1,7 +1,7 @@
 /*
  * The stylesheet of the web pages. make css builds static/app.css from this
  * file and the utility classes the templates use; make css-check fails when
- * the committed build is out of date. The values come from docs/design.
+ * the committed build is out of date. The values come from docs/design/screens.
  */
 @import "tailwindcss" source(none);
 @source "../templates";
