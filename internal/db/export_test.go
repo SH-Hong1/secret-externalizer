@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"strings"
@@ -605,47 +606,34 @@ func PlanFindings(stored []StoredFinding, bundles []AutoBundle, findings []findi
 	return decided, len(p.rows), len(p.bundles)
 }
 
-// HeldClose is a transaction that has closed a job as done and not yet
-// committed, so that it holds the lock on the job's row.
-type HeldClose struct {
-	tx  pgx.Tx
-	pid int
-}
-
-// HoldJobClose closes the job with the given ID as done in a transaction it
-// leaves open. The caller ends it with Commit.
-func (s *Store) HoldJobClose(ctx context.Context, jobID int64) (*HeldClose, error) {
+// CloseJobAfterBlocking closes the job with the given ID as done in a
+// transaction, calls start once the job's row is locked, and commits only
+// after another session waits for that lock, so that whatever start began
+// is blocked behind the close when it commits.
+func (s *Store) CloseJobAfterBlocking(ctx context.Context, jobID int64, start func()) (err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
-		return nil, err
+		return fmt.Errorf("starting transaction: %w", err)
 	}
-	h := &HeldClose{tx: tx}
-	if err := tx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&h.pid); err != nil {
-		return nil, errors.Join(err, tx.Rollback(ctx))
+	defer rollback(ctx, tx, &err)
+
+	var pid int
+	if err := tx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
+		return fmt.Errorf("reading backend pid: %w", err)
 	}
 	if _, err := tx.Exec(ctx, "UPDATE job SET state = 'done' WHERE id = $1", jobID); err != nil {
-		return nil, errors.Join(err, tx.Rollback(ctx))
+		return fmt.Errorf("closing job %d: %w", jobID, err)
 	}
-	return h, nil
-}
-
-// WaitBlocked returns once another session waits for a lock that h holds,
-// or when ctx ends.
-func (h *HeldClose) WaitBlocked(ctx context.Context, s *Store) error {
-	for {
-		var blocked bool
+	start()
+	for blocked := false; !blocked; {
 		if err := s.pool.QueryRow(ctx,
-			"SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))", h.pid).
+			"SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))", pid).
 			Scan(&blocked); err != nil {
-			return err
-		}
-		if blocked {
-			return nil
+			return fmt.Errorf("looking for a session blocked by the close: %w", err)
 		}
 	}
-}
-
-// Commit commits the close.
-func (h *HeldClose) Commit(ctx context.Context) error {
-	return h.tx.Commit(ctx)
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing close of job %d: %w", jobID, err)
+	}
+	return nil
 }

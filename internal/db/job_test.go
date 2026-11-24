@@ -204,17 +204,12 @@ func TestExtendJob_WhileCloseCommits(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimJob(worker-a) error = %v", err)
 	}
-	held, err := s.HoldJobClose(ctx, j.ID)
-	if err != nil {
-		t.Fatalf("HoldJobClose(%d) error = %v", j.ID, err)
-	}
 	extended := make(chan error, 1)
-	go func() { extended <- s.ExtendJob(ctx, j.ID, "worker-a", time.Minute) }()
-	if err := held.WaitBlocked(ctx, s); err != nil {
-		t.Fatalf("WaitBlocked() error = %v", err)
+	start := func() {
+		go func() { extended <- s.ExtendJob(ctx, j.ID, "worker-a", time.Minute) }()
 	}
-	if err := held.Commit(ctx); err != nil {
-		t.Fatalf("Commit() error = %v", err)
+	if err := s.CloseJobAfterBlocking(ctx, j.ID, start); err != nil {
+		t.Fatalf("CloseJobAfterBlocking(%d) error = %v", j.ID, err)
 	}
 	if err := <-extended; !errors.Is(err, job.ErrClosed) {
 		t.Errorf("ExtendJob(worker-a) during its own close error = %v, want ErrClosed", err)
