@@ -391,3 +391,22 @@ func TestDashboard_Rules(t *testing.T) {
 		t.Errorf("Dashboard({}).Rules (-want +got):\n%s", diff)
 	}
 }
+
+func TestDashboard_PreviousScanFollowsFinishOrder(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	// The IDs and the finish order disagree: the scan with the lowest ID
+	// finished second, and the one with the middle ID finished first.
+	second := doneAt(t, s, pid, 20)
+	doneAt(t, s, pid, 10)
+	basis := doneAt(t, s, pid, 30)
+
+	d := readDashboard(t, s, dashboard.Filter{})
+	if len(d.Projects) != 1 {
+		t.Fatalf("Dashboard({}).Projects has %d projects, want 1", len(d.Projects))
+	}
+	if got := d.Projects[0]; got.Basis != basis || got.Previous != second {
+		t.Errorf("Dashboard({}) basis, previous = %d, %d; want %d, %d (the scan that finished just before the basis)",
+			got.Basis, got.Previous, basis, second)
+	}
+}

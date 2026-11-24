@@ -267,3 +267,26 @@ func TestApplyExcludesScan(t *testing.T) {
 		}
 	})
 }
+
+func TestHasNewerScan(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	other := newProject(t, s, "other")
+	first := doneAt(t, s, pid, 0)
+	check := func(pr project.ID, id scan.ID, want bool) {
+		t.Helper()
+		got, err := s.HasNewerScan(t.Context(), pr, id)
+		if err != nil {
+			t.Fatalf("HasNewerScan(%d, %d) error = %v", pr, id, err)
+		}
+		if got != want {
+			t.Errorf("HasNewerScan(%d, %d) = %v, want %v", pr, id, got, want)
+		}
+	}
+	check(pid, first, false)
+	doneAt(t, s, other, 1)
+	check(pid, first, false)
+	second := doneAt(t, s, pid, 2)
+	check(pid, first, true)
+	check(pid, second, false)
+}

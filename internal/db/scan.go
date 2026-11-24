@@ -209,3 +209,15 @@ func (s *Store) LatestScan(ctx context.Context, projectID project.ID) (scan.Scan
 	}
 	return sc, nil
 }
+
+// HasNewerScan reports whether the project has a scan with an ID above id,
+// whatever the status of that scan.
+func (s *Store) HasNewerScan(ctx context.Context, projectID project.ID, id scan.ID) (bool, error) {
+	var found bool
+	err := s.pool.QueryRow(ctx,
+		"SELECT EXISTS (SELECT 1 FROM scan WHERE project_id = $1 AND id > $2)", projectID, id).Scan(&found)
+	if err != nil {
+		return false, fmt.Errorf("looking for a scan of project %d after scan %d: %w", projectID, id, err)
+	}
+	return found, nil
+}

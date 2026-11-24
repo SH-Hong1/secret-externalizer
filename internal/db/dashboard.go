@@ -62,7 +62,7 @@ func (s *Store) Dashboard(ctx context.Context, f dashboard.Filter) (dashboard.Da
 
 // readProjectStates returns every project by name with its newest scan, its
 // newest succeeded scan and the succeeded scan before that, and the numbers
-// of the two.
+// of the two. All three are ordered by when the scan ended, then by ID.
 func readProjectStates(ctx context.Context, tx pgx.Tx) ([]dashboard.ProjectState, error) {
 	rows, err := tx.Query(ctx, `
 		SELECT p.id, p.name, p.path, p.excludes, p.created_by, p.created_at,
@@ -77,8 +77,11 @@ func readProjectStates(ctx context.Context, tx pgx.Tx) ([]dashboard.ProjectState
 			ORDER BY `+scanEnd+` DESC, sc.id DESC LIMIT 1
 		) basis ON true
 		LEFT JOIN LATERAL (
-			SELECT max(sc.id) AS id FROM scan sc
-			WHERE sc.project_id = p.id AND sc.status = 'succeeded' AND sc.id < basis.id
+			SELECT sc.id FROM scan sc
+			WHERE sc.project_id = p.id AND sc.status = 'succeeded'
+				AND (`+scanEnd+`, sc.id) < (
+					SELECT coalesce(b.finished_at, b.requested_at), b.id FROM scan b WHERE b.id = basis.id)
+			ORDER BY `+scanEnd+` DESC, sc.id DESC LIMIT 1
 		) prev ON true
 		ORDER BY p.name, p.id`)
 	if err != nil {

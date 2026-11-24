@@ -37,6 +37,7 @@ type Store interface {
 	FailScan(ctx context.Context, jobID int64, workerID string, id ID, reason string) error
 	SaveResult(ctx context.Context, jobID int64, workerID string, id ID, r Result) error
 	SettledFingerprints(ctx context.Context, id project.ID) ([]string, error)
+	HasNewerScan(ctx context.Context, projectID project.ID, id ID) (bool, error)
 }
 
 // Fingerprinter computes the fingerprints of values, in the order of values.
@@ -239,7 +240,7 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 		return fmt.Errorf("saving scan result: %w", err)
 	}
 	r.logSummary(ctx, j, id, res, d, files.skippedPaths)
-	r.removeStalePending(ctx, id, int64(p.ID), keep)
+	r.removeStalePending(ctx, id, p.ID, keep)
 	return nil
 }
 
@@ -379,10 +380,12 @@ func (r *Runner) park(ctx context.Context, projectID int64, originals map[string
 }
 
 // removeStalePending deletes the pending originals of the project whose
-// fingerprints are not in keep. It runs only after the result is saved, and
-// a failure is logged and leaves the rest for the next scan.
-func (r *Runner) removeStalePending(ctx context.Context, id ID, projectID int64, keep map[string]bool) {
-	fps, err := r.originals.ListPending(ctx, projectID)
+// fingerprints are not in keep. It runs only after the result is saved. A
+// newer scan of the project may have parked values since, so before each
+// delete it checks that no newer scan exists and stops at the first one that
+// does. A failure is logged and leaves the rest for the next scan.
+func (r *Runner) removeStalePending(ctx context.Context, id ID, projectID project.ID, keep map[string]bool) {
+	fps, err := r.originals.ListPending(ctx, int64(projectID))
 	if err != nil {
 		r.logger.WarnContext(ctx, "removing stale pending values failed", "scan_id", id, "project_id", projectID, "error", err.Error())
 		return
@@ -391,7 +394,15 @@ func (r *Runner) removeStalePending(ctx context.Context, id ID, projectID int64,
 		if keep[fp] {
 			continue
 		}
-		if err := r.originals.DeletePending(ctx, projectID, fp); err != nil {
+		newer, err := r.store.HasNewerScan(ctx, projectID, id)
+		if err != nil {
+			r.logger.WarnContext(ctx, "removing stale pending values failed", "scan_id", id, "project_id", projectID, "error", err.Error())
+			return
+		}
+		if newer {
+			return
+		}
+		if err := r.originals.DeletePending(ctx, int64(projectID), fp); err != nil {
 			r.logger.WarnContext(ctx, "removing stale pending values failed", "scan_id", id, "project_id", projectID, "error", err.Error())
 			return
 		}
