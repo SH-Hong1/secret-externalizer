@@ -905,7 +905,7 @@ func (r *Runner) decodeValues(ctx context.Context, p *prepared) error {
 			continue
 		}
 		t := targets[0]
-		if bytes.Equal(t.stored, t.value) {
+		if subtle.ConstantTimeCompare(t.stored, t.value) == 1 {
 			for _, o := range targets {
 				o.storedFingerprint = o.Fingerprint
 			}
@@ -946,7 +946,7 @@ func (f *sourceFile) decodeValue(t *target) error {
 	if err != nil {
 		return err
 	}
-	if bytes.Equal(v, t.value) {
+	if subtle.ConstantTimeCompare(v, t.value) == 1 {
 		clear(v)
 		t.stored = t.value
 		return nil
