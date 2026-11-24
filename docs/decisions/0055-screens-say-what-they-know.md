@@ -41,10 +41,10 @@
 
 - 서버 쪽은 테스트로 붙잡았다: `TestApplyPage_NothingToApplyCondition`, `TestTriage_NoOriginalNotice`, `TestRequireLogin_HtmxRequest`, `TestLayout_HtmxShowsErrorResponses`.
 - htmx의 동작은 이 저장소의 `htmx.min.js`(2.0.11)와 같은 `htmx-config`, 같은 CSP를 쓰는 임시 서버를 Chromium으로 열어 확인했다: 500을 받은 `hx-get`과 `hx-post`가 오류 화면으로 바뀌고 제목이 바뀌며, 401과 `HX-Redirect`를 받은 `hx-get`은 `/login?return_to=…`로 옮겨 간다.
+- 실제 스택(2026-11-24, 새 web 이미지)에서도 확인했다. 판정 화면에서 쿠키를 모두 지우고 목록 줄을 누르면 401과 `HX-Redirect`를 받아 Keycloak 로그인 화면으로 옮겨 가고, 로그인하면 누른 줄의 판정 화면으로 돌아온다. Keycloak 세션이 남아 있으면 로그인 화면 없이 새 세션으로 그 화면에 돌아온다. 세션 없이 원본 보기를 누르면 오류 화면("401 로그인이 필요합니다", "다시 로그인")으로 바뀐다.
 
 ## 알려진 한계
 
-- 실제 스택(새 web 이미지)에서는 확인하지 않았다. 2GB Docker VM에서 이미지를 다시 빌드하는 비용 때문이다. 다음에 web 이미지를 빌드할 때 판정 화면에서 세션을 지우고 목록 줄을 눌러 로그인으로 가는지 본다.
 - `hx-post`가 오류 화면으로 바뀐 뒤에도 주소 표시줄은 판정 화면의 주소다. 새로 고치면 판정 화면으로 돌아간다.
 - 점검 전 화면의 "적용할 판정이 있음: 통과"는 그대로다. 점검을 해야 "적용할 수 있는 항목"을 안다.
 - htmx를 올릴 때(`next-steps.md`의 4.x 항목) `responseHandling`의 `target`, `swapOverride`와 `HX-Redirect`의 처리 순서를 다시 확인한다.
