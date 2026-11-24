@@ -453,6 +453,8 @@ func TestApplyPage_SkipReasons(t *testing.T) {
 		apply.ReasonFileMissing:           "파일이 없음",
 		apply.ReasonNotText:               "텍스트로 읽을 수 없는 파일",
 		apply.ReasonValueMismatch:         "값이 스캔 때와 다름",
+		apply.ReasonValueUnclear:          "소스의 글자만으로 값을 정할 수 없음",
+		apply.ReasonValuesDiffer:          "같은 이름의 자리마다 값이 다르게 읽힘",
 		apply.ReasonNotAllowed:            "이 항목에는 적용할 수 없는 판정",
 		apply.ReasonOverlap:               "다른 항목과 범위가 겹침",
 		apply.ReasonUntrackedIrreversible: "git이 추적하지 않아 되돌릴 수 없음",

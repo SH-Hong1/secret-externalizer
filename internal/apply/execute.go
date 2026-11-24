@@ -174,7 +174,8 @@ func (r *Runner) storeValues(ctx context.Context, j job.Job, p *prepared) (int, 
 		for _, f := range p.files {
 			for _, t := range f.targets {
 				clear(t.value)
-				t.value = nil
+				clear(t.stored)
+				t.value, t.stored = nil, nil
 			}
 		}
 	}()
@@ -210,7 +211,7 @@ func (r *Runner) storeValues(ctx context.Context, j job.Job, p *prepared) (int, 
 		for _, t := range targets {
 			t.Item.StoreVersion = version
 			if t.WholeFile {
-				sum := sha256.Sum256(t.value)
+				sum := sha256.Sum256(t.stored)
 				t.storedHash = hex.EncodeToString(sum[:])
 			}
 		}
@@ -227,7 +228,7 @@ func (r *Runner) storeValues(ctx context.Context, j job.Job, p *prepared) (int, 
 func (r *Runner) storeKey(ctx context.Context, p *prepared, key string, targets []*target) (int, error) {
 	t := targets[0]
 	for _, o := range targets[1:] {
-		if o.Fingerprint != t.Fingerprint || o.Item.Kind != t.Item.Kind || o.WholeFile != t.WholeFile {
+		if o.storedFingerprint != t.storedFingerprint || o.Item.Kind != t.Item.Kind || o.WholeFile != t.WholeFile {
 			return 0, errors.New("the places of one store key differ in value or kind")
 		}
 	}
@@ -235,7 +236,7 @@ func (r *Runner) storeKey(ctx context.Context, p *prepared, key string, targets 
 		return 0, errors.New("customer data is never stored")
 	}
 	projectID := int64(p.in.Project.ID)
-	v := bao.StoredValue{Value: t.value, Fingerprint: t.Fingerprint, Kind: string(t.Item.Kind), File: t.WholeFile}
+	v := bao.StoredValue{Value: t.stored, Fingerprint: t.storedFingerprint, Kind: string(t.Item.Kind), File: t.WholeFile}
 	var lastErr error
 	for writes := 0; ; {
 		cur, err := r.vault.ReadStored(ctx, projectID, key)
@@ -289,8 +290,8 @@ func (r *Runner) confirm(ctx context.Context, projectID int64, key string, versi
 	return nil
 }
 
-// holds reports whether st holds the value of t: its bytes have t's
-// fingerprint, computed again by the vault, and it is a whole file exactly
+// holds reports whether st holds what t stores: its bytes have the
+// fingerprint of that value, computed again by the vault, and it is a whole file exactly
 // when t is. The fingerprint field of the record is not trusted. The bytes
 // read are zeroed.
 func (r *Runner) holds(ctx context.Context, st bao.Stored, t *target) (bool, error) {
@@ -302,7 +303,7 @@ func (r *Runner) holds(ctx context.Context, st bao.Stored, t *target) (bool, err
 	if len(fps) != 1 {
 		return false, fmt.Errorf("%w: got %d fingerprints for one value", errSecretStore, len(fps))
 	}
-	return fps[0] == t.Fingerprint && st.File == t.WholeFile, nil
+	return fps[0] == t.storedFingerprint && st.File == t.WholeFile, nil
 }
 
 // settleRemovals decides, for each file with a whole-file target, whether

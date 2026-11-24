@@ -257,6 +257,16 @@ func reasonOf(r apply.Reason) blockerView {
 		return blockerView{Label: "텍스트로 읽을 수 없는 파일"}
 	case apply.ReasonValueMismatch:
 		return blockerView{Label: "값이 스캔 때와 다름", Action: "다시 스캔해 주세요."}
+	case apply.ReasonValueUnclear:
+		return blockerView{
+			Label:  "소스의 글자만으로 값을 정할 수 없음",
+			Action: "변수 확장, 파일 밖에서 정의한 참조, 잘못된 이스케이프, 여러 줄인 값은 옮기지 않습니다. 직접 옮겨 주세요.",
+		}
+	case apply.ReasonValuesDiffer:
+		return blockerView{
+			Label:  "같은 이름의 자리마다 값이 다르게 읽힘",
+			Action: "판정 화면에서 자리를 다른 묶음으로 옮겨 이름을 나눠 주세요.",
+		}
 	case apply.ReasonNotAllowed:
 		return blockerView{Label: "이 항목에는 적용할 수 없는 판정", Action: "판정 화면에서 판정을 확인해 주세요."}
 	case apply.ReasonOverlap:

@@ -102,6 +102,8 @@ const (
 	ReasonFileMissing           Reason = "file-missing"
 	ReasonNotText               Reason = "not-text"
 	ReasonValueMismatch         Reason = "value-mismatch"
+	ReasonValueUnclear          Reason = "value-unclear"
+	ReasonValuesDiffer          Reason = "values-differ"
 	ReasonNotAllowed            Reason = "not-allowed"
 	ReasonOverlap               Reason = "overlap"
 	ReasonUntrackedIrreversible Reason = "untracked-irreversible"

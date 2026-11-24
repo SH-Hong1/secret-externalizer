@@ -31,9 +31,10 @@ import (
 // share.
 const mainValue = "dev-only-fake-db-main-password"
 
-// quotedFile holds quotedValue, a value that JSON escapes.
+// quotedFile holds quotedValue, a value that JSON escapes, in a file
+// whose text gives its value as it is.
 const (
-	quotedFile  = "conf/quoted.properties"
+	quotedFile  = "conf/quoted.conf"
 	quotedValue = `dev-only-fake-"quoted\value`
 )
 
@@ -852,24 +853,90 @@ func TestApply_EUCKRAndCRLFPreserved(t *testing.T) {
 	}
 }
 
-func TestApply_StoresLiteral(t *testing.T) {
-	const (
-		xmlLiteral  = "a&amp;b-dev-only-fake"
-		propLiteral = `a\=b-dev-only-fake`
-	)
+func TestApply_StoresDecodedValue(t *testing.T) {
+	tests := []struct {
+		file, text, literal, decoded string
+	}{
+		{"conf/decoded.xml", `<bean><property name="password" value="%s"/></bean>`, "a&amp;b-dev-only-fake", "a&b-dev-only-fake"},
+		{"conf/decoded.properties", "pw=%s", `a\=b-dev-only-fake`, "a=b-dev-only-fake"},
+		{"conf/decoded.yml", `pw: "%s"`, `a\"b-dev-only-fake`, `a"b-dev-only-fake`},
+		{"bin/decoded.sh", `PW="%s"`, `a\$b-dev-only-fake`, "a$b-dev-only-fake"},
+	}
 	f := newShop(t, inRepository)
-	write(t, f.dir, "conf/literal.xml", `<bean><property name="password" value="`+xmlLiteral+`"/></bean>`+"\n")
-	write(t, f.dir, "conf/literal.properties", "pw="+propLiteral+"\n")
+	for _, tt := range tests {
+		write(t, f.dir, tt.file, fmt.Sprintf(tt.text, tt.literal)+"\n")
+	}
 	f.commit()
-	f.secret("literal.xml.password", xmlLiteral, "conf/literal.xml")
-	f.secret("literal.props.password", propLiteral, "conf/literal.properties")
+	want := map[string]string{}
+	for i, tt := range tests {
+		name := fmt.Sprintf("decoded.v%d.password", i+1)
+		for _, k := range f.secret(name, tt.literal, tt.file) {
+			want[k] = string(apply.StatusApplied)
+		}
+		f.storeSums["ext."+name] = sha([]byte(tt.decoded))
+		f.values = append(f.values, tt.decoded)
+	}
 
 	f.mustApply()
 
-	for key, want := range map[string]string{"ext.literal.xml.password": xmlLiteral, "ext.literal.props.password": propLiteral} {
-		if string(f.vault.value(key)) != want {
-			t.Errorf("vault path %s does not hold the text as written in the source", key)
+	if diff := cmp.Diff(want, f.items()); diff != "" {
+		t.Errorf("Apply() outcomes mismatch (-want +got):\n%s", diff)
+	}
+	for i, tt := range tests {
+		key := fmt.Sprintf("ext.decoded.v%d.password", i+1)
+		if string(f.vault.value(key)) != tt.decoded {
+			t.Errorf("vault path %s does not hold the value %s gives the text", key, tt.file)
 		}
+	}
+}
+
+func TestApply_UnclearValueSkipped(t *testing.T) {
+	const (
+		file  = "bin/unclear.sh"
+		value = "dev-only-fake-$SUFFIX-password"
+		text  = `PW="` + value + `"` + "\n"
+	)
+	f := newShop(t, inRepository)
+	write(t, f.dir, file, text)
+	f.commit()
+	want := all(map[string]string{}, skippedFor(apply.ReasonValueUnclear), f.secret("unclear.password", value, file)...)
+	for _, k := range f.secret("db.yaml.password", ymlValue, ymlFile) {
+		want[k] = string(apply.StatusApplied)
+	}
+
+	f.mustApply()
+
+	if diff := cmp.Diff(want, f.items()); diff != "" {
+		t.Errorf("Apply() outcomes mismatch (-want +got):\n%s", diff)
+	}
+	if got := string(read(t, f.dir, file)); got != text {
+		t.Errorf("Apply() changed %s to %q, want it as it was", file, got)
+	}
+	if f.vault.value("ext.unclear.password") != nil {
+		t.Errorf("Apply() stored a value whose text does not settle it")
+	}
+}
+
+func TestApply_DecodedValuesDiffer(t *testing.T) {
+	const (
+		value    = `dev-only-fake-a\=b`
+		propFile = "conf/differ.properties"
+		ymlOther = "conf/differ.yml"
+	)
+	f := newShop(t, inRepository)
+	write(t, f.dir, propFile, "pw="+value+"\n")
+	write(t, f.dir, ymlOther, "pw: "+value+"\n")
+	f.commit()
+	want := all(map[string]string{}, skippedFor(apply.ReasonValuesDiffer),
+		f.secret("differ.password", value, propFile, ymlOther)...)
+
+	f.mustApply()
+
+	if diff := cmp.Diff(want, f.items()); diff != "" {
+		t.Errorf("Apply() outcomes mismatch (-want +got):\n%s", diff)
+	}
+	if f.vault.puts != 0 {
+		t.Errorf("Apply() wrote to the vault %d times, want none when the places of one name differ", f.vault.puts)
 	}
 }
 

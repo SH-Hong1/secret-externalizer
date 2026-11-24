@@ -199,6 +199,15 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 	worker, vault, root := realVault(t)
 	ctx := t.Context()
 	f := newShop(t, inRepository)
+	// A value the file writes with an escape: OpenBao holds the value the
+	// file gives it, not its text.
+	const (
+		escapedFile  = "src/main/resources/escaped.properties"
+		escapedText  = `dev-only-fake-esc\=aped-password`
+		escapedValue = "dev-only-fake-esc=aped-password"
+	)
+	write(t, f.dir, escapedFile, "escaped.datasource.password="+escapedText+"\n")
+	f.commit()
 
 	rules, err := filepath.Abs(filepath.Join("..", "..", "rules"))
 	if err != nil {
@@ -388,7 +397,9 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 	}
 	t.Logf("first scan: %d findings in %d bundles; apply: %d applied, %d skipped %v", len(first), len(bundles), done.Applied, done.Skipped, skips)
 
-	// OpenBao: each stored value is the value its bundle was found with.
+	// OpenBao: each stored value is the value its bundle was found with, or
+	// for the escaped value, the value its text stands for.
+	storedEscaped := false
 	var secrets [][]byte
 	stores := map[string]triage.BundleID{}
 	for _, it := range items {
@@ -414,7 +425,13 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 			t.Fatalf("Fingerprints() = %d fingerprints, %v; want 1", len(fps), err)
 		}
 		b := bundles[bundleID]
-		if fps[0] != b.Fingerprint {
+		switch {
+		case len(b.Members) > 0 && b.Members[0].File == escapedFile:
+			storedEscaped = true
+			if string(value) != escapedValue {
+				t.Errorf("%s holds %d bytes that are not the value the text of %s stands for", path, len(value), escapedFile)
+			}
+		case fps[0] != b.Fingerprint:
 			t.Errorf("%s holds %d bytes that are not the value of its bundle (%s %s)", path, len(value), b.Category, b.Kind)
 		}
 		if secretKind(b.Kind) {
@@ -423,6 +440,9 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 	}
 	if len(secrets) == 0 {
 		t.Fatalf("the apply stored no password, token or key; stored paths: %d", len(stores))
+	}
+	if !storedEscaped {
+		t.Errorf("the apply stored nothing from %s, want its escaped password", escapedFile)
 	}
 
 	// The files: an externalized secret is left only in a file the apply
