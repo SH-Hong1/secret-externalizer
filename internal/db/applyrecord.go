@@ -492,11 +492,18 @@ func (s *Store) MarkInManifest(ctx context.Context, projectID project.ID) error 
 }
 
 // SettledFingerprints returns the fingerprints whose bundles in the
-// project all have the verdict false-positive, in ascending order.
+// project all have the verdict false-positive, in ascending order. Only a
+// bundle with a member that the project's latest succeeded scan found
+// counts: a bundle without one is not on the triage screen, so its verdict
+// cannot change. A fingerprint that scan did not find is not returned.
 func (s *Store) SettledFingerprints(ctx context.Context, projectID project.ID) ([]string, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT fingerprint FROM bundle WHERE project_id = $1
-		GROUP BY fingerprint HAVING bool_and(verdict = 'false-positive')
+		SELECT b.fingerprint FROM bundle b
+		WHERE b.project_id = $1 AND EXISTS (
+			SELECT 1 FROM finding f JOIN location l ON l.finding_id = f.id
+			WHERE f.bundle_id = b.id AND l.scan_id = (
+				SELECT id FROM scan WHERE project_id = $1 AND status = 'succeeded' ORDER BY id DESC LIMIT 1))
+		GROUP BY b.fingerprint HAVING bool_and(b.verdict = 'false-positive')
 		ORDER BY fingerprint`, projectID)
 	if err != nil {
 		return nil, fmt.Errorf("listing settled fingerprints of project %d: %w", projectID, err)

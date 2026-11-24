@@ -602,6 +602,36 @@ func TestSettledFingerprints(t *testing.T) {
 	}
 }
 
+// TestSettledFingerprints_UnseenBundle checks that a bundle the latest
+// succeeded scan found no member of does not keep its fingerprint from
+// being settled: nobody can judge it while it is off the triage screen.
+func TestSettledFingerprints_UnseenBundle(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, mixed()...)
+	fp := triage.Decision{Verdict: triage.VerdictFalsePositive}
+	decide(t, s, pid, fp, bundleOf(t, s, pid, fpA, "conf/a.yml"))
+	decide(t, s, pid, fp, bundleOf(t, s, pid, fpB, "conf/a.yml"), bundleOf(t, s, pid, fpB, "conf/b.xml"))
+
+	got, err := s.SettledFingerprints(ctx, pid)
+	if err != nil {
+		t.Fatalf("SettledFingerprints(%d) error = %v", pid, err)
+	}
+	if diff := cmp.Diff([]string{fpB}, got); diff != "" {
+		t.Errorf("SettledFingerprints(%d) with the JSP bundle undecided (-want +got):\n%s", pid, diff)
+	}
+
+	save(t, s, pid, password("conf/a.yml"), password("conf/b.xml"))
+	got, err = s.SettledFingerprints(ctx, pid)
+	if err != nil {
+		t.Fatalf("SettledFingerprints(%d) error = %v", pid, err)
+	}
+	if diff := cmp.Diff([]string{fpA}, got); diff != "" {
+		t.Errorf("SettledFingerprints(%d) after a scan without the JSP and the host (-want +got):\n%s", pid, diff)
+	}
+}
+
 func TestFinishApply(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()
