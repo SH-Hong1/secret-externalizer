@@ -6,7 +6,7 @@ by review. Where two well-known guides disagree, the rule written here is
 the one this project follows.
 
 The design lives in `docs/superpowers/specs/`. Decisions and their reasons
-live in `docs/decisions/`. Changes are listed in `CHANGELOG.md`.
+live in `docs/adr/`. Changes are listed in `CHANGELOG.md`.
 
 ## Project layout
 
@@ -267,7 +267,7 @@ Sources: Go Code Review Comments; Google Go Style Guide; Let's Go; 100 Go Mistak
 - Every change in behaviour gets a line in `CHANGELOG.md` under
   `[Unreleased]`.
 - Every decision that a later reader could reasonably question gets a file in
-  `docs/decisions/`, following `docs/decisions/README.md`.
+  `docs/adr/`, following `docs/adr/README.md`.
 - Code, comments, commit messages, and this file are written in English.
   `CHANGELOG.md` and everything under `docs/` are written in Korean.
 
@@ -290,6 +290,6 @@ Sources: Effective Go; Go Code Review Comments; Practical Go.
   checksums in `deploy/worker/scanners.lock`. Change them there and nowhere
   else.
 - Add a dependency only when the standard library cannot reasonably do the
-  job, and record the reason in `docs/decisions/`.
+  job, and record the reason in `docs/adr/`.
 
 Sources: gofumpt; Go best practices, six years in.
