@@ -101,6 +101,10 @@ jobs:
           if [ -z "$files" ]; then
             echo "No Go source, go.mod, template, or migration changed; nothing to review."
             echo "reviewable=false" >> "$GITHUB_OUTPUT"
+            # An earlier run may have left a verdict for files this pull
+            # request no longer changes. There is none to edit on a first run.
+            printf '## AI 규칙 검토\n\n검토할 파일(Go 소스, go.mod, 템플릿, SQL)이 바뀌지 않았습니다.\n' > "$RUNNER_TEMP/comment.md"
+            gh pr comment "$PR_NUMBER" --edit-last --body-file "$RUNNER_TEMP/comment.md" 2>/dev/null || true
             exit 0
           fi
           mkdir -p .review
