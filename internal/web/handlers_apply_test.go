@@ -1171,3 +1171,23 @@ func TestApplyRunPage_ReportLink(t *testing.T) {
 		})
 	}
 }
+
+// The condition before a check tells what the database knows, that verdicts
+// are there to apply; the one after a check tells what the worker found, so
+// the two never contradict each other under one name.
+func TestApplyPage_NothingToApplyCondition(t *testing.T) {
+	const before, after = "적용할 판정이 있음", "적용할 수 있는 항목이 있음"
+
+	e := applyEnv(t)
+	e.applies.put(summary(nil))
+	res := e.getApply(t)
+	wantIn(t, "apply page before a check", res.body, before)
+	wantNotIn(t, "apply page before a check", res.body, after)
+
+	r := run(apply.StateBlocked)
+	r.Blockers = []apply.Blocker{apply.BlockerNothingToApply}
+	e.applies.put(summary(r))
+	res = e.getApply(t)
+	wantIn(t, "apply page of a check that found nothing to apply", res.body, after, "적용할 수 있는 항목이 없습니다.")
+	wantNotIn(t, "apply page of a check that found nothing to apply", res.body, before)
+}

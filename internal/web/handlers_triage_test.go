@@ -618,7 +618,23 @@ func TestTriage_NoOriginalNotice(t *testing.T) {
 	b.Decision = triage.Decision{Verdict: triage.VerdictFalsePositive}
 	e.triage.putBundle(b)
 	res = e.do(t, http.MethodGet, "/projects/1/triage?sel=b101&status=all", nil, e.admin(t))
-	wantNotIn(t, "false-positive detail", section(res.body, "section", "detail"), "보관된 원본이 없습니다", "원본 보기")
+	detail = section(res.body, "section", "detail")
+	wantIn(t, "false-positive detail without an original", detail, "오탐으로 판정한 값은 원본을 보관하지 않습니다. 판정을 바꾸고 다시 스캔하면 보관됩니다.")
+	wantNotIn(t, "false-positive detail without an original", detail, "보관된 원본이 없습니다", "원본 보기")
+
+	b.Decision = triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldConfirm}
+	e.triage.putBundle(b)
+	res = e.do(t, http.MethodGet, "/projects/1/triage?sel=b101&status=all", nil, e.admin(t))
+	wantIn(t, "held detail without an original", section(res.body, "section", "detail"), "보관된 원본이 없습니다. 다시 스캔하면 보관됩니다.")
+
+	b.Decision = triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}
+	b.AppliedAt, b.StorePath = time.Date(2026, 11, 20, 3, 0, 0, 0, time.UTC), "secret/data/externalized/1/db.main.password"
+	e.triage.putBundle(b)
+	res = e.do(t, http.MethodGet, "/projects/1/triage?sel=b101&status=all", nil, e.admin(t))
+	wantNotIn(t, "applied detail without an original", section(res.body, "section", "detail"), "보관된 원본이 없습니다", "원본을 보관하지 않습니다", "원본 보기")
+
+	res = e.do(t, http.MethodGet, "/projects/1/triage?sel=b101&status=all", nil, e.user(t))
+	wantNotIn(t, "detail for a user who is not an admin", section(res.body, "section", "detail"), "보관된 원본이 없습니다", "원본을 보관하지 않습니다")
 }
 
 func TestTriage_LockedWhileApplying(t *testing.T) {

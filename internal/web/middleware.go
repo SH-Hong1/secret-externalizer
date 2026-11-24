@@ -166,6 +166,15 @@ func requireLogin(logger *slog.Logger, rd *renderer) func(http.Handler) http.Han
 			}
 			if r.Method == http.MethodGet || r.Method == http.MethodHead {
 				q := url.Values{"return_to": {r.URL.RequestURI()}}
+				if r.Header.Get("HX-Request") == "true" {
+					// htmx would follow a redirect inside its own
+					// request, which cannot reach the identity
+					// provider. This header makes the browser leave
+					// the page for the login.
+					w.Header().Set("HX-Redirect", "/login?"+q.Encode())
+					w.WriteHeader(http.StatusUnauthorized)
+					return
+				}
 				http.Redirect(w, r, "/login?"+q.Encode(), http.StatusSeeOther)
 				return
 			}

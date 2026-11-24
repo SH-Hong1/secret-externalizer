@@ -255,9 +255,13 @@ func fillTriagePage(ctx context.Context, logger *slog.Logger, store TriageStore,
 		case !data.User.Has(auth.RoleAdmin):
 		case hasOriginal(b):
 			data.Bundle.Original = newOriginalForm(pid, b.ID, ret)
-		case b.Decision.Verdict == "":
-			// The value's other bundles are all false positives, so the
-			// scan did not keep its original; the next scan keeps it.
+		case !b.AppliedAt.IsZero():
+			// The detail tells where the apply stored the value.
+		case b.Decision.Verdict == triage.VerdictFalsePositive:
+			data.Bundle.Original = &originalView{Shown: true, Notice: msgNotKept}
+		default:
+			// A scan keeps no original of a value whose bundles were all
+			// false positives when it ran; the next scan keeps it.
 			data.Bundle.Original = &originalView{Shown: true, Notice: msgNoOriginal}
 		}
 	default:
