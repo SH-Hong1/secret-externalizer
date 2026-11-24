@@ -166,7 +166,7 @@ func loadConfig(_ []string, getenv func(string) string) (config, error) {
 func readCAFile(path string) ([]byte, error) {
 	b, err := os.ReadFile(path) //nolint:gosec // G304: the path is the operator's own VALKEY_CA_FILE setting
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("reading the CA file: %w", err)
 	}
 	if !x509.NewCertPool().AppendCertsFromPEM(b) {
 		return nil, fmt.Errorf("%q holds no PEM certificate", path)

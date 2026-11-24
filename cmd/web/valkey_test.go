@@ -94,7 +94,8 @@ func (f *fakeValkey) serve(t *testing.T, ln net.Listener) (stop func()) {
 	var (
 		mu    sync.Mutex
 		conns []net.Conn
-		wg    sync.WaitGroup
+
+		wg sync.WaitGroup
 	)
 	wg.Go(func() {
 		for {
