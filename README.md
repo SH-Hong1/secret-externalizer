@@ -47,9 +47,10 @@ make scanners   # 스캐너(betterleaks, opengrep)를 bin/에 받는다. 없으�
 |---|---|
 | `make check` | 린트, `go vet`, 테스트(`-race`), hook과 스크립트 테스트, CSS 빌드 확인. 커밋할 때 `pre-commit` hook이 실행한다 |
 | `make test-integration` | postgres, valkey, OpenBao, PDF 변환기를 쓰는 테스트까지 돌린다. 띄우는 방법은 [로컬에서 띄우기](docs/local-run.md)의 "통합 테스트" |
+| `make sample-check` | 공개 예제(eGovFrame 웹 예제)를 받아 스캔, 적용, 확인 스캔까지 돌리고 찾은 목록을 기대 목록과 비교한다. `TEST_DATABASE_URL`, `TEST_BAO_ADDR`가 필요하다 |
 | `make fmt` | gofumpt와 goimports로 포맷한다 |
 
-PR마다 CI가 `check`, `integration`, `pull-request`(PR 제목과 `Closes #N`), `review`(AGENTS.md 규칙을 Claude가 검토)를 돌린다. 넷이 통과해야 `main`에 병합된다.
+PR마다 CI가 `check`, `integration`, `pull-request`(PR 제목과 `Closes #N`), `review`(AGENTS.md 규칙을 Claude가 검토)를 돌린다. 넷이 통과해야 `main`에 병합된다. 공개 예제를 돌리는 `sample`도 돌지만 필수 체크는 아니다.
 
 ## 일하는 방식
 

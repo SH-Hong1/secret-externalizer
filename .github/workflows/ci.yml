@@ -66,6 +66,44 @@ jobs:
         if: failure()
         run: docker compose --profile test logs --no-color postgres valkey-test openbao-test pdf-test
 
+  # Not a required check: it fetches a public repository, which can fail for
+  # reasons outside this one.
+  sample:
+    runs-on: ubuntu-latest
+    steps:
+      # compose reads these even for the services this job does not start.
+      - name: Point compose at empty host files
+        run: |
+          mkdir -p "$RUNNER_TEMP/workspace"
+          touch "$RUNNER_TEMP/unused-unseal.key" "$RUNNER_TEMP/unused-admin.secret-id"
+          {
+            echo "SE_WORKSPACE=$RUNNER_TEMP/workspace"
+            echo "OPENBAO_UNSEAL_KEY_FILE=$RUNNER_TEMP/unused-unseal.key"
+            echo "OPENBAO_ADMIN_SECRET_ID_FILE=$RUNNER_TEMP/unused-admin.secret-id"
+          } >> "$GITHUB_ENV"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@d8cbb8045d7f43706b9177cceb36c1f91a6644d5 # v7.1.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: bin
+          key: tools-${{ runner.os }}-${{ hashFiles('Makefile', 'deploy/worker/scanners.lock') }}
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.cache/secret-externalizer/samples
+          key: samples-${{ hashFiles('scripts/samples.lock') }}
+      - run: make scanners
+      - name: Start the test services
+        run: |
+          docker compose up -d --wait postgres
+          docker compose --profile test up -d --wait openbao-test
+      - name: Scan, apply, and scan again the public sample
+        run: |
+          make sample-check \
+            TEST_DATABASE_URL=postgres://se_app:dev-only-se-app-password@127.0.0.1:15432/secret_externalizer_test \
+            TEST_BAO_ADDR=http://127.0.0.1:18200
+
   pull-request:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

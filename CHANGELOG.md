@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 공개 예제로 스캔부터 확인 스캔까지 검증한다. `make sample-check`가 `scripts/samples.lock`에 고정한 전자정부 표준프레임워크 `egovframe-web-sample`을 저장소 밖에 받아 `TestIntegration_PublicSample`을 돌리고, CI의 `sample` 작업(필수 아님)도 같은 일을 한다. 찾은 목록은 `internal/apply/testdata/public-sample.golden`과 비교한다(`docs/adr/0075-public-sample-check.md`)
 - 남은 일과 알려진 한계를 `docs/next-steps.md`에서 GitHub Issue 69개(#54~#122)로 옮기고 그 문서를 지웠다. 절마다 Milestone 하나(설정 키, 계획 3~7에서 남은 일, 그 밖의 남은 일)이고 모든 Issue가 Project에 들어 있다. `CLAUDE.md`는 `AGENTS.md`만 불러온다
 - `README.md`를 두었다(구성, 빠른 시작, 개발 준비, 검사, 일하는 방식, 문서 지도). `AGENTS.md`에 "Commit messages"와 "Work tracking" 절을 더하고, PR 제목은 영어, PR 본문과 Issue는 한국어로 쓴다는 언어 규칙을 더했다
 - 설계 문서를 Design Doc 형식으로 다시 써 `docs/design/secret-externalizer.md` 한 곳에 두었다. 처음 설계와 설정 키 설계, 그 뒤의 결정(ADR 0001~0074)을 반영한 지금의 시스템을 설명하고 근거는 ADR 번호로 가리킨다. 두 원본(`docs/superpowers/specs/2026-11-18-secret-externalizer-design.md`, `2026-11-23-finding-key-design.md`)은 지웠다
