@@ -467,6 +467,7 @@ func TestReturnIsLocal(t *testing.T) {
 		{verdictPath, verdictForm("false-positive", "", "", "", "")},
 		{"/projects/1/customer-data/verdict", url.Values{"kind": {"phone"}, "file": {"logs/sample.log"}, "from": {""}, "verdict": {"redact"}}},
 		{"/projects/1/findings/1002/move", url.Values{"to": {"new"}, "from": {"101"}}},
+		{"/projects/1/bundles/101/merge", url.Values{"to": {"17"}}},
 	}
 	for _, ret := range []string{"https://evil.invalid", "//evil.invalid", "/\\evil.invalid", "status=all&next=//evil.invalid", "status=%zz"} {
 		for _, tt := range targets {
@@ -490,7 +491,7 @@ func TestReturnIsLocal(t *testing.T) {
 }
 
 func TestWritesNeedPost(t *testing.T) {
-	targets := []string{verdictPath, "/projects/1/customer-data/verdict", "/projects/1/findings/1002/move"}
+	targets := []string{verdictPath, "/projects/1/customer-data/verdict", "/projects/1/findings/1002/move", "/projects/1/bundles/101/merge"}
 	for _, target := range targets {
 		e := triageEnv(t)
 		if res := e.do(t, http.MethodGet, target, nil, e.user(t)); res.status != http.StatusMethodNotAllowed {
@@ -659,3 +660,70 @@ func TestVerdict_AppliedBundleRefused(t *testing.T) {
 
 // msgNotAllowedText is the refusal of a verdict a bundle does not allow.
 const msgNotAllowedText = "이 항목에는 고를 수 없는 판정입니다."
+
+func TestMerge(t *testing.T) {
+	const path = "/projects/1/bundles/101/merge"
+	form := url.Values{"to": {"17"}, "return": {"status=all"}}
+
+	t.Run("merges and selects the target", func(t *testing.T) {
+		e := triageEnv(t)
+		res := e.post(t, path, form, nil)
+		if want := "/projects/1/triage?sel=b17&status=all"; res.status != http.StatusSeeOther || res.location() != want {
+			t.Fatalf("POST merge = %d %q, want 303 %q; body:\n%s", res.status, res.location(), want, res.body)
+		}
+		want := []mergeCall{{Project: 1, From: 101, To: 17, By: fakeActor}}
+		if diff := cmp.Diff(want, e.triage.mergeCalls()); diff != "" {
+			t.Errorf("POST merge MergeBundle calls (-want +got):\n%s", diff)
+		}
+	})
+	t.Run("not allowed", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.mergeErr = fmt.Errorf("merging: %w", triage.ErrNotAllowed)
+		res := e.post(t, path, form, nil)
+		if res.status != http.StatusBadRequest {
+			t.Fatalf("POST refused merge status = %d, want 400", res.status)
+		}
+		wantIn(t, "refused merge detail", section(res.body, "section", "detail"), "합칠 수 없습니다")
+		wantNotIn(t, "refused merge page", res.body, "merging:")
+	})
+	t.Run("unknown bundle", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.mergeErr = db.ErrNotFound
+		if res := e.post(t, path, form, nil); res.status != http.StatusNotFound {
+			t.Errorf("POST merge of an unknown bundle status = %d, want 404", res.status)
+		}
+	})
+	t.Run("apply active", func(t *testing.T) {
+		e := triageEnv(t)
+		e.triage.mergeErr = db.ErrApplyActive
+		if res := e.post(t, path, form, nil); res.status != http.StatusConflict {
+			t.Errorf("POST merge while an apply is active status = %d, want 409", res.status)
+		}
+	})
+	t.Run("bad target", func(t *testing.T) {
+		for _, to := range []string{"", "0", "-3", "x", "new"} {
+			e := triageEnv(t)
+			res := e.post(t, path, url.Values{"to": {to}}, nil)
+			if res.status != http.StatusBadRequest {
+				t.Errorf("POST merge to=%q status = %d, want 400", to, res.status)
+			}
+			if n := len(e.triage.mergeCalls()); n != 0 {
+				t.Errorf("POST merge to=%q called MergeBundle %d times, want 0", to, n)
+			}
+		}
+	})
+}
+
+func TestTriageMergeControl(t *testing.T) {
+	e := triageEnv(t)
+	e.triage.same[passwordBundle] = []triage.Entry{{
+		Bundle: 17, Name: "db.shop.password", Verdict: triage.VerdictExternalize,
+		Category: finding.CategoryStorage, Kind: finding.KindPassword, File: "conf/other.yml", FirstLine: 4, Count: 1, Bundles: 1,
+	}}
+	res := e.getTriage(t, nil, nil)
+	wantIn(t, "password detail with another bundle of the value", section(res.body, "section", "detail"),
+		`action="/projects/1/bundles/101/merge"`, "이 묶음 전체 합치기", "같은 값의 묶음이 1개 더 있습니다")
+
+	res = e.getTriage(t, url.Values{"sel": {"b102"}}, nil)
+	wantNotIn(t, "token detail without another bundle", section(res.body, "section", "detail"), "/merge", "합치기")
+}

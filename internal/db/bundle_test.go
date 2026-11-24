@@ -1402,3 +1402,94 @@ func TestSaveResult_WaitsForMove(t *testing.T) {
 		t.Errorf("bundle of b.xml after the move = %d, want a new shared bundle", got)
 	}
 }
+
+func TestMergeBundle(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	other := newProject(t, s, "other")
+	sid := save(t, s, pid, mixed()...)
+	shared := bundleOf(t, s, pid, fpA, "conf/a.yml")
+	hostA := bundleOf(t, s, pid, fpB, "conf/a.yml")
+	// b.xml is split off and the JSP is moved to the bundle of a.yml, so the
+	// value has two bundles: b.xml alone, and a.yml with the JSP.
+	split, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "conf/b.xml"), 0, tester)
+	if err != nil {
+		t.Fatalf("MoveFinding(b.xml, new) error = %v", err)
+	}
+	if _, err := s.MoveFinding(ctx, pid, findingID(t, s, pid, fpA, "web/c.jsp"), shared, tester); err != nil {
+		t.Fatalf("MoveFinding(c.jsp, %d) error = %v", shared, err)
+	}
+	events := func() int {
+		t.Helper()
+		n, err := s.Count(ctx, "audit_event")
+		if err != nil {
+			t.Fatalf("counting audit_event: %v", err)
+		}
+		return n
+	}
+
+	t.Run("different fingerprint", func(t *testing.T) {
+		before := events()
+		err := s.MergeBundle(ctx, pid, shared, hostA, tester)
+		if !errors.Is(err, triage.ErrNotAllowed) {
+			t.Errorf("MergeBundle(%d, %d) of another value error = %v, want ErrNotAllowed", shared, hostA, err)
+		}
+		if got := bundleOf(t, s, pid, fpA, "conf/a.yml"); got != shared || events() != before {
+			t.Errorf("after a refused merge a.yml is in bundle %d with %d events, want %d and %d", got, events(), shared, before)
+		}
+	})
+	t.Run("other project", func(t *testing.T) {
+		if err := s.MergeBundle(ctx, other, shared, split, tester); !errors.Is(err, db.ErrNotFound) {
+			t.Errorf("MergeBundle(%d, %d) in another project error = %v, want ErrNotFound", shared, split, err)
+		}
+	})
+	t.Run("unknown bundle", func(t *testing.T) {
+		if err := s.MergeBundle(ctx, pid, 99999, split, tester); !errors.Is(err, db.ErrNotFound) {
+			t.Errorf("MergeBundle(99999, %d) error = %v, want ErrNotFound", split, err)
+		}
+	})
+	t.Run("into itself", func(t *testing.T) {
+		before := events()
+		if err := s.MergeBundle(ctx, pid, split, split, tester); err != nil {
+			t.Errorf("MergeBundle(%d, %d) error = %v, want nil", split, split, err)
+		}
+		if events() != before {
+			t.Errorf("MergeBundle into itself recorded events, want none")
+		}
+	})
+	t.Run("all or nothing", func(t *testing.T) {
+		// A bundle externalized under a name cannot take the JSP.
+		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}, split)
+		before := events()
+		err := s.MergeBundle(ctx, pid, shared, split, tester)
+		if !errors.Is(err, triage.ErrNotAllowed) {
+			t.Fatalf("MergeBundle(%d, %d) with a JSP into an externalized bundle error = %v, want ErrNotAllowed", shared, split, err)
+		}
+		if got := bundleOf(t, s, pid, fpA, "conf/a.yml"); got != shared {
+			t.Errorf("a.yml after a refused merge is in bundle %d, want %d: the merge must move all or none", got, shared)
+		}
+		if events() != before {
+			t.Errorf("a refused merge recorded events, want none")
+		}
+		decide(t, s, pid, triage.Decision{}, split)
+	})
+	t.Run("moves every finding", func(t *testing.T) {
+		before := events()
+		if err := s.MergeBundle(ctx, pid, shared, split, tester); err != nil {
+			t.Fatalf("MergeBundle(%d, %d) error = %v", shared, split, err)
+		}
+		if b := readBundle(t, s, pid, sid, split); !cmp.Equal(memberFiles(b), []string{"conf/a.yml", "conf/b.xml", "web/c.jsp"}) {
+			t.Errorf("Bundle(%d) members after the merge = %v, want a.yml, b.xml and c.jsp", split, memberFiles(b))
+		}
+		if got := bundleOf(t, s, pid, fpA, "web/c.jsp"); got != split {
+			t.Errorf("c.jsp after the merge is in bundle %d, want %d", got, split)
+		}
+		if n := events() - before; n != 2 {
+			t.Errorf("MergeBundle recorded %d events, want 2, one per moved finding", n)
+		}
+		if _, err := s.Bundle(ctx, pid, sid, shared); !errors.Is(err, db.ErrNotFound) {
+			t.Errorf("Bundle(%d) after it was merged away error = %v, want ErrNotFound", shared, err)
+		}
+	})
+}

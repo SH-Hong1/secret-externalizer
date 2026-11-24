@@ -441,6 +441,10 @@ func (b *blockingStore) Decide(ctx context.Context, _ project.ID, _ []triage.Bun
 	return b.wait(ctx)
 }
 
+func (b *blockingStore) MergeBundle(ctx context.Context, _ project.ID, _, _ triage.BundleID, _ audit.Actor) error {
+	return b.wait(ctx)
+}
+
 func (b *blockingStore) MoveFinding(ctx context.Context, _ project.ID, _ finding.ID, _ triage.BundleID, _ audit.Actor) (triage.BundleID, error) {
 	return 0, b.wait(ctx)
 }
@@ -480,6 +484,7 @@ type fakeTriage struct {
 	pastErr    error
 	decideErr  error
 	moveErr    error
+	mergeErr   error
 	activeErr  error
 	// applyActive is what ApplyActive returns.
 	applyActive bool
@@ -500,6 +505,7 @@ type fakeTriage struct {
 	same         map[triage.BundleID][]triage.Entry
 	decides      []decideCall
 	moves        []moveCall
+	merges       []mergeCall
 	applied      map[project.ID][]triage.Applied
 }
 
@@ -515,6 +521,14 @@ type decideCall struct {
 type moveCall struct {
 	Project project.ID
 	Finding finding.ID
+	To      triage.BundleID
+	By      audit.Actor
+}
+
+// mergeCall is the arguments of one MergeBundle call.
+type mergeCall struct {
+	Project project.ID
+	From    triage.BundleID
 	To      triage.BundleID
 	By      audit.Actor
 }
@@ -714,6 +728,21 @@ func (f *fakeTriage) MoveFinding(_ context.Context, projectID project.ID, id fin
 		return f.moveNew, nil
 	}
 	return to, nil
+}
+
+// MergeBundle records the call and returns mergeErr.
+func (f *fakeTriage) MergeBundle(_ context.Context, projectID project.ID, from, to triage.BundleID, by audit.Actor) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.merges = append(f.merges, mergeCall{projectID, from, to, by})
+	return f.mergeErr
+}
+
+// mergeCalls returns the MergeBundle calls so far.
+func (f *fakeTriage) mergeCalls() []mergeCall {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return slices.Clone(f.merges)
 }
 
 func (f *fakeTriage) SameValueBundles(_ context.Context, _ project.ID, _ scan.ID, id triage.BundleID) ([]triage.Entry, error) {
