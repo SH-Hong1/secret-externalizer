@@ -25,7 +25,7 @@
 </div>
 {{if .Active}}<div class="card card-pad flex flex-col gap-2.5">
 {{if eq .Run.State "running"}}<div class="progress" role="progressbar" aria-label="적용 중"></div>
-{{end}}<p class="text-2">{{.Run.Requester.Name}} · <span class="mono">{{.RequestedAt}}</span>에 요청{{with .ConfirmedAt}}, <span class="mono">{{.}}</span>에 적용 확인{{end}}. {{if eq .Run.State "queued"}}worker가 가져가기를 기다립니다.{{else}}worker가 값을 비밀 저장소로 옮기고 파일을 바꾸고 있습니다. 파일 사이에서만 멈추므로 중간에 멈춰도 값은 사라지지 않습니다.{{end}} 이 화면은 3초마다 새로 고쳐집니다.</p>
+{{end}}{{if .NoWorker}}{{template "noworker"}}{{end}}<p class="text-2">{{.Run.Requester.Name}} · <span class="mono">{{.RequestedAt}}</span>에 요청{{with .ConfirmedAt}}, <span class="mono">{{.}}</span>에 적용 확인{{end}}. {{if eq .Run.State "queued"}}worker가 가져가기를 기다립니다.{{else}}worker가 값을 비밀 저장소로 옮기고 파일을 바꾸고 있습니다. 파일 사이에서만 멈추므로 중간에 멈춰도 값은 사라지지 않습니다.{{end}} 이 화면은 3초마다 새로 고쳐집니다.</p>
 </div>
 {{else}}{{with .Failure}}<div class="card card-pad card-failed flex flex-col gap-2.5">
 <p class="failure"><strong>실패 사유</strong> {{.Label}}{{with .Code}} <span class="mono text-sm">{{.}}</span>{{end}}</p>

@@ -51,6 +51,7 @@ type fakeQueue struct {
 	extended   chan struct{}
 	releaseErr error
 	onRelease  func(ctx context.Context)
+	beatErr    error
 
 	mu         sync.Mutex
 	jobs       []job.Job
@@ -58,6 +59,7 @@ type fakeQueue struct {
 	claims     int
 	extendErrs []error
 	releases   []int64
+	beats      int
 }
 
 func newFakeQueue(jobs ...job.Job) *fakeQueue {
@@ -79,6 +81,20 @@ func (q *fakeQueue) ClaimJob(_ context.Context, _ string, _ time.Duration) (job.
 	j := q.jobs[0]
 	q.jobs = q.jobs[1:]
 	return j, nil
+}
+
+func (q *fakeQueue) Beat(_ context.Context, _ string) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.beats++
+	return q.beatErr
+}
+
+// beatCount returns how many times Beat was called.
+func (q *fakeQueue) beatCount() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.beats
 }
 
 func (q *fakeQueue) ExtendJob(_ context.Context, _ int64, _ string, _ time.Duration) error {
@@ -578,5 +594,41 @@ func TestRun_RenewalAfterFailureKeepsHandler(t *testing.T) {
 	elapsed, _ := leaseExpiry(t, q)
 	if want := 40*time.Second + time.Minute; elapsed != want {
 		t.Errorf("Run() cancelled the handler %v after the claim, want %v, one lease after the last renewal", elapsed, want)
+	}
+}
+
+func TestRun_BeatsBeforeClaiming(t *testing.T) {
+	q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+	handled := make(chan struct{})
+	stop := runInBackground(t, q, func(context.Context, job.Job) error {
+		close(handled)
+		return nil
+	}, discardLogger())
+
+	<-handled
+	if err := stop(); err != nil {
+		t.Errorf("Run() after cancel = %v, want nil", err)
+	}
+	if n := q.beatCount(); n < 1 {
+		t.Errorf("Run() beat %d times before it handled a job, want at least 1", n)
+	}
+}
+
+func TestRun_SurvivesBeatError(t *testing.T) {
+	q := newFakeQueue(job.Job{ID: 2, ScanID: 2, Attempts: 1})
+	q.beatErr = errors.New("connection reset")
+	var logs syncBuffer
+	handled := make(chan struct{})
+	stop := runInBackground(t, q, func(context.Context, job.Job) error {
+		close(handled)
+		return nil
+	}, slog.New(slog.NewJSONHandler(&logs, nil)))
+
+	<-handled
+	if err := stop(); err != nil {
+		t.Errorf("Run() after cancel = %v, want nil", err)
+	}
+	if !strings.Contains(logs.String(), `"level":"WARN"`) || strings.Contains(logs.String(), `"level":"ERROR"`) {
+		t.Errorf("Run() with a failing beat logged:\n%s\nwant a warning and no error", logs.String())
 	}
 }

@@ -32,6 +32,7 @@ const statusApplied = "applied"
 // Untouched are the places a finished run never reached, and CodeChanges
 // counts the changed places whose code has to read the value elsewhere.
 type applyRunPage struct {
+	NoWorker     bool
 	User         auth.User
 	Project      project.Project
 	Run          apply.Run
@@ -169,6 +170,12 @@ func handleApplyRun(logger *slog.Logger, rd *renderer, projects ProjectStore, sc
 		}
 		page := newApplyRunPage(p, run)
 		page.User, _ = userFrom(ctx) // requireLogin guarantees a user
+		if run.State == apply.StateQueued {
+			if page.NoWorker, err = noWorker(ctx, scans); err != nil {
+				rd.fail(w, r, logger, http.StatusInternalServerError, err)
+				return
+			}
+		}
 		if !page.Active {
 			items, err := applies.ApplyItems(ctx, run.ID)
 			if err != nil {

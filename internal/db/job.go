@@ -220,3 +220,41 @@ func (s *Store) closeLeased(ctx context.Context, jobID int64, write func(pgx.Tx)
 	}
 	return nil
 }
+
+// Beat records that the worker is alive and asking for jobs. It also removes
+// the records of workers that have not been seen for a day, which are
+// workers that no longer exist: every process picks a new ID.
+func (s *Store) Beat(ctx context.Context, workerID string) (err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer rollback(ctx, tx, &err)
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO worker_beat (worker_id, seen_at) VALUES ($1, now())
+		ON CONFLICT (worker_id) DO UPDATE SET seen_at = excluded.seen_at`, workerID); err != nil {
+		return fmt.Errorf("recording beat of worker: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM worker_beat WHERE seen_at < now() - interval '1 day'`); err != nil {
+		return fmt.Errorf("removing old beats: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing beat: %w", err)
+	}
+	return nil
+}
+
+// WorkerAlive reports whether a worker is serving the queue: one has asked
+// for a job within the last within, or one holds a job under a lease that
+// has not run out, which is a worker busy with a long job.
+func (s *Store) WorkerAlive(ctx context.Context, within time.Duration) (bool, error) {
+	var alive bool
+	err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM worker_beat WHERE seen_at > now() - $1 * interval '1 second')
+			OR EXISTS (SELECT 1 FROM job WHERE state = 'running' AND locked_until > now())`,
+		within.Seconds()).Scan(&alive)
+	if err != nil {
+		return false, fmt.Errorf("reading worker liveness: %w", err)
+	}
+	return alive, nil
+}
