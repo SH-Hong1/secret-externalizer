@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 )
 
@@ -25,6 +26,13 @@ type detection struct {
 // It returns job.ErrLeaseLost, storing nothing, when the worker does not hold
 // the job, which is also the case when the result was already saved.
 //
+// It holds the project's row FOR NO KEY UPDATE while it stores the findings,
+// so it waits for a Decide or MoveFinding of the project that has started and
+// those wait for it. The bundle a new finding joins therefore cannot be
+// deleted by a move before the finding is stored, and the two never wait on
+// each other's finding and bundle rows. A scan can still be requested
+// meanwhile.
+//
 // A finding is identified by project, fingerprint, file, and configuration
 // key. A finding that an earlier scan stored keeps its ID, its bundle, and its
 // first scan; its last scan becomes this one, and its category, kind,
@@ -37,10 +45,19 @@ func (s *Store) SaveResult(ctx context.Context, jobID int64, workerID string, id
 		if err := tx.QueryRow(ctx, "SELECT project_id FROM scan WHERE id = $1", id).Scan(&projectID); err != nil {
 			return fmt.Errorf("reading project of scan %d: %w", id, err)
 		}
+		if err := lockProject(ctx, tx, project.ID(projectID), "FOR NO KEY UPDATE"); err != nil {
+			return err
+		}
+		ids := make([]int64, len(r.Findings))
 		for i, f := range r.Findings {
-			if err := insertFinding(ctx, tx, projectID, id, f); err != nil {
+			findingID, err := insertFinding(ctx, tx, projectID, id, f)
+			if err != nil {
 				return fmt.Errorf("storing finding %d of scan %d: %w", i, id, err)
 			}
+			ids[i] = findingID
+		}
+		if err := insertLocations(ctx, tx, id, ids, r.Findings); err != nil {
+			return fmt.Errorf("storing locations of scan %d: %w", id, err)
 		}
 		toolVersions := r.ToolVersions
 		if toolVersions == nil {
@@ -68,8 +85,8 @@ func (s *Store) SaveResult(ctx context.Context, jobID int64, workerID string, id
 }
 
 // insertFinding stores f, or updates it when an earlier scan stored it, and
-// adds its locations for the scan. A finding stored for the first time joins
-// the bundle bundleForNew gives it; a stored finding keeps its bundle.
+// returns its ID. A finding stored for the first time joins the bundle
+// bundleForNew gives it; a stored finding keeps its bundle.
 //
 // A keyed finding that matches no stored finding takes over the one stored
 // finding of its fingerprint and file when that one has no key and this scan
@@ -79,7 +96,7 @@ func (s *Store) SaveResult(ctx context.Context, jobID int64, workerID string, id
 // the same way, such as one at a place whose key could not be read when a
 // keyed place of the same value is added to the file later, above it, so that
 // the scan stores the keyed finding first.
-func insertFinding(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, f finding.Finding) error {
+func insertFinding(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, f finding.Finding) (int64, error) {
 	var findingID int64
 	err := tx.QueryRow(ctx, `
 		UPDATE finding SET category = $5, kind = $6, preview = $7, has_original = $8, last_scan_id = $9
@@ -98,7 +115,7 @@ func insertFinding(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, 
 	if errors.Is(err, pgx.ErrNoRows) {
 		bundleID, berr := bundleForNew(ctx, tx, projectID, f)
 		if berr != nil {
-			return berr
+			return 0, berr
 		}
 		err = tx.QueryRow(ctx, `
 			INSERT INTO finding (project_id, fingerprint, file_path, key, category, kind, preview, has_original,
@@ -108,32 +125,57 @@ func insertFinding(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, 
 			projectID, f.Fingerprint, f.File, f.Key, f.Category, f.Kind, f.Preview, f.HasOriginal, id, bundleID).Scan(&findingID)
 	}
 	if err != nil {
-		return fmt.Errorf("storing finding: %w", err)
+		return 0, fmt.Errorf("storing finding: %w", err)
 	}
+	return findingID, nil
+}
+
+// locationBatch is the number of locations insertLocations sends to the
+// database in one round trip.
+const locationBatch = 1000
+
+// insertLocations adds the locations the scan found for findings, whose
+// stored IDs are ids in the same order. It sends them locationBatch at a
+// time, so a scan costs one round trip per batch rather than one per finding.
+func insertLocations(ctx context.Context, tx pgx.Tx, id scan.ID, ids []int64, findings []finding.Finding) error {
 	batch := &pgx.Batch{}
-	for _, l := range f.Locations {
-		detections := make([]detection, 0, len(l.Detections))
-		for _, d := range l.Detections {
-			detections = append(detections, detection(d))
+	send := func() error {
+		if batch.Len() == 0 {
+			return nil
 		}
-		encoded, err := json.Marshal(detections)
-		if err != nil {
-			return fmt.Errorf("encoding detections: %w", err)
+		if err := tx.SendBatch(ctx, batch).Close(); err != nil {
+			return fmt.Errorf("inserting locations: %w", err)
 		}
-		lines := l.Context
-		if lines == nil {
-			lines = []string{}
-		}
-		batch.Queue(`
-			INSERT INTO location (finding_id, scan_id, start_line, start_col, end_line, end_col,
-				context, context_first_line, file_hash, detections)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
-			findingID, id, l.StartLine, l.StartCol, l.EndLine, l.EndCol, lines, l.ContextFirstLine, l.FileHash, encoded)
+		batch = &pgx.Batch{}
+		return nil
 	}
-	if err := tx.SendBatch(ctx, batch).Close(); err != nil {
-		return fmt.Errorf("inserting locations: %w", err)
+	for i, f := range findings {
+		for _, l := range f.Locations {
+			detections := make([]detection, 0, len(l.Detections))
+			for _, d := range l.Detections {
+				detections = append(detections, detection(d))
+			}
+			encoded, err := json.Marshal(detections)
+			if err != nil {
+				return fmt.Errorf("encoding detections: %w", err)
+			}
+			lines := l.Context
+			if lines == nil {
+				lines = []string{}
+			}
+			batch.Queue(`
+				INSERT INTO location (finding_id, scan_id, start_line, start_col, end_line, end_col,
+					context, context_first_line, file_hash, detections)
+				VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+				ids[i], id, l.StartLine, l.StartCol, l.EndLine, l.EndCol, lines, l.ContextFirstLine, l.FileHash, encoded)
+			if batch.Len() == locationBatch {
+				if err := send(); err != nil {
+					return err
+				}
+			}
+		}
 	}
-	return nil
+	return send()
 }
 
 // locationColumns are the columns of location l that scanLocation reads.

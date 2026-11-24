@@ -2,6 +2,7 @@ package db_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -456,5 +457,43 @@ func TestMigration0009(t *testing.T) {
 	}
 	if err := s.CopyFinding(ctx, row.ID, "live.db.password"); err != nil {
 		t.Errorf("CopyFinding(%d, live.db.password) error = %v, want it accepted", row.ID, err)
+	}
+}
+
+func TestSaveResult_StoresLocationsOfLargeScan(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	id, j := claimedScan(t, s, newProject(t, s, "shop"))
+	// 2100 locations in three findings cross the size of one batch twice,
+	// once inside a finding.
+	const perFinding = 700
+	var findings []finding.Finding
+	for i, fp := range []string{fpA, fpB, fpC} {
+		f := secretAt(fp, 1)
+		f.File = fmt.Sprintf("conf/large-%d.properties", i)
+		l := f.Locations[0]
+		f.Locations = nil
+		for line := 1; line <= perFinding; line++ {
+			l.StartLine, l.EndLine = line, line
+			f.Locations = append(f.Locations, l)
+		}
+		findings = append(findings, f)
+	}
+	if err := s.SaveResult(ctx, j.ID, "worker-a", id, result(findings...)); err != nil {
+		t.Fatalf("SaveResult(3 findings of %d locations) error = %v", perFinding, err)
+	}
+	got, err := s.FindingsByScan(ctx, id)
+	if err != nil {
+		t.Fatalf("FindingsByScan(%d) error = %v", id, err)
+	}
+	if len(got) != len(findings) {
+		t.Fatalf("FindingsByScan(%d) = %d findings, want %d", id, len(got), len(findings))
+	}
+	for i, f := range got {
+		if f.Fingerprint != findings[i].Fingerprint || len(f.Locations) != perFinding ||
+			f.Locations[perFinding-1].StartLine != perFinding {
+			t.Errorf("finding %d of scan %d = %.8s with %d locations, want %.8s with %d ending at line %d",
+				i, id, f.Fingerprint, len(f.Locations), findings[i].Fingerprint, perFinding, perFinding)
+		}
 	}
 }

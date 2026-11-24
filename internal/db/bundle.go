@@ -192,8 +192,8 @@ func (s *Store) Decide(ctx context.Context, projectID project.ID, ids []triage.B
 	}
 	defer rollback(ctx, tx, &err)
 
-	// FOR SHARE waits for a check or confirmation of an apply and lets scans
-	// and other decisions through.
+	// FOR SHARE waits for a check or confirmation of an apply and for a scan
+	// that is storing its findings, and lets other decisions through.
 	if err := lockProject(ctx, tx, projectID, "FOR SHARE"); err != nil {
 		return err
 	}
@@ -211,9 +211,7 @@ func (s *Store) Decide(ctx context.Context, projectID project.ID, ids []triage.B
 		decidedBy = ""
 	}
 	for _, id := range sorted {
-		// NO KEY UPDATE lets a scan add a finding to the bundle meanwhile,
-		// unless the decision changes the name: name is in a unique key, so
-		// the UPDATE then takes the full row lock and the scan waits.
+		// The decision keeps the bundle row, so NO KEY UPDATE is enough.
 		lb, err := lockBundle(ctx, tx, projectID, id, lockNoKeyUpdate)
 		if err != nil {
 			return err
