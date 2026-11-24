@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os"
 	"slices"
@@ -24,38 +25,26 @@ import (
 // in-memory dev server that never holds real values.
 const testRootToken = "dev-only-openbao-test-root-token" //nolint:gosec // G101: the fake root token of a local dev server
 
-// workerPolicy is the worker policy that deploy/openbao/config.hcl creates.
-const workerPolicy = `
-path "transit/hmac/fingerprint" {
-  capabilities = ["update"]
-}
-path "secret/data/pending/*" {
-  capabilities = ["create", "update"]
-}
-path "secret/data/projects/*" {
-  capabilities = ["create", "update", "read"]
-}
-path "secret/metadata/pending/*" {
-  capabilities = ["list", "delete"]
-}
-`
-
 // kvMaxVersions is the number of versions per path that
 // deploy/openbao/config.hcl sets on the KV v2 mount "secret".
 const kvMaxVersions = 100
 
-// webPolicy is the web policy that deploy/openbao/config.hcl creates.
-const webPolicy = `
-path "secret/data/pending/*" {
-  capabilities = ["read"]
+// policyFile returns the ACL policy of the role name, which
+// deploy/openbao/roles.sh writes from deploy/openbao/policies/<name>.hcl, so
+// the tests run with the permissions the real roles have.
+func policyFile(t *testing.T, name string) string {
+	t.Helper()
+	file := name + ".hcl"
+	raw, err := fs.ReadFile(os.DirFS("../../deploy/openbao/policies"), file)
+	if err != nil {
+		t.Fatalf("reading deploy/openbao/policies/%s: %v", file, err)
+	}
+	return string(raw)
 }
-path "secret/data/projects/*" {
-  capabilities = ["read"]
-}
-`
 
 // setUpTestBao prepares the dev server the way deploy/openbao/config.hcl
-// prepares the real one, and returns the worker role's credentials. Each
+// and deploy/openbao/roles.sh prepare the real one, and returns the worker
+// role's credentials. Each
 // step is safe to repeat against a server an earlier run prepared.
 func setUpTestBao(t *testing.T, addr string) bao.Credentials {
 	t.Helper()
@@ -98,25 +87,25 @@ func setUpTestBao(t *testing.T, addr string) bao.Credentials {
 	if _, err := root.Logical().WriteWithContext(ctx, "secret/config", map[string]any{"max_versions": kvMaxVersions}); err != nil {
 		t.Fatalf("writing secret/config: %v", err)
 	}
-	return setUpRole(t, root, "worker", workerPolicy)
+	return setUpRole(t, root, "worker", policyFile(t, "worker"))
 }
 
 // setUpWebRole adds the web policy and role to a dev server that
 // setUpTestBao prepared, and returns the web role's credentials.
 func setUpWebRole(t *testing.T, addr string) bao.Credentials {
 	t.Helper()
-	cfg := api.NewConfig()
-	cfg.Address = addr
-	root, err := api.NewClient(cfg)
-	if err != nil {
-		t.Fatalf("api.NewClient(%q) error = %v", addr, err)
-	}
-	root.SetToken(testRootToken)
-	return setUpRole(t, root, "web", webPolicy)
+	return setUpRole(t, rootClient(t, addr), "web", policyFile(t, "web"))
+}
+
+// setUpApplierRole adds the applier policy and role to a dev server that
+// setUpTestBao prepared, and returns the applier role's credentials.
+func setUpApplierRole(t *testing.T, addr string) bao.Credentials {
+	t.Helper()
+	return setUpRole(t, rootClient(t, addr), "applier", policyFile(t, "applier"))
 }
 
 // setUpRole writes the policy and AppRole name with role-id se-<name>, as
-// deploy/openbao/config.hcl does, and returns a new secret-id for it.
+// deploy/openbao/roles.sh does, and returns a new secret-id for it.
 func setUpRole(t *testing.T, root *api.Client, name, policy string) bao.Credentials {
 	t.Helper()
 	ctx := t.Context()
@@ -311,27 +300,6 @@ func randomProjectID(t *testing.T) int64 {
 	return int64(binary.BigEndian.Uint64(b[:])>>2) + 1
 }
 
-// TestPolicyMatchesConfig checks that the policies the integration tests
-// create are the ones deploy/openbao/config.hcl creates, so the tests check
-// the permissions the real server grants.
-func TestPolicyMatchesConfig(t *testing.T) {
-	const path = "../../deploy/openbao/config.hcl"
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
-	for name, want := range map[string]string{"worker": workerPolicy, "web": webPolicy} {
-		got, err := configPolicy(string(raw), name)
-		if err != nil {
-			t.Errorf("reading the %s policy from %s: %v", name, path, err)
-			continue
-		}
-		if diff := cmp.Diff(strings.TrimLeft(want, "\n"), got); diff != "" {
-			t.Errorf("%s policy in %s mismatch (-test constant +config):\n%s", name, path, diff)
-		}
-	}
-}
-
 // TestKVConfigMatchesConfig checks that deploy/openbao/config.hcl sets the
 // version limit of the KV v2 mount that the integration tests set.
 func TestKVConfigMatchesConfig(t *testing.T) {
@@ -348,42 +316,6 @@ func TestKVConfigMatchesConfig(t *testing.T) {
 			t.Errorf("request kv-max-versions in %s does not hold %q", path, w)
 		}
 	}
-}
-
-// configPolicy returns the text of the indented heredoc in the request
-// "<name>-policy" of config, with the common indentation removed, as HCL
-// does for <<-.
-func configPolicy(config, name string) (string, error) {
-	_, after, ok := strings.Cut(config, `request "`+name+`-policy" {`)
-	if !ok {
-		return "", errors.New("no such request")
-	}
-	_, after, ok = strings.Cut(after, "policy = <<-EOT\n")
-	if !ok {
-		return "", errors.New("no heredoc")
-	}
-	var lines []string
-	for line := range strings.Lines(after) {
-		if strings.TrimSpace(line) == "EOT" {
-			indent := -1
-			for _, l := range lines {
-				n := len(l) - len(strings.TrimLeft(l, " "))
-				if strings.TrimSpace(l) != "" && (indent < 0 || n < indent) {
-					indent = n
-				}
-			}
-			if indent < 0 {
-				return "", errors.New("empty heredoc")
-			}
-			var b strings.Builder
-			for _, l := range lines {
-				b.WriteString(l[min(indent, len(l)-len(strings.TrimLeft(l, " "))):])
-			}
-			return b.String(), nil
-		}
-		lines = append(lines, line)
-	}
-	return "", errors.New("heredoc does not end")
 }
 
 // testBaoAddr returns the address of the openbao-test service, and skips the
@@ -441,9 +373,10 @@ func storedFixture(t *testing.T, c *bao.Client, value []byte) bao.StoredValue {
 	return bao.StoredValue{Value: value, Fingerprint: fps[0], Kind: "password"}
 }
 
-func TestIntegration_WorkerStoresProjectValue(t *testing.T) {
+func TestIntegration_ApplierStoresProjectValue(t *testing.T) {
 	addr := testBaoAddr(t)
-	creds := setUpTestBao(t, addr)
+	setUpTestBao(t, addr)
+	creds := setUpApplierRole(t, addr)
 	ctx := t.Context()
 	projectID := randomProjectID(t)
 	const key = "ext.db.main.password"
@@ -501,7 +434,8 @@ func TestIntegration_WorkerStoresProjectValue(t *testing.T) {
 
 func TestIntegration_ReadStoredAfterSoftDelete(t *testing.T) {
 	addr := testBaoAddr(t)
-	creds := setUpTestBao(t, addr)
+	setUpTestBao(t, addr)
+	creds := setUpApplierRole(t, addr)
 	ctx := t.Context()
 	projectID := randomProjectID(t)
 	const key = "ext.app.api.token"
@@ -538,9 +472,10 @@ func TestIntegration_ReadStoredAfterSoftDelete(t *testing.T) {
 	}
 }
 
-func TestIntegration_WorkerCannotDeleteProjectValue(t *testing.T) {
+func TestIntegration_ApplierCannotDeleteProjectValue(t *testing.T) {
 	addr := testBaoAddr(t)
-	creds := setUpTestBao(t, addr)
+	setUpTestBao(t, addr)
+	creds := setUpApplierRole(t, addr)
 	ctx := t.Context()
 	projectID := randomProjectID(t)
 	const key = "ext.ssh.deploy.key"
@@ -549,33 +484,33 @@ func TestIntegration_WorkerCannotDeleteProjectValue(t *testing.T) {
 		t.Fatalf("PutStored(%d, %q) error = %v", projectID, key, err)
 	}
 
-	worker := loginAs(t, addr, creds)
+	applier := loginAs(t, addr, creds)
 	metadata := fmt.Sprintf("secret/metadata/projects/%d/%s", projectID, key)
 	requests := []struct {
 		name string
 		do   func() error
 	}{
 		{"delete the latest version", func() error {
-			_, err := worker.Logical().DeleteWithContext(ctx, bao.StorePath(projectID, key))
+			_, err := applier.Logical().DeleteWithContext(ctx, bao.StorePath(projectID, key))
 			return err
 		}},
 		{"read the metadata", func() error {
-			_, err := worker.Logical().ReadWithContext(ctx, metadata)
+			_, err := applier.Logical().ReadWithContext(ctx, metadata)
 			return err
 		}},
 		{"delete the metadata", func() error {
-			_, err := worker.Logical().DeleteWithContext(ctx, metadata)
+			_, err := applier.Logical().DeleteWithContext(ctx, metadata)
 			return err
 		}},
 		{"destroy a version", func() error {
-			_, err := worker.Logical().WriteWithContext(ctx, fmt.Sprintf("secret/destroy/projects/%d/%s", projectID, key), map[string]any{"versions": []int{1}})
+			_, err := applier.Logical().WriteWithContext(ctx, fmt.Sprintf("secret/destroy/projects/%d/%s", projectID, key), map[string]any{"versions": []int{1}})
 			return err
 		}},
 	}
 	for _, r := range requests {
 		var re *api.ResponseError
 		if err := r.do(); !errors.As(err, &re) || re.StatusCode != http.StatusForbidden {
-			t.Errorf("worker token: %s error = %v, want status 403", r.name, err)
+			t.Errorf("applier token: %s error = %v, want status 403", r.name, err)
 		}
 	}
 	got, err := c.ReadStored(ctx, projectID, key)
@@ -586,14 +521,15 @@ func TestIntegration_WorkerCannotDeleteProjectValue(t *testing.T) {
 
 func TestIntegration_WebCannotWriteProjects(t *testing.T) {
 	addr := testBaoAddr(t)
-	workerCreds := setUpTestBao(t, addr)
+	setUpTestBao(t, addr)
+	applierCreds := setUpApplierRole(t, addr)
 	webCreds := setUpWebRole(t, addr)
 	ctx := t.Context()
 	projectID := randomProjectID(t)
 	const key = "ext.db.main.password"
-	worker := newIntegrationClient(t, addr, workerCreds, projectID, key)
+	applier := newIntegrationClient(t, addr, applierCreds, projectID, key)
 	web := newIntegrationClient(t, addr, webCreds, projectID, key)
-	v := storedFixture(t, worker, []byte("dev-only-fake-web-write"))
+	v := storedFixture(t, applier, []byte("dev-only-fake-web-write"))
 
 	if version, err := web.PutStored(ctx, projectID, key, v, 0); !errors.Is(err, bao.ErrForbidden) {
 		t.Errorf("PutStored() as web = %d, %v; want ErrForbidden", version, err)
@@ -608,7 +544,8 @@ func TestIntegration_WebCannotWriteProjects(t *testing.T) {
 // KV v2 default of 10 would keep.
 func TestIntegration_KeepsEarlierVersions(t *testing.T) {
 	addr := testBaoAddr(t)
-	creds := setUpTestBao(t, addr)
+	setUpTestBao(t, addr)
+	creds := setUpApplierRole(t, addr)
 	ctx := t.Context()
 	projectID := randomProjectID(t)
 	const key = "ext.db.rotated.password"
@@ -632,5 +569,73 @@ func TestIntegration_KeepsEarlierVersions(t *testing.T) {
 	data, _ := old.Data["data"].(map[string]any) // a missing data field fails the comparison below
 	if want := base64.StdEncoding.EncodeToString(first.Value); data["value"] != want {
 		t.Errorf("version 1 after 11 writes holds another value or none, want the first value")
+	}
+}
+
+// TestIntegration_WorkerCannotReachProjects checks that the worker role,
+// whose secret-id the scanners can read, can neither read nor write an
+// externalized value.
+func TestIntegration_WorkerCannotReachProjects(t *testing.T) {
+	addr := testBaoAddr(t)
+	workerCreds := setUpTestBao(t, addr)
+	applierCreds := setUpApplierRole(t, addr)
+	ctx := t.Context()
+	projectID := randomProjectID(t)
+	const key = "ext.db.scan.password"
+	applier := newIntegrationClient(t, addr, applierCreds, projectID, key)
+	worker := newIntegrationClient(t, addr, workerCreds, projectID, key)
+	v := storedFixture(t, applier, []byte("dev-only-fake-out-of-reach"))
+	if _, err := applier.PutStored(ctx, projectID, key, v, 0); err != nil {
+		t.Fatalf("PutStored(%d, %q) as the applier error = %v", projectID, key, err)
+	}
+
+	if _, err := worker.ReadStored(ctx, projectID, key); !errors.Is(err, bao.ErrForbidden) {
+		t.Errorf("ReadStored(%d, %q) as the worker error = %v, want ErrForbidden", projectID, key, err)
+	}
+	if version, err := worker.PutStored(ctx, projectID, key, v, 1); !errors.Is(err, bao.ErrForbidden) {
+		t.Errorf("PutStored(%d, %q, cas 1) as the worker = %d, %v; want ErrForbidden", projectID, key, version, err)
+	}
+}
+
+// TestIntegration_ApplierCannotKeepOriginals checks that the applier role
+// may remove a settled original but cannot store, list, or read one.
+func TestIntegration_ApplierCannotKeepOriginals(t *testing.T) {
+	addr := testBaoAddr(t)
+	workerCreds := setUpTestBao(t, addr)
+	applierCreds := setUpApplierRole(t, addr)
+	ctx := t.Context()
+	hc := &http.Client{Timeout: 10 * time.Second}
+	worker, err := bao.New(addr, workerCreds, hc)
+	if err != nil {
+		t.Fatalf("New(%q) for the worker error = %v", addr, err)
+	}
+	applier, err := bao.New(addr, applierCreds, hc)
+	if err != nil {
+		t.Fatalf("New(%q) for the applier error = %v", addr, err)
+	}
+	value := []byte("dev-only-fake-settled-original")
+	fps, err := applier.Fingerprints(ctx, [][]byte{value})
+	if err != nil {
+		t.Fatalf("Fingerprints() as the applier error = %v", err)
+	}
+	projectID := randomProjectID(t)
+	if err := worker.PutPending(ctx, projectID, fps[0], value); err != nil {
+		t.Fatalf("PutPending(%d, %q) as the worker error = %v", projectID, fps[0], err)
+	}
+
+	if err := applier.PutPending(ctx, projectID, fps[0], value); !errors.Is(err, bao.ErrForbidden) {
+		t.Errorf("PutPending(%d, %q) as the applier error = %v, want ErrForbidden", projectID, fps[0], err)
+	}
+	if listed, err := applier.ListPending(ctx, projectID); !errors.Is(err, bao.ErrForbidden) {
+		t.Errorf("ListPending(%d) as the applier = %q, %v; want ErrForbidden", projectID, listed, err)
+	}
+	assertStatus(t, addr, applierCreds, fmt.Sprintf("secret/data/pending/%d/%s", projectID, fps[0]), http.StatusForbidden)
+
+	if err := applier.DeletePending(ctx, projectID, fps[0]); err != nil {
+		t.Fatalf("DeletePending(%d, %q) as the applier error = %v", projectID, fps[0], err)
+	}
+	listed, err := worker.ListPending(ctx, projectID)
+	if err != nil || len(listed) != 0 {
+		t.Errorf("ListPending(%d) as the worker after the applier's delete = %q, %v; want an empty list", projectID, listed, err)
 	}
 }

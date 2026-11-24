@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/hex"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -41,33 +42,17 @@ import (
 // in-memory dev server that never holds real values.
 const realRootToken = "dev-only-openbao-test-root-token" //nolint:gosec // G101: the fake root token of a local dev server
 
-// realWorkerPolicy is the worker policy that deploy/openbao/config.hcl
-// creates. TestRealWorkerPolicyMatchesConfig keeps the two the same.
-const realWorkerPolicy = `
-path "transit/hmac/fingerprint" {
-  capabilities = ["update"]
-}
-path "secret/data/pending/*" {
-  capabilities = ["create", "update"]
-}
-path "secret/data/projects/*" {
-  capabilities = ["create", "update", "read"]
-}
-path "secret/metadata/pending/*" {
-  capabilities = ["list", "delete"]
-}
-`
-
 // The values the integration test externalizes or judges, besides those of
 // runner_test.go. Every value is obviously fake.
 const (
 	realMainValue = "dev-only-fake-real-main-password"
 	falsePositive = "dev-only-fake-partner-password"
 	realWorker    = "worker-real"
-	// realRole names the policy and AppRole this test writes on the shared
-	// openbao-test server. It differs from the "worker" that the tests of
-	// internal/bao write, since go test runs the two packages at once.
-	realRole = "worker-apply-test"
+	// realRolePrefix starts the names of the policies and AppRoles these
+	// tests write on the shared openbao-test server. They differ from the
+	// "worker" and "applier" that the tests of internal/bao write, since go
+	// test runs the two packages at once.
+	realRolePrefix = "apply-test-"
 )
 
 // realStore returns a migrated Store on a schema of its own, created for
@@ -128,67 +113,12 @@ func realStore(t *testing.T) (store *db.Store, admin *pgxpool.Pool, schema strin
 	return store, admin, schema
 }
 
-// TestRealWorkerPolicyMatchesConfig checks that realWorkerPolicy is the
-// worker policy deploy/openbao/config.hcl creates, so the integration test
-// runs with the permissions the real worker has.
-func TestRealWorkerPolicyMatchesConfig(t *testing.T) {
-	const path = "../../deploy/openbao/config.hcl"
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		t.Fatalf("reading %s: %v", path, err)
-	}
-	got, ok := configPolicy(string(raw), "worker")
-	if !ok {
-		t.Fatalf("%s holds no request \"worker-policy\" with a policy heredoc", path)
-	}
-	if diff := cmp.Diff(strings.TrimLeft(realWorkerPolicy, "\n"), got); diff != "" {
-		t.Errorf("worker policy in %s mismatch (-test constant +config):\n%s", path, diff)
-	}
-}
-
-// configPolicy returns the text of the indented heredoc in the request
-// "<name>-policy" of config, with the common indentation removed as HCL
-// does for <<-. It repeats the helper of the same name in the tests of
-// internal/bao, which live in package bao_test and cannot be imported.
-func configPolicy(config, name string) (string, bool) {
-	_, after, ok := strings.Cut(config, `request "`+name+`-policy" {`)
-	if !ok {
-		return "", false
-	}
-	_, after, ok = strings.Cut(after, "policy = <<-EOT\n")
-	if !ok {
-		return "", false
-	}
-	var lines []string
-	for line := range strings.Lines(after) {
-		if strings.TrimSpace(line) != "EOT" {
-			lines = append(lines, line)
-			continue
-		}
-		indent := -1
-		for _, l := range lines {
-			n := len(l) - len(strings.TrimLeft(l, " "))
-			if strings.TrimSpace(l) != "" && (indent < 0 || n < indent) {
-				indent = n
-			}
-		}
-		if indent < 0 {
-			return "", false
-		}
-		var b strings.Builder
-		for _, l := range lines {
-			b.WriteString(l[min(indent, len(l)-len(strings.TrimLeft(l, " "))):])
-		}
-		return b.String(), true
-	}
-	return "", false
-}
-
 // realVault prepares the openbao-test dev server the way
-// deploy/openbao/config.hcl prepares the real one and returns a client with
-// the worker role and a client with the root token. It skips the test when
-// TEST_BAO_ADDR is not set.
-func realVault(t *testing.T) (worker *bao.Client, root *api.Client) {
+// deploy/openbao/config.hcl and deploy/openbao/roles.sh prepare the real
+// one and returns a client with the worker role's policy, which scans use,
+// a client with the applier role's policy, which applies use, and a client
+// with the root token. It skips the test when TEST_BAO_ADDR is not set.
+func realVault(t *testing.T) (worker, applier *bao.Client, root *api.Client) {
 	t.Helper()
 	addr := os.Getenv("TEST_BAO_ADDR")
 	if addr == "" {
@@ -226,41 +156,62 @@ func realVault(t *testing.T) (worker *bao.Client, root *api.Client) {
 			t.Fatalf("enabling approle: %v", err)
 		}
 	}
+	for path, data := range map[string]map[string]any{
+		"transit/keys/fingerprint": {"type": "aes256-gcm96"},
+		"secret/config":            {"max_versions": 100},
+	} {
+		if _, err := root.Logical().WriteWithContext(ctx, path, data); err != nil {
+			t.Fatalf("writing %s: %v", path, err)
+		}
+	}
+	return realRole(t, root, addr, "worker"), realRole(t, root, addr, "applier"), root
+}
+
+// realRole writes the policy of deploy/openbao/policies/<name>.hcl and an
+// AppRole with it under the name realRolePrefix+name, and returns a client
+// logged in as that role.
+func realRole(t *testing.T, root *api.Client, addr, name string) *bao.Client {
+	t.Helper()
+	ctx := t.Context()
+	file := name + ".hcl"
+	policy, err := fs.ReadFile(os.DirFS("../../deploy/openbao/policies"), file)
+	if err != nil {
+		t.Fatalf("reading deploy/openbao/policies/%s: %v", file, err)
+	}
+	role := realRolePrefix + name
 	writes := []struct {
 		path string
 		data map[string]any
 	}{
-		{"transit/keys/fingerprint", map[string]any{"type": "aes256-gcm96"}},
-		{"secret/config", map[string]any{"max_versions": 100}},
-		{"sys/policies/acl/" + realRole, map[string]any{"policy": realWorkerPolicy}},
-		{"auth/approle/role/" + realRole, map[string]any{"token_policies": []string{realRole}, "token_ttl": "1h", "token_max_ttl": "1h"}},
-		{"auth/approle/role/" + realRole + "/role-id", map[string]any{"role_id": "se-" + realRole}},
+		{"sys/policies/acl/" + role, map[string]any{"policy": string(policy)}},
+		{"auth/approle/role/" + role, map[string]any{"token_policies": []string{role}, "token_ttl": "1h", "token_max_ttl": "1h"}},
+		{"auth/approle/role/" + role + "/role-id", map[string]any{"role_id": "se-" + role}},
 	}
 	for _, w := range writes {
 		if _, err := root.Logical().WriteWithContext(ctx, w.path, w.data); err != nil {
 			t.Fatalf("writing %s: %v", w.path, err)
 		}
 	}
-	secret, err := root.Logical().WriteWithContext(ctx, "auth/approle/role/"+realRole+"/secret-id", nil)
+	secret, err := root.Logical().WriteWithContext(ctx, "auth/approle/role/"+role+"/secret-id", nil)
 	if err != nil {
-		t.Fatalf("creating a secret-id: %v", err)
+		t.Fatalf("creating a secret-id for %s: %v", role, err)
 	}
 	secretID, ok := secret.Data["secret_id"].(string)
 	if !ok {
-		t.Fatalf("creating a secret-id: the response holds no secret_id")
+		t.Fatalf("creating a secret-id for %s: the response holds no secret_id", role)
 	}
-	worker, err = bao.New(addr, bao.Credentials{RoleID: "se-" + realRole, SecretID: bao.SecretID(secretID)}, &http.Client{Timeout: 10 * time.Second})
+	c, err := bao.New(addr, bao.Credentials{RoleID: "se-" + role, SecretID: bao.SecretID(secretID)}, &http.Client{Timeout: 10 * time.Second})
 	if err != nil {
 		t.Fatalf("bao.New(%q) error = %v", addr, err)
 	}
-	return worker, root
+	return c
 }
 
 // TestIntegration_LargestStoredValue checks that a value of
 // apply.DefaultMaxStoredBytes is fingerprinted alone and stored and read
-// back whole by the worker role on the openbao-test server.
+// back whole by the applier role on the openbao-test server.
 func TestIntegration_LargestStoredValue(t *testing.T) {
-	vault, root := realVault(t)
+	_, vault, root := realVault(t)
 	ctx := t.Context()
 	value := bytes.Repeat([]byte("dev-only-fake-large-value."), apply.DefaultMaxStoredBytes/26+1)[:apply.DefaultMaxStoredBytes]
 	fps, err := vault.Fingerprints(ctx, [][]byte{value})
@@ -395,7 +346,7 @@ func testApplyLegacyShop(t *testing.T, consent bool) {
 		t.Skip("git is not installed")
 	}
 	store, admin, schema := realStore(t)
-	vault, root := realVault(t)
+	worker, vault, root := realVault(t)
 	ctx := t.Context()
 
 	f := newShop(t, inRepository)
@@ -452,7 +403,8 @@ func testApplyLegacyShop(t *testing.T, consent bool) {
 			}
 		}
 	})
-	if err := vault.PutPending(ctx, int64(projectID), fpFalse, []byte(falsePositive)); err != nil {
+	// A scan parks the false positive's original, so the worker role does.
+	if err := worker.PutPending(ctx, int64(projectID), fpFalse, []byte(falsePositive)); err != nil {
 		t.Fatalf("PutPending() error = %v", err)
 	}
 	scanID, err := store.RequestScan(ctx, projectID, actor)

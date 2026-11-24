@@ -19,17 +19,21 @@
 # and the networks section at the end of this file. No service can open a
 # connection outside the host's container network: the networks with
 # published ports have NAT turned off, and the others are internal. openbao
-# publishes no port and only web, the worker, and the applier reach it.
+# publishes no port and only web, the worker, the applier, and openbao-roles
+# reach it.
 # valkey publishes no port either and only web reaches it, over TLS and as its
 # own ACL user. The worker, and so the scanners it runs, and the applier are
 # only on internal networks. pdf publishes no port either and sits alone with
 # web on the internal network "pdf"; see decision 0043. web, the worker, and
 # the applier reach openbao over TLS.
 #
-# OpenBao's unseal key is a file on the host, outside every volume:
-# OPENBAO_UNSEAL_KEY_FILE, or $HOME/.config/secret-externalizer/openbao-unseal.key
-# when unset. Make it with `make openbao-unseal-key` before the first `up`;
-# see deploy/openbao/unseal-key.sh and decision 0067.
+# OpenBao's unseal key and the secret-id of its admin role are files on the
+# host, outside every volume: OPENBAO_UNSEAL_KEY_FILE and
+# OPENBAO_ADMIN_SECRET_ID_FILE, or openbao-unseal.key and
+# openbao-admin.secret-id in $HOME/.config/secret-externalizer when unset.
+# Make them with `make openbao-host-files` before the first `up`; see
+# deploy/openbao/unseal-key.sh, deploy/openbao/admin-secret-id.sh, and
+# decisions 0067 and 0069.
 
 name: secret-externalizer
 
@@ -279,10 +283,12 @@ services:
       # volume starts with that owner.
       - openbao-data:/openbao/file
       - openbao-secrets:/openbao/secrets:ro
-    # The unseal key, at /run/secrets/openbao-unseal-key. No other service
-    # mounts it.
+    # The unseal key, at /run/secrets/openbao-unseal-key, which no other
+    # service mounts, and the admin role's secret-id, which
+    # self-initialisation registers on the first start.
     secrets:
       - openbao-unseal-key
+      - openbao-admin-secret-id
     networks:
       - bao
     user: "100:1000"
@@ -301,6 +307,59 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  # Brings OpenBao's roles and policies to what deploy/openbao/roles.sh and
+  # deploy/openbao/policies/ declare, on every `up`, logged in as the admin
+  # role; see decision 0069. It then exits. The worker and the applier start
+  # after it has finished; web does not wait, as it does not wait for
+  # OpenBao.
+  openbao-roles:
+    image: openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
+    entrypoint: ["/bin/sh", "/roles.sh"]
+    environment:
+      HOME: /tmp
+      BAO_ADDR: https://openbao:8200
+      BAO_CACERT: /secrets/web/ca.crt
+    volumes:
+      - ./deploy/openbao/roles.sh:/roles.sh:ro
+      - ./deploy/openbao/policies:/policies:ro
+      # The three role directories of the openbao-secrets volume, for the
+      # secret-ids it registers; not OpenBao's private key. OpenBao's group,
+      # which this service runs as, reads them.
+      - type: volume
+        source: openbao-secrets
+        target: /secrets/worker
+        read_only: true
+        volume:
+          subpath: worker
+      - type: volume
+        source: openbao-secrets
+        target: /secrets/applier
+        read_only: true
+        volume:
+          subpath: applier
+      - type: volume
+        source: openbao-secrets
+        target: /secrets/web
+        read_only: true
+        volume:
+          subpath: web
+    secrets:
+      - openbao-admin-secret-id
+    networks:
+      - bao
+    user: "100:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
+    depends_on:
+      openbao:
+        condition: service_healthy
 
   # An in-memory OpenBao for the integration tests, started only with
   # --profile test. It never holds real values.
@@ -433,7 +492,7 @@ services:
       - "127.0.0.1:8080:8080"
     volumes:
       # Only web's own directory of the openbao-secrets volume: its secret-id
-      # and the CA, not OpenBao's private key or the worker role's secret-id.
+      # and the CA, not OpenBao's private key or another role's secret-id.
       - type: volume
         source: openbao-secrets
         target: /run/secrets/openbao
@@ -507,10 +566,10 @@ services:
     volumes:
       - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace:ro
       # Only the worker role's directory of the openbao-secrets volume: its
-      # secret-id and the CA, not OpenBao's private key or the web role's
-      # secret-id.
-      - &worker-secrets
-        type: volume
+      # secret-id and the CA, not OpenBao's private key or another role's
+      # secret-id. The scanners can read this secret-id, so the worker
+      # policy reaches no externalized value.
+      - type: volume
         source: openbao-secrets
         target: /run/secrets/openbao
         read_only: true
@@ -539,8 +598,8 @@ services:
     depends_on: &worker-depends
       postgres:
         condition: service_healthy
-      openbao:
-        condition: service_healthy
+      openbao-roles:
+        condition: service_completed_successfully
 
   # Runs only apply checks and applies, from the same image as the worker
   # but without running any scanner. It is the only service with the
@@ -557,11 +616,17 @@ services:
       APPLY_WORKSPACE_ROOT: /workspace-rw
       BAO_ADDR: https://openbao:8200
       BAO_CA_FILE: /run/secrets/openbao/ca.crt
-      BAO_ROLE_ID: se-worker
+      BAO_ROLE_ID: se-applier
       BAO_SECRET_ID_FILE: /run/secrets/openbao/secret-id
     volumes:
       - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace-rw
-      - *worker-secrets
+      # Only the applier role's directory of the openbao-secrets volume.
+      - type: volume
+        source: openbao-secrets
+        target: /run/secrets/openbao
+        read_only: true
+        volume:
+          subpath: applier
     # Files an apply writes belong to this user, so on a Linux host
     # SE_UID and SE_GID should be the owner of the workspace.
     user: *worker-user
@@ -608,6 +673,10 @@ volumes:
   openbao-secrets:
 
 secrets:
-  # OpenBao's unseal key, made on the host by `make openbao-unseal-key`.
+  # OpenBao's unseal key, made on the host by `make openbao-host-files`.
   openbao-unseal-key:
     file: ${OPENBAO_UNSEAL_KEY_FILE:-${HOME}/.config/secret-externalizer/openbao-unseal.key}
+  # The secret-id of OpenBao's admin role, made on the host by
+  # `make openbao-host-files`.
+  openbao-admin-secret-id:
+    file: ${OPENBAO_ADMIN_SECRET_ID_FILE:-${HOME}/.config/secret-externalizer/openbao-admin.secret-id}

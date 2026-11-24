@@ -8,34 +8,40 @@
 # Layout and owners:
 #   /secrets/worker/secret-id   64 hex digits       $SE_UID:1000, 0440
 #   /secrets/worker/ca.crt      CA certificate      $SE_UID:1000, 0444
+#   /secrets/applier/secret-id  64 hex digits       $SE_UID:1000, 0440
+#   /secrets/applier/ca.crt     CA certificate      $SE_UID:1000, 0444
 #   /secrets/web/secret-id      64 hex digits       65532:1000, 0440
 #   /secrets/web/ca.crt         CA certificate      65532:1000, 0444
 #   /secrets/tls/tls.crt        server certificate  openbao (100:1000), 0444
 #   /secrets/tls/tls.key        its private key     openbao (100:1000), 0400
 #   /secrets/tls/ca.crt         CA certificate      openbao (100:1000), 0444
 #
-# OpenBao (uid 100, gid 1000) reads every file. The worker and applier
-# containers mount only the worker directory, and the web container only the
-# web directory, so none sees OpenBao's private key or the other role's
-# secret-id.
+# OpenBao (uid 100, gid 1000) reads every file. The worker container mounts
+# only the worker directory, the applier container only the applier
+# directory, and the web container only the web directory, so none sees
+# OpenBao's private key or another role's secret-id. The openbao-roles
+# container, which registers the three secret-ids, mounts the three role
+# directories and reads them through the group.
 #
 # The unseal key is not in this volume. It is a file on the host that
 # deploy/openbao/unseal-key.sh makes and compose hands to OpenBao alone.
 # When the volume holds an unseal/ folder, this script stops and asks for
 # unseal-key.sh, which moves a key found there to the host file.
 #
-# The certificate is for the name openbao, which web, the worker, and the
-# applier use, and for 127.0.0.1, which the health check uses. The CA's
-# private key is made in /tmp and is gone when this container ends, so no one
-# can sign another certificate with it; a new certificate means removing the
-# four certificate files, which makes a new CA. Both certificates last ten years: this is a
-# local development stack, and nothing renews them.
+# The certificate is for the name openbao, which web, the worker, the
+# applier, and openbao-roles use, and for 127.0.0.1, which the health check
+# uses. The CA's private key is made in /tmp and is gone when this container
+# ends, so no one can sign another certificate with it; a new certificate
+# means removing the three files in tls/, which makes a new CA and copies it
+# to every role directory. A role directory without ca.crt gets a copy of
+# tls/ca.crt. Both certificates last ten years: this is a local development
+# stack, and nothing renews them.
 #
 # SE_UID and SE_GID are the uid and gid the worker and the applier run as,
 # 65532 when unset.
-# Both must be numbers other than 0. The owner of the worker's directory and
-# secret-id is set to SE_UID on every run, so a volume made for another uid
-# follows a changed SE_UID. Their group stays OpenBao's (1000), which reads
+# Both must be numbers other than 0. The owner of the worker's and the
+# applier's directories and files is set to SE_UID on every run, so a volume
+# made for another uid follows a changed SE_UID. Their group stays OpenBao's (1000), which reads
 # them; SE_GID is only checked.
 set -eu
 umask 077
@@ -86,8 +92,18 @@ make_file() {
 
 random_hex() { od -An -tx1 -N32 /dev/urandom | tr -d ' \n'; }
 
-make_file worker secret-id "$worker_uid:$openbao_gid" 0440 random_hex
-make_file web secret-id "$web_uid:$openbao_gid" 0440 random_hex
+# role_uid ROLE: prints the uid that owns ROLE's directory and files.
+role_uid() {
+	if [ "$1" = web ]; then
+		echo "$web_uid"
+	else
+		echo "$worker_uid"
+	fi
+}
+
+for role in worker applier web; do
+	make_file "$role" secret-id "$(role_uid "$role"):$openbao_gid" 0440 random_hex
+done
 
 # install_file SRC DIR NAME OWNER MODE: moves SRC to /secrets/DIR/NAME
 # through a temporary name, so a stopped run never leaves a short file
@@ -102,8 +118,7 @@ install_file() {
 	echo "created $dir/$name"
 }
 
-if [ ! -e /secrets/tls/tls.crt ] || [ ! -e /secrets/tls/tls.key ] || [ ! -e /secrets/tls/ca.crt ] ||
-	[ ! -e /secrets/worker/ca.crt ] || [ ! -e /secrets/web/ca.crt ]; then
+if [ ! -e /secrets/tls/tls.crt ] || [ ! -e /secrets/tls/tls.key ] || [ ! -e /secrets/tls/ca.crt ]; then
 	work=/tmp/openbao-tls
 	rm -rf "$work"
 	mkdir -p "$work"
@@ -125,20 +140,22 @@ EXT
 	install_file "$work/tls.crt" tls tls.crt "$openbao_uid:$openbao_gid" 0444
 	install_file "$work/tls.key" tls tls.key "$openbao_uid:$openbao_gid" 0400
 	install_file "$work/ca.crt" tls ca.crt "$openbao_uid:$openbao_gid" 0444
-	install_file "$work/ca.crt" worker ca.crt "$worker_uid:$openbao_gid" 0444
-	install_file "$work/ca.crt" web ca.crt "$web_uid:$openbao_gid" 0444
+	for role in worker applier web; do
+		install_file "$work/ca.crt" "$role" ca.crt "$(role_uid "$role"):$openbao_gid" 0444
+	done
 	rm -rf "$work"
 fi
+for role in worker applier web; do
+	if [ ! -e "/secrets/$role/ca.crt" ]; then
+		install_file /secrets/tls/ca.crt "$role" ca.crt "$(role_uid "$role"):$openbao_gid" 0444
+	fi
+done
 
 chown "$openbao_uid:$openbao_gid" /secrets/tls
 chmod 0500 /secrets/tls
-chown "$worker_uid:$openbao_gid" /secrets/worker/secret-id /secrets/worker/ca.crt
-for dir in worker web; do
-	uid=$web_uid
-	if [ "$dir" = worker ]; then
-		uid=$worker_uid
-	fi
-	chown "$uid:$openbao_gid" "/secrets/$dir"
-	chmod 0550 "/secrets/$dir"
+for role in worker applier web; do
+	uid=$(role_uid "$role")
+	chown "$uid:$openbao_gid" "/secrets/$role" "/secrets/$role/secret-id" "/secrets/$role/ca.crt"
+	chmod 0550 "/secrets/$role"
 done
 chmod 0755 /secrets
