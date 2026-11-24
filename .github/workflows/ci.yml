@@ -132,16 +132,26 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+          # The reviewer reads files in the checkout; leave no token there.
+          persist-credentials: false
+      # The rules, the instructions, and the verdict script come from the
+      # base branch, so a pull request cannot change how it is reviewed. A
+      # change to them is itself reviewed, against the rules on the base.
+      - name: Use the review files of the base branch
+        run: |
+          for f in AGENTS.md .github/review-prompt.md scripts/review-verdict.sh; do
+            git show "origin/$BASE_REF:$f" > "$f"
+          done
       - name: Collect the change
         id: change
         run: |
-          files=$(git diff --name-only "origin/$BASE_REF...HEAD" -- '*.go' go.mod '*.html' '*.tmpl' '*.sql')
+          files=$(git diff --name-only "origin/$BASE_REF...HEAD" -- '*.go' go.mod '*.html' '*.tmpl' '*.sql' AGENTS.md .github scripts/review-verdict.sh)
           if [ -z "$files" ]; then
-            echo "No Go source, go.mod, template, or migration changed; nothing to review."
+            echo "No Go source, go.mod, template, migration, or review file changed; nothing to review."
             echo "reviewable=false" >> "$GITHUB_OUTPUT"
             # An earlier run may have left a verdict for files this pull
             # request no longer changes. There is none to edit on a first run.
-            printf '## AI 규칙 검토\n\n검토할 파일(Go 소스, go.mod, 템플릿, SQL)이 바뀌지 않았습니다.\n' > "$RUNNER_TEMP/comment.md"
+            printf '## AI 규칙 검토\n\n검토할 파일(Go 소스, go.mod, 템플릿, SQL, 검토 규칙과 CI 파일)이 바뀌지 않았습니다.\n' > "$RUNNER_TEMP/comment.md"
             gh pr comment "$PR_NUMBER" --edit-last --body-file "$RUNNER_TEMP/comment.md" 2>/dev/null || true
             exit 0
           fi

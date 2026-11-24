@@ -10,7 +10,7 @@
 # It prints the pull request comment on standard output, or nothing when there
 # is nothing to say, and exits
 #   0 when there are no violations, or when <override> is true and none of
-#     them is in the Security section;
+#     them is in the Security section, in any spelling;
 #   1 when a violation blocks the merge;
 #   2 when the file holds no readable verdict. The override label does not
 #     apply then: an unreviewed change must not pass.
@@ -26,6 +26,7 @@ override=$2
 if ! listed=$(jq -r -s '
 	if length != 1 then error("no verdict") else .[0].violations end
 	| if type != "array" then error("no verdict") else . end
+	| (map(select(.section | ascii_downcase | contains("security"))) + map(select(.section | ascii_downcase | contains("security") | not)))
 	| .[:10][]
 	| "- \(.file):\(.line) — \(.section) — \(.fix)"
 ' "$file" 2>/dev/null); then
@@ -37,7 +38,9 @@ fi
 
 [ -n "$listed" ] || exit 0
 
-security=$(jq '[.violations[:10][] | select(.section == "Security")] | length' "$file")
+# Every violation counts here, not only the ten listed, and a section that
+# names Security in any spelling is a Security violation.
+security=$(jq -s '[.[0].violations[] | select(.section | ascii_downcase | contains("security"))] | length' "$file")
 
 echo '## AI 규칙 검토'
 echo

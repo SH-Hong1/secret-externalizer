@@ -39,6 +39,8 @@ check 'violation' false 1 'a.go:3 — Errors — wrap it' "{\"violations\":[$err
 check 'violation with override' true 0 'a.go:3 — Errors — wrap it' "{\"violations\":[$errors]}"
 check 'override is mentioned' true 0 'review: override' "{\"violations\":[$errors]}"
 check 'security with override' true 1 'b.go:9 — Security — do not log the token' "{\"violations\":[$errors,$security]}"
+check 'lower-case security with override' true 1 'security' '{"violations":[{"file":"b.go","line":9,"section":"security","fix":"x"}]}'
+check 'security after ten with override' true 1 'b.go:9 — Security' "{\"violations\":[$errors,$errors,$errors,$errors,$errors,$errors,$errors,$errors,$errors,$errors,$security]}"
 check 'empty' false 2 "$no_verdict" ''
 check 'not json' false 2 "$no_verdict" 'not json'
 check 'no violations key' false 2 "$no_verdict" '{}'
