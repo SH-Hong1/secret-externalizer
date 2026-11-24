@@ -3,6 +3,7 @@ package apply
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +14,9 @@ import (
 	"time"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
+	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
+	"github.com/SH-Hong1/secret-externalizer/internal/literal"
 	"github.com/SH-Hong1/secret-externalizer/internal/manifest"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/rewrite"
@@ -263,6 +266,15 @@ type target struct {
 	// file's buffers or another value, so zeroing it changes nothing else.
 	// It is nil until read.
 	value value
+	// span is the range of the place in the file's decoded text, set when
+	// value is read from it.
+	span finding.Span
+	// stored is what is stored for a target with a store key: the value
+	// the file gives the text at the place, which is value itself, sharing
+	// its bytes, when the text has no escape. storedFingerprint is its
+	// fingerprint. Both are unset until decodeValues.
+	stored            value
+	storedFingerprint string
 	// reason is why the target is skipped or failed, empty while it is
 	// planned or once it is applied.
 	reason Reason
@@ -377,7 +389,8 @@ func (p *prepared) close() {
 	for _, f := range p.files {
 		for _, t := range f.targets {
 			clear(t.value)
-			t.value = nil
+			clear(t.stored)
+			t.value, t.stored = nil, nil
 		}
 		clear(f.raw)
 		clear(f.text.Text)
@@ -478,6 +491,9 @@ func (r *Runner) prepare(ctx context.Context, j job.Job, phase job.Kind) (_ *pre
 	}
 	r.dropLarge(p)
 	if err := r.verify(ctx, p); err != nil {
+		return nil, err
+	}
+	if err := r.decodeValues(ctx, p); err != nil {
 		return nil, err
 	}
 	takeWholeFiles(p)
@@ -801,6 +817,7 @@ func (f *sourceFile) valueAt(t *target, maxStored int) (Reason, value) {
 	if err != nil {
 		return ReasonValueMismatch, nil
 	}
+	t.span = sp
 	return "", value(bytes.Clone(text.Text[sp.Start:sp.End]))
 }
 
@@ -847,6 +864,106 @@ func (r *Runner) verify(ctx context.Context, p *prepared) error {
 		}
 	}
 	return nil
+}
+
+// decodeValues sets what is stored for every planned target with a store
+// key, once its text was verified: for a place in a file, the value the
+// file gives its text, by literal.Value, and for a whole file, its bytes. A
+// place whose text does not settle its value is skipped as value-unclear.
+// When the places of one store key give different values, every one of
+// them is skipped as values-differ, since one path cannot hold both. The
+// fingerprint of each value that differs from its text is computed once
+// per store key; a value equal to its text has the bundle's fingerprint.
+func (r *Runner) decodeValues(ctx context.Context, p *prepared) error {
+	var keys []string
+	byKey := map[string][]*target{}
+	for _, f := range p.files {
+		for _, t := range f.targets {
+			if t.reason != "" || t.StoreKey == "" {
+				continue
+			}
+			if err := f.decodeValue(t); err != nil {
+				t.reason = ReasonValueUnclear
+				continue
+			}
+			if byKey[t.StoreKey] == nil {
+				keys = append(keys, t.StoreKey)
+			}
+			byKey[t.StoreKey] = append(byKey[t.StoreKey], t)
+		}
+	}
+	var (
+		first  []*target
+		values [][]byte
+	)
+	for _, key := range keys {
+		targets := byKey[key]
+		if !sameValues(targets) {
+			for _, t := range targets {
+				t.reason = ReasonValuesDiffer
+			}
+			continue
+		}
+		t := targets[0]
+		if bytes.Equal(t.stored, t.value) {
+			for _, o := range targets {
+				o.storedFingerprint = o.Fingerprint
+			}
+			continue
+		}
+		first = append(first, t)
+		values = append(values, t.stored)
+	}
+	if len(values) == 0 {
+		return nil
+	}
+	fps, err := r.vault.Fingerprints(ctx, values)
+	if err != nil {
+		return fmt.Errorf("%w: %w", errSecretStore, err)
+	}
+	if len(fps) != len(values) {
+		return fmt.Errorf("%w: got %d fingerprints for %d values", errSecretStore, len(fps), len(values))
+	}
+	for i, t := range first {
+		for _, o := range byKey[t.StoreKey] {
+			o.storedFingerprint = fps[i]
+		}
+	}
+	return nil
+}
+
+// decodeValue sets what is stored for t, a target of f with a store key.
+func (f *sourceFile) decodeValue(t *target) error {
+	if t.WholeFile {
+		t.stored = t.value
+		return nil
+	}
+	text, err := f.decode()
+	if err != nil {
+		return err
+	}
+	v, err := literal.Value(f.rel, text.Text, t.span)
+	if err != nil {
+		return err
+	}
+	if bytes.Equal(v, t.value) {
+		clear(v)
+		t.stored = t.value
+		return nil
+	}
+	t.stored = value(v)
+	return nil
+}
+
+// sameValues reports whether every target of targets stores the same
+// bytes. The values are secrets, so they are compared in constant time.
+func sameValues(targets []*target) bool {
+	for _, o := range targets[1:] {
+		if subtle.ConstantTimeCompare(o.stored, targets[0].stored) != 1 {
+			return false
+		}
+	}
+	return true
 }
 
 // takeWholeFiles skips every target of a file whose whole-file target was

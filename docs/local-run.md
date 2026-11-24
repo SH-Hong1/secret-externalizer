@@ -108,7 +108,7 @@ git add -A && git -c user.name=dev -c user.email=dev@example.invalid commit -q -
 
 ### 저장된 값을 확인하기
 
-루트 토큰은 초기화 뒤 폐기되므로 applier의 AppRole로 로그인해 읽는다. 값은 base64로 저장되어 있고, 디코딩하면 소스에 적혀 있던 글자 그대로다. 이 명령은 값을 터미널에 출력하므로 로컬 개발 환경의 가짜 값에만 쓴다.
+루트 토큰은 초기화 뒤 폐기되므로 applier의 AppRole로 로그인해 읽는다. 값은 base64로 저장되어 있고, 디코딩하면 소스의 글자에서 그 파일 종류의 이스케이프를 푼 값이다(`docs/decisions/0070-store-the-value-the-text-stands-for.md`). 이 명령은 값을 터미널에 출력하므로 로컬 개발 환경의 가짜 값에만 쓴다.
 
 ```sh
 docker compose exec -e BAO_ADDR=https://127.0.0.1:8200 -e BAO_CACERT=/openbao/secrets/tls/ca.crt openbao sh -c '

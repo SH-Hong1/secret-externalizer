@@ -1283,3 +1283,25 @@ func TestApplyHistory(t *testing.T) {
 		t.Errorf("ApplyHistory(%d, 1) = %+v, %v, want the check only", pid, runs, err)
 	}
 }
+
+// TestFinishApply_ValueReasons stores the reasons an apply gives a place
+// whose text does not settle its value and the places of one name whose
+// texts stand for different values.
+func TestFinishApply_ValueReasons(t *testing.T) {
+	s := newMigratedStore(t)
+	pid, _, pw, _ := decidedProject(t, s, "values")
+	id, j := claimApply(t, s, pid)
+	unclear := replaceItem(t, s, pid, pw, "conf/a.yml")
+	unclear.Status, unclear.Reason = apply.StatusSkipped, apply.ReasonValueUnclear
+	differ := replaceItem(t, s, pid, pw, "conf/b.xml")
+	differ.Status, differ.Reason = apply.StatusSkipped, apply.ReasonValuesDiffer
+	want := []apply.Item{unclear, differ}
+
+	if err := s.FinishApply(t.Context(), j.ID, "worker-a", id, want); err != nil {
+		t.Fatalf("FinishApply(%d, value reasons) error = %v", id, err)
+	}
+
+	if diff := cmp.Diff(want, applyItems(t, s, id)); diff != "" {
+		t.Errorf("ApplyItems(%d) after finishing (-want +got):\n%s", id, diff)
+	}
+}
