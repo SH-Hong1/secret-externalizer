@@ -83,7 +83,7 @@ git -C "$repo" config user.email test@example.invalid
 git -C "$repo" config user.name test
 mkdir -p "$repo/.githooks" "$repo/bin" "$repo/fake"
 cp "$dir/../.githooks/pre-commit" "$repo/.githooks/pre-commit"
-printf '#!/bin/sh\necho "make $*" >>"%s/calls"\n' "$work" >"$repo/fake/make"
+printf '#!/bin/sh\necho "make $*" >>"%s/calls"\n[ "$*" != "-s check" ] || env | grep -E "^GIT_(DIR|INDEX_FILE|WORK_TREE|OBJECT_DIRECTORY|PREFIX)=" >>"%s/make-env" || true\n' "$work" "$work" >"$repo/fake/make"
 printf '#!/bin/sh\necho "golangci-lint $*" >>"%s/calls"\n' "$work" >"$repo/bin/golangci-lint"
 chmod +x "$repo/fake/make" "$repo/bin/golangci-lint"
 printf 'bin/\nfake/\n' >"$repo/.gitignore"
@@ -110,6 +110,18 @@ git -C "$repo" add a.go
 precommit
 if [ "$status" -ne 0 ] || ! grep -q '^make -s check$' "$work/calls"; then
 	printf 'pre-commit: go file: status %s, calls %s, want 0 and make -s check\n' "$status" "$(cat "$work/calls")" >&2
+	failed=1
+fi
+
+# git commit -a exports GIT_INDEX_FILE for the hook. make check runs tests
+# that use git in other repositories, so the hook must not pass it on.
+: >"$work/make-env"
+GIT_INDEX_FILE="$repo/.git/index"
+export GIT_INDEX_FILE
+precommit
+unset GIT_INDEX_FILE
+if [ "$status" -ne 0 ] || [ -s "$work/make-env" ]; then
+	printf 'pre-commit: GIT_INDEX_FILE set: status %s, make saw %s, want 0 and no repository variables\n' "$status" "$(cat "$work/make-env")" >&2
 	failed=1
 fi
 

@@ -27,4 +27,8 @@ if [ -n "$gofiles" ]; then
 	git add -- $gofiles
 fi
 
+# git commit -a points GIT_INDEX_FILE at a temporary index for this hook.
+# make check runs tests that use git in repositories of their own, which must
+# not see the variables that locate this one.
+unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_PREFIX
 make -s check
