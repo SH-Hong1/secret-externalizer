@@ -541,3 +541,66 @@ func (s *Store) DeleteBundleRows(ctx context.Context, id triage.BundleID) error 
 	_, err := s.pool.Exec(ctx, "DELETE FROM bundle WHERE id = $1", id)
 	return err
 }
+
+// StoredFinding is a finding row given to PlanFindings.
+type StoredFinding struct {
+	ID          int64
+	Fingerprint string
+	File        string
+	Key         string
+	Bundle      int64
+	Seen        bool
+}
+
+// AutoBundle is a shared or frontend bundle row given to PlanFindings.
+type AutoBundle struct {
+	ID          int64
+	Fingerprint string
+	Origin      string
+}
+
+// Planned is what the plan of a scan's findings decided for one of them.
+type Planned struct {
+	// ID is the stored finding the scan's finding becomes, or 0 for a new
+	// one.
+	ID int64
+	// Key is the key the row has after the scan.
+	Key string
+	// Bundle is the stored bundle a new finding joins, or 0.
+	Bundle int64
+	// NewBundle is the 1-based position of the new bundle a new finding
+	// joins, or 0, and Origin that bundle's origin.
+	NewBundle int
+	Origin    string
+	// Preview is the preview the row gets. It is compared only by tests
+	// that set one.
+	Preview string
+}
+
+// PlanFindings plans the storing of findings over the given rows and returns
+// the decision for each finding, the number of finding rows the plan writes,
+// and the number of bundles it creates.
+func PlanFindings(stored []StoredFinding, bundles []AutoBundle, findings []finding.Finding) (decided []Planned, rows, created int) {
+	sf := make([]storedFinding, len(stored))
+	for i, f := range stored {
+		sf[i] = storedFinding{id: f.ID, fingerprint: f.Fingerprint, file: f.File, key: f.Key, bundle: f.Bundle, seen: f.Seen}
+	}
+	ab := make([]autoBundle, len(bundles))
+	for i, b := range bundles {
+		ab[i] = autoBundle{id: b.ID, fingerprint: b.Fingerprint, origin: b.Origin}
+	}
+	p := planFindings(sf, ab, findings)
+	decided = make([]Planned, len(p.slots))
+	for i, slot := range p.slots {
+		r := p.rows[slot]
+		decided[i] = Planned{ID: r.id, Key: r.finding.Key, Preview: r.finding.Preview}
+		if r.id != 0 {
+			continue
+		}
+		decided[i].Bundle, decided[i].NewBundle = r.bundle.id, r.bundle.planned
+		if r.bundle.planned != 0 {
+			decided[i].Origin = p.bundles[r.bundle.planned-1].origin
+		}
+	}
+	return decided, len(p.rows), len(p.bundles)
+}

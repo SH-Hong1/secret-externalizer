@@ -464,8 +464,8 @@ func TestSaveResult_StoresLocationsOfLargeScan(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()
 	id, j := claimedScan(t, s, newProject(t, s, "shop"))
-	// 2100 locations in three findings cross the size of one batch twice,
-	// once inside a finding.
+	// 2100 locations in three findings are far more than one finding has
+	// in the other tests.
 	const perFinding = 700
 	var findings []finding.Finding
 	for i, fp := range []string{fpA, fpB, fpC} {
@@ -495,5 +495,93 @@ func TestSaveResult_StoresLocationsOfLargeScan(t *testing.T) {
 			t.Errorf("finding %d of scan %d = %.8s with %d locations, want %.8s with %d ending at line %d",
 				i, id, f.Fingerprint, len(f.Locations), findings[i].Fingerprint, perFinding, perFinding)
 		}
+	}
+}
+
+func TestSaveResult_LargeScanKeepsTakesOverAndAdds(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	// 1200 stored findings and 2500 found ones cross the size of one batch
+	// of updates, of inserts and of new bundles.
+	const stored, found = 1200, 2500
+	fingerprint := func(i int) string { return fmt.Sprintf("%064x", i+1) }
+	file := func(i int) string { return fmt.Sprintf("conf/large-%d.properties", i) }
+	at := func(i int, key string) finding.Finding {
+		f := secretAt(fingerprint(i%stored), 4)
+		f.File, f.Key = file(i), key
+		return f
+	}
+
+	var first []finding.Finding
+	for i := range stored {
+		first = append(first, at(i, ""))
+	}
+	id1, j1 := claimedScan(t, s, pid)
+	if err := s.SaveResult(ctx, j1.ID, "worker-a", id1, result(first...)); err != nil {
+		t.Fatalf("SaveResult(%d keyless findings) error = %v", stored, err)
+	}
+	before := make(map[int]db.FindingIDs, stored)
+	for i := range stored {
+		row, err := s.FindingRow(ctx, pid, fingerprint(i), file(i))
+		if err != nil {
+			t.Fatalf("FindingRow(%s) after the first scan error = %v", file(i), err)
+		}
+		before[i] = row
+	}
+
+	// The even stored findings come back under a key, the odd ones as they
+	// were, and every new file holds a value that is already stored.
+	key := func(i int) string {
+		if i < stored && i%2 == 1 {
+			return ""
+		}
+		return "db.password"
+	}
+	var second []finding.Finding
+	for i := range found {
+		second = append(second, at(i, key(i)))
+	}
+	id2, j2 := claimedScan(t, s, pid)
+	if err := s.SaveResult(ctx, j2.ID, "worker-a", id2, result(second...)); err != nil {
+		t.Fatalf("SaveResult(%d findings over %d stored) error = %v", found, stored, err)
+	}
+
+	if n, err := s.Count(ctx, "finding"); err != nil || n != found {
+		t.Errorf("rows in finding = %d, %v, want %d", n, err, found)
+	}
+	if n, err := s.Count(ctx, "bundle"); err != nil || n != stored {
+		t.Errorf("rows in bundle = %d, %v, want the %d shared bundles of the first scan", n, err, stored)
+	}
+	for i := range found {
+		row, err := s.FindingRowOfKey(ctx, pid, fingerprint(i%stored), file(i), key(i))
+		if err != nil {
+			t.Fatalf("FindingRowOfKey(%s, %q) error = %v", file(i), key(i), err)
+		}
+		want := db.FindingIDs{ID: row.ID, FirstScanID: int64(id2), LastScanID: int64(id2)}
+		if old, ok := before[i]; ok {
+			want = db.FindingIDs{ID: old.ID, FirstScanID: int64(id1), LastScanID: int64(id2)}
+		}
+		if row != want {
+			t.Errorf("FindingRowOfKey(%s, %q) = %+v, want %+v", file(i), key(i), row, want)
+		}
+		got, err := s.BundleOfKey(ctx, pid, fingerprint(i%stored), file(i), key(i))
+		if err != nil {
+			t.Fatalf("BundleOfKey(%s, %q) error = %v", file(i), key(i), err)
+		}
+		shared, err := s.BundleOfKey(ctx, pid, fingerprint(i%stored), file(i%stored), key(i%stored))
+		if err != nil {
+			t.Fatalf("BundleOfKey(%s, %q) error = %v", file(i%stored), key(i%stored), err)
+		}
+		if got != shared {
+			t.Errorf("BundleOfKey(%s, %q) = %d, want %d, the bundle of %s", file(i), key(i), got, shared, file(i%stored))
+		}
+	}
+	got, err := s.FindingsByScan(ctx, id2)
+	if err != nil {
+		t.Fatalf("FindingsByScan(%d) error = %v", id2, err)
+	}
+	if len(got) != found {
+		t.Errorf("FindingsByScan(%d) = %d findings, want %d", id2, len(got), found)
 	}
 }
