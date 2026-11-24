@@ -44,14 +44,16 @@ func (b *syncBuffer) String() string {
 // before any job is handed out.
 //
 // extendErrs are returned by the first renewals, and extendErr by the rest.
-// releaseErr is what ReleaseJob returns, and onRelease, when set, runs with
+// Each renewal answers extendDelay after it was asked, whatever its context
+// says. releaseErr is what ReleaseJob returns, and onRelease, when set, runs with
 // the context of each ReleaseJob call.
 type fakeQueue struct {
-	extendErr  error
-	extended   chan struct{}
-	releaseErr error
-	onRelease  func(ctx context.Context)
-	beatErr    error
+	extendErr   error
+	extendDelay time.Duration
+	extended    chan struct{}
+	releaseErr  error
+	onRelease   func(ctx context.Context)
+	beatErr     error
 
 	mu         sync.Mutex
 	jobs       []job.Job
@@ -106,6 +108,9 @@ func (q *fakeQueue) ExtendJob(_ context.Context, _ int64, _ string, _ time.Durat
 	select {
 	case q.extended <- struct{}{}:
 	default:
+	}
+	if q.extendDelay > 0 {
+		time.Sleep(q.extendDelay) // runs only in a synctest bubble, where time is fake
 	}
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -599,6 +604,30 @@ func TestRun_RenewalAfterFailureKeepsHandler(t *testing.T) {
 	elapsed, _ := leaseExpiry(t, q)
 	if want := 40*time.Second + time.Minute; elapsed != want {
 		t.Errorf("Run() cancelled the handler %v after the claim, want %v, one lease after the last renewal", elapsed, want)
+	}
+}
+
+func TestRun_KeepsHandlerWhenItClosedTheJob(t *testing.T) {
+	q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+	q.extendErr = job.ErrClosed
+	elapsed, released := leaseExpiry(t, q)
+	if elapsed != 10*time.Minute {
+		t.Errorf("Run() with a renewal that found the job closed cancelled the handler %v after the claim, want never", elapsed)
+	}
+	if len(released) != 0 {
+		t.Errorf("Run() released jobs %v of a closed job, want none", released)
+	}
+}
+
+func TestRun_CancelsHandlerWhenClosedAfterLeaseRanOut(t *testing.T) {
+	q := newFakeQueue(job.Job{ID: 1, ScanID: 1, Attempts: 1})
+	// The renewal at 20s answers at 70s, after the lease ran out at 60s, so
+	// the job may have been given up by another worker.
+	q.extendDelay = 50 * time.Second
+	q.extendErr = job.ErrClosed
+	elapsed, _ := leaseExpiry(t, q)
+	if want := 70 * time.Second; elapsed != want {
+		t.Errorf("Run() cancelled the handler %v after the claim, want %v, when the late renewal answered", elapsed, want)
 	}
 }
 

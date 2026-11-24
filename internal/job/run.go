@@ -20,7 +20,8 @@ type Queue interface {
 	// ErrNoJob; no kinds means every kind.
 	ClaimJob(ctx context.Context, workerID string, lease time.Duration, kinds ...Kind) (Job, error)
 	// ExtendJob renews the lease on a job workerID holds, or returns
-	// ErrLeaseLost.
+	// ErrClosed when workerID held the job last and it is done or failed,
+	// or ErrLeaseLost.
 	ExtendJob(ctx context.Context, jobID int64, workerID string, lease time.Duration) error
 	// ReleaseJob queues again a job workerID holds but did not finish, and
 	// gives back the attempt it used, or returns ErrLeaseLost.
@@ -178,7 +179,9 @@ func releaseJob(ctx context.Context, logger *slog.Logger, q Queue, opts Options,
 // calls lost when the lease belongs to another worker, and when opts.Lease
 // has passed without a successful renewal since claimed or since the start
 // of the last successful renewal: the lease has then run out in the
-// database as well, and another worker may claim the job.
+// database as well, and another worker may claim the job. It stops
+// without calling lost when a renewal finds the job closed before the lease
+// has run out.
 //
 // A claim or renewal is counted from the moment it was asked for, which is
 // no later than the database clock started the lease, so the handler is
@@ -207,7 +210,12 @@ func renewLease(ctx context.Context, logger *slog.Logger, lost func(), q Queue, 
 			expiry.Reset(time.Until(deadline))
 		case ctx.Err() != nil:
 			return
-		case errors.Is(err, ErrLeaseLost):
+		case errors.Is(err, ErrClosed) && time.Now().Before(deadline):
+			// While the lease has not run out no other worker can close the
+			// job, so the handler closed it and is about to return. Cancelling
+			// it now could interrupt the commit of that close.
+			return
+		case errors.Is(err, ErrLeaseLost), errors.Is(err, ErrClosed):
 			logger.WarnContext(ctx, "job lease lost", attrs(j)...)
 			lost()
 			return

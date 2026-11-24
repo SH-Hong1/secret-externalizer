@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"strings"
@@ -603,4 +604,36 @@ func PlanFindings(stored []StoredFinding, bundles []AutoBundle, findings []findi
 		}
 	}
 	return decided, len(p.rows), len(p.bundles)
+}
+
+// CloseJobAfterBlocking closes the job with the given ID as done in a
+// transaction, calls start once the job's row is locked, and commits only
+// after another session waits for that lock, so that whatever start began
+// is blocked behind the close when it commits.
+func (s *Store) CloseJobAfterBlocking(ctx context.Context, jobID int64, start func()) (err error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("starting transaction: %w", err)
+	}
+	defer rollback(ctx, tx, &err)
+
+	var pid int
+	if err := tx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&pid); err != nil {
+		return fmt.Errorf("reading backend pid: %w", err)
+	}
+	if _, err := tx.Exec(ctx, "UPDATE job SET state = 'done' WHERE id = $1", jobID); err != nil {
+		return fmt.Errorf("closing job %d: %w", jobID, err)
+	}
+	start()
+	for blocked := false; !blocked; {
+		if err := s.pool.QueryRow(ctx,
+			"SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))", pid).
+			Scan(&blocked); err != nil {
+			return fmt.Errorf("looking for a session blocked by the close: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing close of job %d: %w", jobID, err)
+	}
+	return nil
 }

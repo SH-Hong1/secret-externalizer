@@ -168,6 +168,54 @@ func TestExtendJob_LeaseLost(t *testing.T) {
 	}
 }
 
+func TestExtendJob_Closed(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	id := requestScan(t, s)
+
+	j, err := s.ClaimJob(ctx, "worker-a", time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimJob(worker-a) error = %v", err)
+	}
+	if err := s.StartScan(ctx, id); err != nil {
+		t.Fatalf("StartScan(%d) error = %v", id, err)
+	}
+	if err := s.FailScan(ctx, j.ID, "worker-a", id, "scan failed"); err != nil {
+		t.Fatalf("FailScan(worker-a) error = %v", err)
+	}
+
+	if err := s.ExtendJob(ctx, j.ID, "worker-a", time.Minute); !errors.Is(err, job.ErrClosed) {
+		t.Errorf("ExtendJob(worker-a, closed by worker-a) error = %v, want ErrClosed", err)
+	}
+	if err := s.ExtendJob(ctx, j.ID, "worker-b", time.Minute); !errors.Is(err, job.ErrLeaseLost) {
+		t.Errorf("ExtendJob(worker-b, closed by worker-a) error = %v, want ErrLeaseLost", err)
+	}
+}
+
+// TestExtendJob_WhileCloseCommits renews a job while the worker's own close
+// of it holds the row: the renewal waits for the close and then finds the
+// job closed, not taken over.
+func TestExtendJob_WhileCloseCommits(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	requestScan(t, s)
+
+	j, err := s.ClaimJob(ctx, "worker-a", time.Minute)
+	if err != nil {
+		t.Fatalf("ClaimJob(worker-a) error = %v", err)
+	}
+	extended := make(chan error, 1)
+	start := func() {
+		go func() { extended <- s.ExtendJob(ctx, j.ID, "worker-a", time.Minute) }()
+	}
+	if err := s.CloseJobAfterBlocking(ctx, j.ID, start); err != nil {
+		t.Fatalf("CloseJobAfterBlocking(%d) error = %v", j.ID, err)
+	}
+	if err := <-extended; !errors.Is(err, job.ErrClosed) {
+		t.Errorf("ExtendJob(worker-a) during its own close error = %v, want ErrClosed", err)
+	}
+}
+
 func TestFailScan_OnlyByLeaseHolder(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()
