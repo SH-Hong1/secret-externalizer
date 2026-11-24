@@ -14,6 +14,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/session"
 )
 
 // testClientSecret is an obviously fake client secret.
@@ -25,12 +26,23 @@ const testDatabaseURL = "postgres://se_app:dev-only-cmd-web-test-db@postgres:543
 // testSecretID is an obviously fake AppRole secret-id.
 const testSecretID = "dev-only-cmd-web-test-secret-id" //nolint:gosec // G101: an obviously fake fixture value
 
+// testValkeyPassword is an obviously fake valkey password.
+const testValkeyPassword = "dev-only-cmd-web-test-valkey-password" //nolint:gosec // G101: an obviously fake fixture value
+
 // writeSecretID writes content to a new file and returns its path.
 func writeSecretID(t *testing.T, content string) string {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "secret-id")
+	return writeFile(t, content)
+}
+
+// writeFile writes content to a new file in a temporary folder and returns
+// its path.
+func writeFile(t *testing.T, content string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "file")
+	//nolint:gosec // G703: the path is a new file in t.TempDir; only the content may come from the environment
 	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
-		t.Fatalf("writing the secret-id file: %v", err)
+		t.Fatalf("writing a test file: %v", err)
 	}
 	return path
 }
@@ -41,17 +53,19 @@ func writeSecretID(t *testing.T, content string) string {
 func validEnv(t *testing.T) map[string]string {
 	t.Helper()
 	return map[string]string{
-		"BAO_ADDR":           "http://openbao:8200",
-		"BAO_ROLE_ID":        "se-web",
-		"BAO_SECRET_ID_FILE": writeSecretID(t, testSecretID+"\n"),
-		"WEB_BASE_URL":       "http://localhost:8080",
-		"VALKEY_ADDR":        "valkey:6379",
-		"DATABASE_URL":       testDatabaseURL,
-		"OIDC_ISSUER_URL":    "http://localhost:8081/realms/secret-externalizer",
-		"OIDC_DISCOVERY_URL": "http://keycloak:8080/realms/secret-externalizer",
-		"OIDC_CLIENT_ID":     "secret-externalizer-web",
-		"OIDC_CLIENT_SECRET": testClientSecret,
-		"PDF_URL":            "http://pdf:3000",
+		"BAO_ADDR":             "http://openbao:8200",
+		"BAO_ROLE_ID":          "se-web",
+		"BAO_SECRET_ID_FILE":   writeSecretID(t, testSecretID+"\n"),
+		"WEB_BASE_URL":         "http://localhost:8080",
+		"VALKEY_ADDR":          "valkey:6379",
+		"VALKEY_USERNAME":      "se-web",
+		"VALKEY_PASSWORD_FILE": writeFile(t, testValkeyPassword+"\n"),
+		"DATABASE_URL":         testDatabaseURL,
+		"OIDC_ISSUER_URL":      "http://localhost:8081/realms/secret-externalizer",
+		"OIDC_DISCOVERY_URL":   "http://keycloak:8080/realms/secret-externalizer",
+		"OIDC_CLIENT_ID":       "secret-externalizer-web",
+		"OIDC_CLIENT_SECRET":   testClientSecret,
+		"PDF_URL":              "http://pdf:3000",
 	}
 }
 
@@ -65,12 +79,14 @@ func TestLoadConfig(t *testing.T) {
 		t.Fatalf("loadConfig(nil, validEnv(t)) error = %v", err)
 	}
 	want := config{
-		addr:       ":8080",
-		valkeyAddr: "valkey:6379",
-		dsn:        db.DSN(testDatabaseURL),
-		baoAddr:    "http://openbao:8200",
-		baoCreds:   bao.Credentials{RoleID: "se-web", SecretID: testSecretID},
-		pdfURL:     "http://pdf:3000",
+		addr:           ":8080",
+		valkeyAddr:     "valkey:6379",
+		valkeyUser:     "se-web",
+		valkeyPassword: session.Password(testValkeyPassword),
+		dsn:            db.DSN(testDatabaseURL),
+		baoAddr:        "http://openbao:8200",
+		baoCreds:       bao.Credentials{RoleID: "se-web", SecretID: testSecretID},
+		pdfURL:         "http://pdf:3000",
 		oidc: auth.Config{
 			IssuerURL:    "http://localhost:8081/realms/secret-externalizer",
 			DiscoveryURL: "http://keycloak:8080/realms/secret-externalizer",
@@ -121,6 +137,8 @@ func TestLoadConfig_MissingRequired(t *testing.T) {
 	for _, name := range []string{
 		"WEB_BASE_URL",
 		"VALKEY_ADDR",
+		"VALKEY_USERNAME",
+		"VALKEY_PASSWORD_FILE",
 		"DATABASE_URL",
 		"OIDC_ISSUER_URL",
 		"OIDC_CLIENT_ID",
@@ -220,6 +238,9 @@ func TestConfig_Redacted(t *testing.T) {
 		}
 		if strings.Contains(out, testSecretID) {
 			t.Errorf("output %q of config contains the secret-id", out)
+		}
+		if strings.Contains(out, testValkeyPassword) {
+			t.Errorf("output %q of config contains the valkey password", out)
 		}
 	}
 	if want := "se-web"; !strings.Contains(fmt.Sprintf("%v", cfg), want) {
@@ -321,6 +342,81 @@ func TestLoadConfig_SecretIDFile(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), "BAO_SECRET_ID_FILE") {
 				t.Errorf("loadConfig() with a %s secret-id file error = %q, want it to name BAO_SECRET_ID_FILE", tt.name, err)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_ValkeyPasswordFile(t *testing.T) {
+	tests := []struct {
+		name string
+		path func(t *testing.T) string
+	}{
+		{"missing", func(t *testing.T) string { return filepath.Join(t.TempDir(), "absent") }},
+		{"empty", func(t *testing.T) string { return writeFile(t, " \n") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv(t)
+			env["VALKEY_PASSWORD_FILE"] = tt.path(t)
+			_, err := loadConfig(nil, getenvFrom(env))
+			if err == nil {
+				t.Fatalf("loadConfig() with a %s valkey password file error = nil, want an error", tt.name)
+			}
+			if !strings.Contains(err.Error(), "VALKEY_PASSWORD_FILE") {
+				t.Errorf("loadConfig() with a %s valkey password file error = %q, want it to name VALKEY_PASSWORD_FILE", tt.name, err)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_ValkeyCAFile(t *testing.T) {
+	caPEM, _ := newTestCA(t)
+	env := validEnv(t)
+	env["VALKEY_CA_FILE"] = writeFile(t, string(caPEM))
+	got, err := loadConfig(nil, getenvFrom(env))
+	if err != nil {
+		t.Fatalf("loadConfig() with VALKEY_CA_FILE error = %v", err)
+	}
+	if diff := cmp.Diff(caPEM, got.valkeyCA); diff != "" {
+		t.Errorf("loadConfig() with VALKEY_CA_FILE valkeyCA mismatch (-want +got):\n%s", diff)
+	}
+	if want := "valkey_tls:true"; !strings.Contains(got.String(), want) {
+		t.Errorf("config.String() = %q, want it to contain %q", got.String(), want)
+	}
+}
+
+func TestLoadConfig_ValkeyCAFileIsOptional(t *testing.T) {
+	got, err := loadConfig(nil, getenvFrom(validEnv(t)))
+	if err != nil {
+		t.Fatalf("loadConfig(nil, validEnv(t)) error = %v", err)
+	}
+	if got.valkeyCA != nil {
+		t.Errorf("loadConfig() without VALKEY_CA_FILE valkeyCA = %q, want nil", got.valkeyCA)
+	}
+	if want := "valkey_tls:false"; !strings.Contains(got.String(), want) {
+		t.Errorf("config.String() = %q, want it to contain %q", got.String(), want)
+	}
+}
+
+func TestLoadConfig_BadValkeyCAFile(t *testing.T) {
+	tests := []struct {
+		name string
+		path func(t *testing.T) string
+	}{
+		{"missing", func(t *testing.T) string { return filepath.Join(t.TempDir(), "absent") }},
+		{"no certificate", func(t *testing.T) string { return writeFile(t, "not a certificate\n") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv(t)
+			env["VALKEY_CA_FILE"] = tt.path(t)
+			_, err := loadConfig(nil, getenvFrom(env))
+			if err == nil {
+				t.Fatalf("loadConfig() with a %s VALKEY_CA_FILE error = nil, want an error", tt.name)
+			}
+			if !strings.Contains(err.Error(), "VALKEY_CA_FILE") {
+				t.Errorf("loadConfig() with a %s VALKEY_CA_FILE error = %q, want it to name VALKEY_CA_FILE", tt.name, err)
 			}
 		})
 	}

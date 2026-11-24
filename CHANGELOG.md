@@ -6,6 +6,7 @@
 
 ### 변경
 
+- web이 valkey에 자기 ACL 사용자와 비밀번호로 붙는다. 새 필수 설정은 `VALKEY_USERNAME`, `VALKEY_PASSWORD_FILE`이다. `VALKEY_CA_FILE`을 주면 TLS로 붙고 그 CA의 인증서만 믿으며, 주지 않으면 평문으로 붙고 시작할 때 경고를 남긴다. compose의 valkey는 TLS만 받고, `valkey-secrets`가 처음 뜰 때 사설 CA와 인증서, ACL 파일, web의 비밀번호를 만든다. web의 사용자 `se-web`은 세션과 로그인 시도 키, 그리고 web이 쓰는 명령에만 닿는다. valkey는 더 이상 호스트 포트를 열지 않고 내부 네트워크 `valkey`에 web과 둘만 붙는다. 통합 테스트는 `test` 프로필의 `valkey-test`(`127.0.0.1:16379`)를 쓰고 `TEST_VALKEY_PASSWORD`가 필요하다(`docs/decisions/0066-valkey-auth-and-tls.md`)
 - compose의 서비스를 연결마다 나눈 네트워크에 붙인다. 호스트 포트를 여는 web, keycloak, postgres, valkey는 NAT를 끈 네트워크 `edge`에, worker는 내부 네트워크 `db`(postgres)와 `bao`(OpenBao)에만 붙는다. worker와 스캐너는 바깥으로 연결하지 못하고, OpenBao에는 web과 worker만 닿는다. `openbao-secrets`는 네트워크 없이 뜨고, `test` 프로필의 `openbao-test`와 `pdf-test`는 NAT를 끈 네트워크 `test`에 붙는다(`docs/decisions/0065-compose-networks.md`)
 - `docs/local-run.md`를 되살렸다. 탐지 규칙 문단을 고치던 변경이 문서 전체를 그 문단의 반복으로 덮어썼었다
 - 로그인 시도마다 쿠키를 따로 둔다(`se_login_<state의 해시>`, `Path=/auth/callback`). 한 브라우저에서 로그인을 두 번 시작하면 두 번째가 첫 번째 쿠키를 덮어써 두 콜백이 모두 400이 되던 것을 고쳤다. 이제 두 시도가 어느 순서로 돌아와도 각자 끝난다(`docs/decisions/0064-one-login-cookie-per-attempt.md`)

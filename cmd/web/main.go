@@ -3,6 +3,8 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -95,7 +97,14 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	if err != nil {
 		return err
 	}
-	vk, err := valkey.NewClient(valkeyOption(cfg.valkeyAddr))
+	if cfg.valkeyCA == nil {
+		logger.WarnContext(ctx, "valkey connection is not encrypted", "valkey_addr", cfg.valkeyAddr)
+	}
+	opt, err := valkeyOption(cfg)
+	if err != nil {
+		return fmt.Errorf("preparing valkey client: %w", err)
+	}
+	vk, err := valkey.NewClient(opt)
 	if err != nil {
 		return fmt.Errorf("connecting to valkey at %s: %w", cfg.valkeyAddr, err)
 	}
@@ -149,17 +158,35 @@ const (
 // OpenBao does not answer.
 const databaseLimit = 5 * time.Second
 
-// valkeyOption configures the valkey client so that a command fails within a
-// few seconds when valkey is gone. Sessions are read under a request context
-// that carries no deadline, and without a limit the client would retry a
-// read until valkey came back, so a page would hang instead of showing the
-// 503 page.
-func valkeyOption(addr string) valkey.ClientOption {
-	return valkey.ClientOption{
-		InitAddress: []string{addr},
+// valkeyOption configures the valkey client to sign in as cfg's valkey
+// user and, when cfg holds a CA, to reach valkey over TLS, trusting only that
+// CA and checking the certificate against the host of the address.
+//
+// A command fails within a few seconds when valkey is gone. Sessions are
+// read under a request context that carries no deadline, and without a limit
+// the client would retry a read until valkey came back, so a page would hang
+// instead of showing the 503 page.
+func valkeyOption(cfg config) (valkey.ClientOption, error) {
+	opt := valkey.ClientOption{
+		InitAddress: []string{cfg.valkeyAddr},
+		Username:    cfg.valkeyUser,
+		Password:    string(cfg.valkeyPassword),
 		Dialer:      net.Dialer{Timeout: 2 * time.Second},
 		RetryDelay:  valkeyRetryDelay,
 	}
+	if cfg.valkeyCA == nil {
+		return opt, nil
+	}
+	host, _, err := net.SplitHostPort(cfg.valkeyAddr)
+	if err != nil {
+		return valkey.ClientOption{}, fmt.Errorf("reading the host of %s: %w", cfg.valkeyAddr, err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(cfg.valkeyCA) {
+		return valkey.ClientOption{}, errors.New("the valkey CA holds no PEM certificate")
+	}
+	opt.TLSConfig = &tls.Config{RootCAs: roots, ServerName: host, MinVersion: tls.VersionTLS12}
+	return opt, nil
 }
 
 // valkeyRetryDelay retries a failed read twice, shortly after it fails, and
