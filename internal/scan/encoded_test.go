@@ -84,8 +84,7 @@ func TestHandle_EncodedCustomerDataIsDropped(t *testing.T) {
 	}
 }
 
-// Text that does not decode to the reported value is not placed. Previously
-// this test also checked the old scanner flag; changed as discussed in review.
+// Text that does not decode to the reported value is not placed.
 func TestHandle_EncodedValueNotThereIsDropped(t *testing.T) {
 	blob := base64.StdEncoding.EncodeToString([]byte("db.password=something-else"))
 	e := newEnv(t, map[string]string{propsFile: "a=1\nblob=" + blob + "\njdbc.password=" + password + "\n"})
