@@ -1,0 +1,18 @@
+name: 기능
+description: 설계의 주제 하나. 실제 작업은 하위 이슈(task)로 나눈다.
+labels: ["type: feat"]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: 목적
+      description: 무엇을 왜 만드는가. 설계 문서의 해당 절을 적는다.
+    validations:
+      required: true
+  - type: textarea
+    id: done
+    attributes:
+      label: 완료 조건
+      description: 무엇이 되면 이 기능이 끝난 것인가.
+    validations:
+      required: true

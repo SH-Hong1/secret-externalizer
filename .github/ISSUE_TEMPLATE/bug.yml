@@ -1,0 +1,16 @@
+name: 버그
+description: 기대와 다르게 동작한다.
+labels: ["type: fix"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: 일어난 일
+      description: 실행한 명령, 기대한 결과, 실제 결과. 고객 소스나 비밀 값은 붙이지 않는다.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 다시 일으키는 방법
+      description: 문제를 보이는 가장 작은 입력. 직접 만든 예로 적는다.
