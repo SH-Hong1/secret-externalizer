@@ -16,7 +16,7 @@
 {{end}}</div>
 {{with .Confirmation}}{{template "confirmation" .}}{{end}}{{if .Scan.Status.Active}}<div class="card card-pad flex flex-col gap-2.5">
 {{if eq .Scan.Status "running"}}<div class="progress" role="progressbar" aria-label="스캔 진행 중"></div>
-{{end}}<p class="text-2">{{.Requester}} · <span class="mono">{{.RequestedAt}}</span>에 요청. {{if eq .Scan.Status "queued"}}worker가 가져가기를 기다립니다. {{end}}이 화면은 3초마다 새로 고쳐집니다.</p>
+{{end}}{{if .NoWorker}}{{template "noworker"}}{{end}}<p class="text-2">{{.Requester}} · <span class="mono">{{.RequestedAt}}</span>에 요청. {{if eq .Scan.Status "queued"}}worker가 가져가기를 기다립니다. {{end}}이 화면은 3초마다 새로 고쳐집니다.</p>
 {{if .Triage}}<p class="muted">스캔하는 동안에도 지난 스캔 기준으로 판정할 수 있습니다. <a href="{{.Triage}}">판정 화면</a></p>
 {{end}}</div>
 {{else if eq .Scan.Status "failed"}}<div class="card card-pad card-failed flex flex-col gap-2.5">

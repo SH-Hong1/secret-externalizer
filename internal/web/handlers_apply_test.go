@@ -1191,3 +1191,31 @@ func TestApplyPage_NothingToApplyCondition(t *testing.T) {
 	wantIn(t, "apply page of a check that found nothing to apply", res.body, after, "적용할 수 있는 항목이 없습니다.")
 	wantNotIn(t, "apply page of a check that found nothing to apply", res.body, before)
 }
+
+func TestApplyRunPage_NoWorkerNotice(t *testing.T) {
+	const notice = "worker가 응답하지 않습니다"
+	for _, tt := range []struct {
+		name     string
+		run      *apply.Run
+		noWorker bool
+		want     bool
+	}{
+		{"queued, no worker", confirmed(apply.StateQueued), true, true},
+		{"queued, worker alive", confirmed(apply.StateQueued), false, false},
+		{"running, no worker", confirmed(apply.StateRunning), true, false},
+		{"succeeded, no worker", confirmed(apply.StateSucceeded), true, false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := applyEnv(t)
+			e.putRun(*tt.run, nil, nil, 0)
+			e.scans.noWorker = tt.noWorker
+			res := e.do(t, http.MethodGet, runPagePath, nil, e.user(t))
+			if res.status != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want 200", runPagePath, res.status)
+			}
+			if got := strings.Contains(res.body, notice); got != tt.want {
+				t.Errorf("GET %s of a %s run with noWorker = %v has %q = %v, want %v", runPagePath, tt.name, tt.noWorker, notice, got, tt.want)
+			}
+		})
+	}
+}

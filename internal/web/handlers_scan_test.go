@@ -608,3 +608,45 @@ func TestHandleScan_CountsOnly(t *testing.T) {
 		t.Errorf("GET /scans/5 called Entries %d times, want 0", n)
 	}
 }
+
+func TestScan_NoWorkerNotice(t *testing.T) {
+	const notice = "worker가 응답하지 않습니다"
+	tests := []struct {
+		name     string
+		status   scan.Status
+		noWorker bool
+		want     bool
+	}{
+		{"queued, no worker", scan.StatusQueued, true, true},
+		{"queued, worker alive", scan.StatusQueued, false, false},
+		{"running, no worker", scan.StatusRunning, true, false},
+		{"failed, no worker", scan.StatusFailed, true, false},
+		{"succeeded, no worker", scan.StatusSucceeded, true, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			pid := e.newProject(t)
+			e.scans.put(scan.Scan{ID: 9, ProjectID: pid, Status: tt.status})
+			e.scans.noWorker = tt.noWorker
+			res := e.do(t, http.MethodGet, "/scans/9", nil, e.user(t))
+			if res.status != http.StatusOK {
+				t.Fatalf("GET /scans/9 status = %d, want 200", res.status)
+			}
+			if got := strings.Contains(res.body, notice); got != tt.want {
+				t.Errorf("GET /scans/9 of a %s scan with noWorker = %v has %q = %v, want %v", tt.status, tt.noWorker, notice, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestScan_WorkerCheckFailure(t *testing.T) {
+	e := newTestEnv(t)
+	pid := e.newProject(t)
+	e.scans.put(scan.Scan{ID: 9, ProjectID: pid, Status: scan.StatusQueued})
+	e.scans.aliveErr = errors.New("fake store failure")
+	res := e.do(t, http.MethodGet, "/scans/9", nil, e.user(t))
+	if res.status != http.StatusInternalServerError {
+		t.Errorf("GET /scans/9 with a failing worker check status = %d, want 500", res.status)
+	}
+}

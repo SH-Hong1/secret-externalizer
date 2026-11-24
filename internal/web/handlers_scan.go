@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -73,6 +74,12 @@ func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans 
 		}
 		page := newScanPage(sc)
 		page.User, page.ProjectName = u, p.Name
+		if sc.Status == scan.StatusQueued {
+			if page.NoWorker, err = noWorker(r.Context(), scans); err != nil {
+				rd.fail(w, r, logger, http.StatusInternalServerError, err)
+				return
+			}
+		}
 		if sc.ApplyID != 0 {
 			n := 0
 			if sc.Status == scan.StatusSucceeded {
@@ -122,4 +129,14 @@ func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans 
 		page.Undecided = verdicts[""]
 		rd.page(w, r, logger, http.StatusOK, "scan.html", page)
 	})
+}
+
+// noWorker reports whether no worker is serving the queue, which is when a
+// queued request is waiting for nothing.
+func noWorker(ctx context.Context, scans ScanStore) (bool, error) {
+	alive, err := scans.WorkerAlive(ctx, workerSeenWithin)
+	if err != nil {
+		return false, fmt.Errorf("checking for a worker: %w", err)
+	}
+	return !alive, nil
 }

@@ -13,6 +13,8 @@ import (
 
 // Queue is the job queue as the worker loop uses it.
 type Queue interface {
+	// Beat records that workerID is alive and asking for jobs.
+	Beat(ctx context.Context, workerID string) error
 	// ClaimJob leases one job to workerID for lease, or returns ErrNoJob.
 	ClaimJob(ctx context.Context, workerID string, lease time.Duration) (Job, error)
 	// ExtendJob renews the lease on a job workerID holds, or returns
@@ -62,7 +64,8 @@ func (o Options) validate() error {
 	return nil
 }
 
-// Run claims jobs from q one at a time and passes each to h, until ctx is
+// Run records a beat in q before each claim, so the web program can tell a
+// worker is serving the queue, and claims jobs from q one at a time and passes each to h, until ctx is
 // cancelled. A job's lease is renewed while h runs, and h's context is
 // cancelled when the lease is lost or runs out without a successful
 // renewal. A job that h returns an error for is logged and left to its
@@ -81,6 +84,11 @@ func Run(ctx context.Context, logger *slog.Logger, q Queue, h Handler, opts Opti
 	timer := time.NewTimer(opts.Poll)
 	defer timer.Stop()
 	for ctx.Err() == nil {
+		// A beat that fails is only a warning: the worker can still run
+		// jobs, and the claim below reports a database that is down.
+		if err := q.Beat(ctx, opts.WorkerID); err != nil && ctx.Err() == nil {
+			logger.WarnContext(ctx, "recording the worker beat failed", "error", err.Error())
+		}
 		claimed := time.Now()
 		j, err := q.ClaimJob(ctx, opts.WorkerID, opts.Lease)
 		switch {
