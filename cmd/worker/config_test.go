@@ -2,8 +2,15 @@ package main
 
 import (
 	"bytes"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
 	"fmt"
 	"log/slog"
+	"math/big"
 	"os"
 	"path/filepath"
 	"strings"
@@ -291,5 +298,100 @@ func TestLoadConfig_ErrorHidesDatabaseURL(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "dev-only-cmd-worker-test-db") {
 		t.Errorf("loadConfig() error = %q, contains the database password", err)
+	}
+}
+
+// newTestCAPEM returns the PEM of a self-signed CA certificate that lives
+// only for the test.
+func newTestCAPEM(t *testing.T) []byte {
+	t.Helper()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatalf("generating the CA key: %v", err)
+	}
+	template := &x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "cmd/worker test CA"},
+		NotBefore:             time.Now().Add(-time.Hour),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
+	}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatalf("creating the CA certificate: %v", err)
+	}
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+}
+
+// writeContent writes content to a new file in a temporary folder and
+// returns its path.
+func writeContent(t *testing.T, content []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "file")
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("WriteFile(%q) error = %v", path, err)
+	}
+	return path
+}
+
+func TestLoadConfig_BaoTLS(t *testing.T) {
+	caPEM := newTestCAPEM(t)
+	tests := []struct {
+		name    string
+		addr    string
+		ca      []byte
+		wantTLS string
+	}{
+		{"http", "http://openbao:8200", nil, "bao_tls:false"},
+		{"https and the system's roots", "https://openbao.example:8200", nil, "bao_tls:true"},
+		{"https and a CA file", "https://openbao:8200", caPEM, "bao_tls:true"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv(t)
+			env["BAO_ADDR"] = tt.addr
+			if tt.ca != nil {
+				env["BAO_CA_FILE"] = writeContent(t, tt.ca)
+			}
+			got, err := loadConfig(getenvFrom(env))
+			if err != nil {
+				t.Fatalf("loadConfig() with %s error = %v", tt.name, err)
+			}
+			if diff := cmp.Diff(tt.ca, got.baoCA); diff != "" {
+				t.Errorf("loadConfig() with %s baoCA mismatch (-want +got):\n%s", tt.name, diff)
+			}
+			if !strings.Contains(got.String(), tt.wantTLS) {
+				t.Errorf("loadConfig() with %s String() = %q, want it to contain %q", tt.name, got.String(), tt.wantTLS)
+			}
+		})
+	}
+}
+
+func TestLoadConfig_BadBaoTLS(t *testing.T) {
+	caPEM := newTestCAPEM(t)
+	tests := []struct {
+		name   string
+		addr   string
+		caFile func(t *testing.T) string
+	}{
+		{"missing CA file", "https://openbao:8200", func(t *testing.T) string { return filepath.Join(t.TempDir(), "absent") }},
+		{"CA file without a certificate", "https://openbao:8200", func(t *testing.T) string { return writeContent(t, []byte("not a certificate\n")) }},
+		{"CA file with an http address", "http://openbao:8200", func(t *testing.T) string { return writeContent(t, caPEM) }},
+		{"address that is not http or https", "ftp://openbao:8200", func(*testing.T) string { return "" }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv(t)
+			env["BAO_ADDR"] = tt.addr
+			if path := tt.caFile(t); path != "" {
+				env["BAO_CA_FILE"] = path
+			}
+			_, err := loadConfig(getenvFrom(env))
+			if err == nil || !strings.Contains(err.Error(), "BAO_ADDR and BAO_CA_FILE") {
+				t.Errorf("loadConfig() with a %s error = %v, want an error naming BAO_ADDR and BAO_CA_FILE", tt.name, err)
+			}
+		})
 	}
 }

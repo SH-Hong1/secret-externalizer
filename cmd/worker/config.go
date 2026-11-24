@@ -26,7 +26,13 @@ type config struct {
 	lease     time.Duration
 	heartbeat time.Duration
 	baoAddr   string
-	baoCreds  bao.Credentials
+	// baoTLS is whether baoAddr is an https address.
+	baoTLS bool
+	// baoCA holds the PEM certificates that OpenBao's certificate must
+	// chain to. Nil means the system's roots, or no TLS when baoTLS is
+	// false.
+	baoCA    []byte
+	baoCreds bao.Credentials
 	// betterleaksBin and opengrepBin are the scanner executables, and
 	// rulesDir holds betterleaks.toml and the opengrep rule folder.
 	betterleaksBin string
@@ -44,13 +50,13 @@ type config struct {
 const defaultGitBin = "/usr/bin/git"
 
 // String returns every setting with the database URL and the secret-id
-// redacted.
+// redacted. Of OpenBao's CA it says only whether the connection uses TLS.
 func (c config) String() string {
 	// c.dsn and the secret-id are arguments of their own, so fmt calls their
 	// Format methods.
-	return fmt.Sprintf("{database_url:%v workspace_root:%s apply_workspace_root:%s poll:%s lease:%s heartbeat:%s bao_addr:%s bao_role_id:%s bao_secret_id:%v"+
+	return fmt.Sprintf("{database_url:%v workspace_root:%s apply_workspace_root:%s poll:%s lease:%s heartbeat:%s bao_addr:%s bao_tls:%t bao_role_id:%s bao_secret_id:%v"+
 		" betterleaks_bin:%s opengrep_bin:%s rules_dir:%s git_bin:%s scan_temp_dir:%s}",
-		c.dsn, c.root, c.applyRoot, c.poll, c.lease, c.heartbeat, c.baoAddr, c.baoCreds.RoleID, c.baoCreds.SecretID,
+		c.dsn, c.root, c.applyRoot, c.poll, c.lease, c.heartbeat, c.baoAddr, c.baoTLS, c.baoCreds.RoleID, c.baoCreds.SecretID,
 		c.betterleaksBin, c.opengrepBin, c.rulesDir, c.gitBin, c.scanTempDir)
 }
 
@@ -71,6 +77,7 @@ func (c config) LogValue() slog.Value {
 		slog.String("lease", c.lease.String()),
 		slog.String("heartbeat", c.heartbeat.String()),
 		slog.String("bao_addr", c.baoAddr),
+		slog.Bool("bao_tls", c.baoTLS),
 		slog.String("bao_role_id", c.baoCreds.RoleID),
 		slog.Any("bao_secret_id", c.baoCreds.SecretID),
 		slog.String("betterleaks_bin", c.betterleaksBin),
@@ -84,6 +91,10 @@ func (c config) LogValue() slog.Value {
 // loadConfig builds a config from the environment. The database URL is
 // converted to db.DSN as it is read, and the secret-id to bao.SecretID as it
 // is read from BAO_SECRET_ID_FILE. No error returned here contains either.
+//
+// BAO_CA_FILE is optional. When it is set, BAO_ADDR must be an https address
+// and the worker trusts only the certificates in that file for OpenBao; when
+// it is not, an https address is checked against the system's roots.
 func loadConfig(getenv func(string) string) (config, error) {
 	var missing []string
 	required := func(name string) string {
@@ -111,6 +122,10 @@ func loadConfig(getenv func(string) string) (config, error) {
 	secretID, err := bao.ReadSecretIDFile(secretIDFile)
 	if err != nil {
 		return config{}, fmt.Errorf("reading BAO_SECRET_ID_FILE: %w", err)
+	}
+	baoTLS, baoCA, err := bao.LoadCA(baoAddr, getenv("BAO_CA_FILE"))
+	if err != nil {
+		return config{}, fmt.Errorf("checking BAO_ADDR and BAO_CA_FILE: %w", err)
 	}
 	if err := checkExecutable(betterleaksBin); err != nil {
 		return config{}, fmt.Errorf("checking BETTERLEAKS_BIN: %w", err)
@@ -147,6 +162,8 @@ func loadConfig(getenv func(string) string) (config, error) {
 		lease:     2 * time.Minute,
 		heartbeat: 30 * time.Second,
 		baoAddr:   baoAddr,
+		baoTLS:    baoTLS,
+		baoCA:     baoCA,
 		baoCreds:  bao.Credentials{RoleID: roleID, SecretID: secretID},
 
 		betterleaksBin: betterleaksBin,

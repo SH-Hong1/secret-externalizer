@@ -278,8 +278,9 @@ Sources: Effective Go; Go Code Review Comments; Practical Go.
 - Format with `make fmt`, which runs gofumpt and goimports. Do not format by
   hand and do not argue with the formatter.
 - `make check` runs the linters, `go vet`, the tests with the race detector,
-  the hook script tests, and the scanner fetch-script test
-  (`make scanners-test`). It must pass before a task is finished.
+  the hook script tests, the scanner fetch-script test
+  (`make scanners-test`), and the deploy script tests
+  (`make deploy-scripts-test`). It must pass before a task is finished.
 - Fix a lint finding. Do not suppress it. Where suppression really is correct,
   write `//nolint:<linter> // <reason>` on that line.
 - `gosec` rule G204 is turned off in `.golangci.yml`. It reports every

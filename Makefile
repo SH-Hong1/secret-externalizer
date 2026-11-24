@@ -62,7 +62,7 @@ fetch = curl --fail --silent --show-error --location --proto '=https' --proto-re
 BETTERLEAKS_BIN ?= $(BIN)/betterleaks
 OPENGREP_BIN ?= $(BIN)/opengrep
 
-.PHONY: tools tailwind css css-check htmx fonts scanners fmt lint vet test test-integration hooks scanners-test check
+.PHONY: tools tailwind css css-check htmx fonts scanners fmt lint vet test test-integration hooks scanners-test openbao-unseal-key deploy-scripts-test check
 
 tools: tailwind
 	GOBIN=$(BIN) go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
@@ -155,4 +155,12 @@ hooks: $(BIN)/gofumpt $(BIN)/golangci-lint
 scanners-test:
 	sh deploy/worker/fetch-scanners_test.sh
 
-check: lint vet test hooks scanners-test css-check
+# Makes the local OpenBao's unseal key on the host, or moves it out of the
+# openbao-secrets volume; see deploy/openbao/unseal-key.sh.
+openbao-unseal-key:
+	sh deploy/openbao/unseal-key.sh
+
+deploy-scripts-test:
+	sh deploy/openbao/unseal-key_test.sh
+
+check: lint vet test hooks scanners-test deploy-scripts-test css-check

@@ -11,7 +11,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -71,7 +70,11 @@ const scannerPath = "/usr/local/bin:/usr/bin:/bin"
 // store and the vault, and the three scanners that cfg describes. The
 // client does not contact OpenBao until it is first used.
 func newDeps(cfg config) (workerDeps, error) {
-	client, err := bao.New(cfg.baoAddr, cfg.baoCreds, &http.Client{Timeout: 10 * time.Second})
+	hc, err := bao.NewHTTPClient(cfg.baoCA, 10*time.Second)
+	if err != nil {
+		return workerDeps{}, fmt.Errorf("preparing openbao TLS: %w", err)
+	}
+	client, err := bao.New(cfg.baoAddr, cfg.baoCreds, hc)
 	if err != nil {
 		return workerDeps{}, fmt.Errorf("preparing openbao client: %w", err)
 	}
@@ -162,6 +165,9 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	}
 
 	logger.InfoContext(ctx, "worker started", "worker_id", workerID, "rules_version", rulesVersion, "config", cfg)
+	if !cfg.baoTLS {
+		logger.WarnContext(ctx, "openbao connection is not encrypted", "bao_addr", cfg.baoAddr)
+	}
 	runner := scan.NewRunner(logger, database, sd.fingerprints, sd.originals, sd.scanners, scan.Options{
 		WorkerID:     workerID,
 		Root:         cfg.root,

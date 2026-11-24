@@ -23,7 +23,12 @@
 # port either and only web reaches it, over TLS and as its own ACL user. The worker, and so
 # the scanners it runs, is only on internal networks. pdf publishes no port
 # either and sits alone with web on the internal network "pdf"; see decision
-# 0043.
+# 0043. web and the worker reach openbao over TLS.
+#
+# OpenBao's unseal key is a file on the host, outside every volume:
+# OPENBAO_UNSEAL_KEY_FILE, or $HOME/.config/secret-externalizer/openbao-unseal.key
+# when unset. Make it with `make openbao-unseal-key` before the first `up`;
+# see deploy/openbao/unseal-key.sh and decision 0067.
 
 name: secret-externalizer
 
@@ -220,13 +225,16 @@ services:
       retries: 60
       start_period: 10s
 
-  # Writes the OpenBao unseal key and the AppRole secret-ids into the
+  # Writes the AppRole secret-ids and OpenBao's TLS certificate into the
   # openbao-secrets volume on the first start, and leaves existing files alone
-  # afterwards. See deploy/openbao/make-secrets.sh.
+  # afterwards. See deploy/openbao/make-secrets.sh. It uses the converter's
+  # image because that is the one pinned image here that has openssl; it
+  # runs nothing else from it.
   openbao-secrets:
-    image: openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
+    image: gotenberg/gotenberg:9.9.1-chromium@sha256:d722dfb3105c00f775125f13e3613ecbdb0040b12a7b8245c1d98ebafaefedd4
     entrypoint: ["/bin/sh", "/make-secrets.sh"]
     environment:
+      HOME: /tmp
       # The user and group the worker runs as; the user must own the
       # worker's secret-id. The script refuses root and non-numbers.
       SE_UID: ${SE_UID:-65532}
@@ -241,6 +249,9 @@ services:
     # that already belong to another user.
     user: "0:0"
     read_only: true
+    tmpfs:
+      # The CA's private key lives here and goes with the container.
+      - /tmp
     cap_drop:
       - ALL
     cap_add:
@@ -254,13 +265,22 @@ services:
   # Holds the original values that scans find. It publishes no host port.
   openbao:
     image: openbao/openbao:2.7.2@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f
-    entrypoint: ["bao", "server", "-config=/openbao/config/config.hcl"]
+    entrypoint:
+      - bao
+      - server
+      - -config=/openbao/config/config.hcl
+      - -config=/openbao/config/seal.hcl
     volumes:
       - ./deploy/openbao/config.hcl:/openbao/config/config.hcl:ro
+      - ./deploy/openbao/seal-static.hcl:/openbao/config/seal.hcl:ro
       # /openbao/file belongs to the openbao user in the image, so the new
       # volume starts with that owner.
       - openbao-data:/openbao/file
       - openbao-secrets:/openbao/secrets:ro
+    # The unseal key, at /run/secrets/openbao-unseal-key. No other service
+    # mounts it.
+    secrets:
+      - openbao-unseal-key
     networks:
       - bao
     user: "100:1000"
@@ -275,7 +295,7 @@ services:
         condition: service_completed_successfully
     healthcheck:
       # bao status exits 0 only when the server is initialised and unsealed.
-      test: ["CMD", "bao", "status", "-address=http://127.0.0.1:8200"]
+      test: ["CMD", "bao", "status", "-address=https://127.0.0.1:8200", "-ca-cert=/openbao/secrets/tls/ca.crt"]
       interval: 2s
       timeout: 3s
       retries: 30
@@ -402,15 +422,16 @@ services:
       OIDC_CLIENT_ID: secret-externalizer-web
       OIDC_CLIENT_SECRET: dev-only-web-client-secret # local development only; matches realm.json
       # Web reads an original only when an admin asks to reveal one.
-      BAO_ADDR: http://openbao:8200
+      BAO_ADDR: https://openbao:8200
+      BAO_CA_FILE: /run/secrets/openbao/ca.crt
       BAO_ROLE_ID: se-web
       BAO_SECRET_ID_FILE: /run/secrets/openbao/secret-id
       PDF_URL: http://pdf:3000
     ports:
       - "127.0.0.1:8080:8080"
     volumes:
-      # Only web's own directory of the openbao-secrets volume, so web cannot
-      # read the unseal key or the worker role's secret-id.
+      # Only web's own directory of the openbao-secrets volume: its secret-id
+      # and the CA, not OpenBao's private key or the worker role's secret-id.
       - type: volume
         source: openbao-secrets
         target: /run/secrets/openbao
@@ -466,7 +487,8 @@ services:
       DATABASE_URL: postgres://se_app:dev-only-se-app-password@postgres:5432/secret_externalizer # local development only
       WORKSPACE_ROOT: /workspace
       APPLY_WORKSPACE_ROOT: /workspace-rw
-      BAO_ADDR: http://openbao:8200
+      BAO_ADDR: https://openbao:8200
+      BAO_CA_FILE: /run/secrets/openbao/ca.crt
       BAO_ROLE_ID: se-worker
       BAO_SECRET_ID_FILE: /run/secrets/openbao/secret-id
       # The scanners and rules the worker image holds.
@@ -484,8 +506,9 @@ services:
       # /workspace-rw by its absolute path; see decision 0032.
       - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace:ro
       - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace-rw
-      # Only the worker's own directory of the openbao-secrets volume, so the
-      # worker cannot read the unseal key or the web role's secret-id.
+      # Only the worker's own directory of the openbao-secrets volume: its
+      # secret-id and the CA, not OpenBao's private key or the web role's
+      # secret-id.
       - type: volume
         source: openbao-secrets
         target: /run/secrets/openbao
@@ -551,3 +574,8 @@ volumes:
   valkey-secrets:
   openbao-data:
   openbao-secrets:
+
+secrets:
+  # OpenBao's unseal key, made on the host by `make openbao-unseal-key`.
+  openbao-unseal-key:
+    file: ${OPENBAO_UNSEAL_KEY_FILE:-${HOME}/.config/secret-externalizer/openbao-unseal.key}
