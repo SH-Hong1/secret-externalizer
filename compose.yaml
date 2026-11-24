@@ -14,9 +14,14 @@
 #   openbao-test 127.0.0.1:18200     (profile "test", for integration tests)
 #   pdf-test  127.0.0.1:13000        (profile "test", for integration tests)
 #
-# openbao publishes no port: only the worker and web reach it, on the compose
-# network. pdf publishes no port either and sits alone with web on the
-# internal network "pdf", which has no way out; see decision 0043.
+# Each network carries only the connections that need it; see decision 0065
+# and the networks section at the end of this file. No service can open a
+# connection outside the host's container network: the networks with
+# published ports have NAT turned off, and the others are internal. openbao
+# publishes no port and only web and the worker reach it. The worker, and so
+# the scanners it runs, is only on internal networks. pdf publishes no port
+# either and sits alone with web on the internal network "pdf"; see decision
+# 0043.
 
 name: secret-externalizer
 
@@ -34,6 +39,10 @@ services:
       - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/10-keycloak.sql:ro
     ports:
       - "127.0.0.1:15432:5432"
+    # edge for the host port, keycloak, and web; db for the worker.
+    networks:
+      - edge
+      - db
     healthcheck:
       test: ["CMD", "pg_isready", "-U", "postgres", "-d", "keycloak"]
       interval: 2s
@@ -62,6 +71,8 @@ services:
       - noeviction
     ports:
       - "127.0.0.1:16379:6379"
+    networks:
+      - edge
     healthcheck:
       test: ["CMD", "valkey-cli", "ping"]
       interval: 2s
@@ -89,6 +100,8 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: dev-only-admin-password # local development only
     ports:
       - "127.0.0.1:8081:8080"
+    networks:
+      - edge
     volumes:
       - ./deploy/keycloak/realm.json:/opt/keycloak/data/import/realm.json:ro
     depends_on:
@@ -121,6 +134,8 @@ services:
     volumes:
       - ./deploy/openbao/make-secrets.sh:/make-secrets.sh:ro
       - openbao-secrets:/secrets
+    # It only writes files into the volume.
+    network_mode: none
     # Root is needed to give each file its owner. It keeps only the
     # capabilities for that: changing owners and modes, and reaching files
     # that already belong to another user.
@@ -146,6 +161,8 @@ services:
       # volume starts with that owner.
       - openbao-data:/openbao/file
       - openbao-secrets:/openbao/secrets:ro
+    networks:
+      - bao
     user: "100:1000"
     read_only: true
     cap_drop:
@@ -178,6 +195,8 @@ services:
       HOME: /tmp
     ports:
       - "127.0.0.1:18200:8200"
+    networks:
+      - test
     user: "100:1000"
     read_only: true
     tmpfs:
@@ -252,13 +271,14 @@ services:
       retries: 30
 
   # The same converter for the integration tests, started only with
-  # --profile test. It is on the default network, not on "pdf", because the
-  # tests reach it from the host through the published port.
+  # --profile test. It is on the network "test", not on "pdf", because the
+  # tests reach it from the host through the published port, which an
+  # internal network cannot carry.
   pdf-test:
     <<: *pdf
     profiles: ["test"]
     networks:
-      - default
+      - test
     ports:
       - "127.0.0.1:13000:3000"
     restart: "no"
@@ -301,9 +321,11 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 15s
-    # default for everything else, pdf for the converter only.
+    # edge for the host port, postgres, valkey, and keycloak; bao for
+    # OpenBao; pdf for the converter.
     networks:
-      - default
+      - edge
+      - bao
       - pdf
     depends_on:
       postgres:
@@ -371,6 +393,11 @@ services:
     security_opt:
       - no-new-privileges:true
     stop_grace_period: 15s
+    # Internal networks only: the worker and the scanners reach postgres
+    # and OpenBao and nothing else.
+    networks:
+      - db
+      - bao
     # A worker that stopped takes up its jobs again once their leases end.
     restart: unless-stopped
     depends_on:
@@ -380,10 +407,29 @@ services:
         condition: service_healthy
 
 networks:
+  # Carries the published ports of web, keycloak, postgres, and valkey, and
+  # the connections among them. A published port needs a network that is not
+  # internal, so this one is a bridge with NAT turned off: its members answer
+  # on their host ports but cannot open a connection outside the host's
+  # container network. Docker's DNS still answers outside names on it.
+  edge:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
+  # The worker to postgres.
+  db:
+    internal: true
+  # Web and the worker to OpenBao.
+  bao:
+    internal: true
   # Has no route out of the host's container network: only web and pdf are
   # on it.
   pdf:
     internal: true
+  # The published ports of openbao-test and pdf-test (profile "test"), with
+  # NAT turned off as on edge.
+  test:
+    driver_opts:
+      com.docker.network.bridge.enable_ip_masquerade: "false"
 
 volumes:
   postgres-data:

@@ -6,6 +6,8 @@
 
 ### 변경
 
+- compose의 서비스를 연결마다 나눈 네트워크에 붙인다. 호스트 포트를 여는 web, keycloak, postgres, valkey는 NAT를 끈 네트워크 `edge`에, worker는 내부 네트워크 `db`(postgres)와 `bao`(OpenBao)에만 붙는다. worker와 스캐너는 바깥으로 연결하지 못하고, OpenBao에는 web과 worker만 닿는다. `openbao-secrets`는 네트워크 없이 뜨고, `test` 프로필의 `openbao-test`와 `pdf-test`는 NAT를 끈 네트워크 `test`에 붙는다(`docs/decisions/0065-compose-networks.md`)
+- `docs/local-run.md`를 되살렸다. 탐지 규칙 문단을 고치던 변경이 문서 전체를 그 문단의 반복으로 덮어썼었다
 - 로그인 시도마다 쿠키를 따로 둔다(`se_login_<state의 해시>`, `Path=/auth/callback`). 한 브라우저에서 로그인을 두 번 시작하면 두 번째가 첫 번째 쿠키를 덮어써 두 콜백이 모두 400이 되던 것을 고쳤다. 이제 두 시도가 어느 순서로 돌아와도 각자 끝난다(`docs/decisions/0064-one-login-cookie-per-attempt.md`)
 - 판정 화면의 묶음 상세에 같은 값의 다른 묶음이 있으면 "이 묶음 전체 합치기"를 보인다. 키만 다르고 실제로 같은 비밀(`jdbc.password`, `jdbc.slave.password`)을 항목마다 옮기지 않고 한 번에, 하나라도 거부되면 아무것도 옮기지 않게 합친다. 합치기는 항목 옮기기와 같은 규칙을 따르고 감사 기록은 옮긴 항목마다 남는다(`docs/decisions/0063-merge-bundles.md`)
 - 대시보드 프로젝트 표의 "마지막 스캔" 시각을 끝난 스캔은 끝난 시각으로 보인다. 끝나지 않은 스캔은 전처럼 요청한 시각이다. 추이의 막대와 표가 끝난 시각을 쓰므로 둘이 같아진다(`docs/decisions/0061-dashboard-last-scan-time.md`)
