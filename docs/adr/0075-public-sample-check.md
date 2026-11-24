@@ -12,7 +12,7 @@
 - 대상은 전자정부 표준프레임워크의 `egovframe-web-sample`(Apache-2.0)이다. 이름, 주소, 커밋을 `scripts/samples.lock`에 고정한다. 받을 수 없게 되면 다른 공개 eGovFrame이나 Spring MVC 예제로 바꾸고 이 기록을 대체한다.
 - `scripts/fetch-sample.sh`가 고정한 커밋만 저장소 밖(`~/.cache/secret-externalizer/samples/<이름>-<커밋>`)에 받고, 받은 HEAD가 그 커밋인지 확인한다. 이미 받은 사본이 그 커밋에 그대로 있으면 다시 받지 않는다. 예제의 소스와 결과는 저장소에 넣지 않는다.
 - `make sample-check`가 예제를 받아 `TestIntegration_PublicSample`(`internal/apply`)을 돌린다. 이 테스트는 `SAMPLE_PROJECT_DIR`가 없으면 건너뛴다. 예제를 `.git` 없이 임시 작업 공간에 복사해 새 저장소로 커밋하고, 실제 스캐너, postgres, OpenBao, git으로 다음을 확인한다.
-  1. 찾은 항목의 (파일, 분류, 종류, 설정 키) 목록이 `internal/apply/testdata/public-sample.golden`과 같다. 이 파일에는 값도 미리보기도 없다. 규칙이 바뀌어 목록이 달라지면 `GOTESTFLAGS=-update`로 다시 쓰고 그 차이를 PR에서 검토한다.
+  1. 찾은 항목의 (파일, 분류, 종류, 설정 키) 목록이 `internal/apply/testdata/public-sample.golden`과 같다. 이 파일에는 값도 미리보기도 없다. 규칙이 바뀌어 목록이 달라지면 `make sample-check UPDATE_GOLDEN=1`로 다시 쓰고 그 차이를 PR에서 검토한다.
   2. 추천 판정대로 점검하고 적용한 뒤의 확인 스캔이 적용한 비밀(비밀번호, 토큰, 키, 기타)을 다시 찾지 않는다.
   3. 스캔이 보관한 원본 비밀이 어느 테이블에도, worker 로그에도 없다. 실패 메시지는 장소와 길이만 말하고 값을 쓰지 않는다.
   4. 적용이 바꾸거나 지운 파일은 자리를 적용한 파일과 manifest뿐이다.

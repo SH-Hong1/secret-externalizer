@@ -58,7 +58,7 @@ fi
 # A copy at another commit is fetched anew.
 git -C "$cache/sample-$first" checkout -q --detach "$first"
 printf 'changed\n' >"$cache/sample-$first/a.txt"
-git -C "$cache/sample-$first" commit -q -am changed
+git -C "$cache/sample-$first" -c user.email=test@example.invalid -c user.name=test commit -q -am changed
 if ! sh "$fetch" "$work/lock" "$cache" >/dev/null 2>"$work/err"; then
 	fail "moved copy: failed: $(cat "$work/err")"
 elif [ "$(git -C "$cache/sample-$first" rev-parse HEAD)" != "$first" ]; then

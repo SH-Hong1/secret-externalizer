@@ -3,7 +3,6 @@ package apply_test
 import (
 	"bytes"
 	"context"
-	"flag"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -33,13 +32,10 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/worktree/worktreetest"
 )
 
-// update rewrites testdata/public-sample.golden from the scan of the sample
-// instead of comparing with it.
-var update = flag.Bool("update", false, "rewrite testdata/public-sample.golden")
-
 // sampleGolden lists what the scan of the public sample finds, one line per
 // finding: its file, category, kind, and configuration key. It holds no
-// value and no preview.
+// value and no preview. UPDATE_GOLDEN=1 rewrites it from the scan instead
+// of comparing with it.
 const sampleGolden = "testdata/public-sample.golden"
 
 // TestIntegration_PublicSample takes a public sample project, named by
@@ -262,7 +258,7 @@ func TestIntegration_PublicSample(t *testing.T) {
 }
 
 // compareGolden compares the findings with testdata/public-sample.golden, or
-// rewrites the file when -update is given.
+// rewrites the file when UPDATE_GOLDEN is 1.
 func compareGolden(t *testing.T, findings []finding.Finding) {
 	t.Helper()
 	lines := make([]string, 0, len(findings))
@@ -271,7 +267,7 @@ func compareGolden(t *testing.T, findings []finding.Finding) {
 	}
 	slices.Sort(lines)
 	got := strings.Join(lines, "\n") + "\n"
-	if *update {
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
 		if err := os.WriteFile(sampleGolden, []byte(got), 0o600); err != nil {
 			t.Fatalf("writing %s: %v", sampleGolden, err)
 		}
@@ -279,7 +275,7 @@ func compareGolden(t *testing.T, findings []finding.Finding) {
 	}
 	want, err := os.ReadFile(sampleGolden)
 	if err != nil {
-		t.Fatalf("reading %s: %v; run make sample-check with -update to write it", sampleGolden, err)
+		t.Fatalf("reading %s: %v; run make sample-check UPDATE_GOLDEN=1 to write it", sampleGolden, err)
 	}
 	if diff := cmp.Diff(string(want), got); diff != "" {
 		t.Errorf("findings of the public sample (-%s +scan):\n%s", sampleGolden, diff)

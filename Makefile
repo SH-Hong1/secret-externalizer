@@ -164,15 +164,15 @@ sample:
 
 # sample-check scans, applies, and scans again the first public sample with
 # the real scanners, postgres, and OpenBao; see TestIntegration_PublicSample
-# in internal/apply. GOTESTFLAGS=-update rewrites the list of what the scan
+# in internal/apply. UPDATE_GOLDEN=1 rewrites the list of what the scan
 # finds.
 sample-check:
 	@test -n "$(TEST_DATABASE_URL)" || { echo "set TEST_DATABASE_URL and TEST_BAO_ADDR as for make test-integration" >&2; exit 1; }
 	@test -n "$(TEST_BAO_ADDR)" || { echo "set TEST_DATABASE_URL and TEST_BAO_ADDR as for make test-integration" >&2; exit 1; }
 	dir="$$(sh scripts/fetch-sample.sh scripts/samples.lock "$(SAMPLE_CACHE)" | head -n 1)" && \
-	SAMPLE_PROJECT_DIR="$$dir" TEST_DATABASE_URL="$(TEST_DATABASE_URL)" TEST_BAO_ADDR="$(TEST_BAO_ADDR)" \
+	SAMPLE_PROJECT_DIR="$$dir" UPDATE_GOLDEN="$(UPDATE_GOLDEN)" TEST_DATABASE_URL="$(TEST_DATABASE_URL)" TEST_BAO_ADDR="$(TEST_BAO_ADDR)" \
 	BETTERLEAKS_BIN="$(BETTERLEAKS_BIN)" OPENGREP_BIN="$(OPENGREP_BIN)" \
-	go test -race -count=1 -run '^TestIntegration_PublicSample$$' ./internal/apply $(GOTESTFLAGS)
+	go test -race -count=1 -run '^TestIntegration_PublicSample$$' ./internal/apply
 
 # hooks tests the git hooks, the commit message check, the rules review
 # verdict, the sample fetch script, and the linter rules.
