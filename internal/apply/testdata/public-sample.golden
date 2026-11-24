@@ -1,0 +1,3 @@
+src/main/resources/egovframework/message/message-common.properties	storage-credential	account	confirm.required.user
+src/main/resources/egovframework/message/message-common_en.properties	storage-credential	account	confirm.required.user
+src/main/resources/egovframework/message/message-common_ko.properties	storage-credential	account	confirm.required.user

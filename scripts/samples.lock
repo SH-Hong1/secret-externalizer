@@ -1,0 +1,3 @@
+# Public sample projects for make sample-check, one per line:
+# <name> <git URL> <commit>
+egovframe-web-sample https://github.com/eGovFramework/egovframe-web-sample.git 9dc46fdf8cc5c792e11d76da40c92b665a9e7309

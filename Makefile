@@ -62,7 +62,7 @@ fetch = curl --fail --silent --show-error --location --proto '=https' --proto-re
 BETTERLEAKS_BIN ?= $(BIN)/betterleaks
 OPENGREP_BIN ?= $(BIN)/opengrep
 
-.PHONY: setup tools tailwind css css-check htmx fonts scanners fmt lint vet test test-integration hooks scanners-test openbao-unseal-key openbao-host-files deploy-scripts-test check
+.PHONY: setup tools tailwind css css-check htmx fonts scanners fmt lint vet test test-integration hooks scanners-test openbao-unseal-key openbao-host-files deploy-scripts-test sample sample-check check
 
 # setup prepares a fresh clone: it installs the tools and turns the git
 # hooks in .githooks on.
@@ -154,10 +154,32 @@ test-integration:
 	TEST_VALKEY_ADDR="$(TEST_VALKEY_ADDR)" TEST_VALKEY_PASSWORD="$(TEST_VALKEY_PASSWORD)" TEST_DATABASE_URL="$(TEST_DATABASE_URL)" TEST_BAO_ADDR="$(TEST_BAO_ADDR)" TEST_PDF_URL="$(TEST_PDF_URL)" \
 	BETTERLEAKS_BIN="$(BETTERLEAKS_BIN)" OPENGREP_BIN="$(OPENGREP_BIN)" go test -race -count=1 ./...
 
-# hooks tests the git hooks, the commit message check, and the linter rules.
+# The public sample projects make sample-check scans, pinned in
+# scripts/samples.lock and kept outside the repository.
+SAMPLE_CACHE ?= $(or $(XDG_CACHE_HOME),$(HOME)/.cache)/secret-externalizer/samples
+
+# sample fetches the pinned public samples into $(SAMPLE_CACHE).
+sample:
+	sh scripts/fetch-sample.sh scripts/samples.lock "$(SAMPLE_CACHE)"
+
+# sample-check scans, applies, and scans again the first public sample with
+# the real scanners, postgres, and OpenBao; see TestIntegration_PublicSample
+# in internal/apply. GOTESTFLAGS=-update rewrites the list of what the scan
+# finds.
+sample-check:
+	@test -n "$(TEST_DATABASE_URL)" || { echo "set TEST_DATABASE_URL and TEST_BAO_ADDR as for make test-integration" >&2; exit 1; }
+	@test -n "$(TEST_BAO_ADDR)" || { echo "set TEST_DATABASE_URL and TEST_BAO_ADDR as for make test-integration" >&2; exit 1; }
+	dir="$$(sh scripts/fetch-sample.sh scripts/samples.lock "$(SAMPLE_CACHE)" | head -n 1)" && \
+	SAMPLE_PROJECT_DIR="$$dir" TEST_DATABASE_URL="$(TEST_DATABASE_URL)" TEST_BAO_ADDR="$(TEST_BAO_ADDR)" \
+	BETTERLEAKS_BIN="$(BETTERLEAKS_BIN)" OPENGREP_BIN="$(OPENGREP_BIN)" \
+	go test -race -count=1 -run '^TestIntegration_PublicSample$$' ./internal/apply $(GOTESTFLAGS)
+
+# hooks tests the git hooks, the commit message check, the rules review
+# verdict, the sample fetch script, and the linter rules.
 hooks: $(BIN)/gofumpt $(BIN)/golangci-lint
 	sh scripts/hooks_test.sh
 	sh scripts/review-verdict_test.sh
+	sh scripts/fetch-sample_test.sh
 	bash scripts/lint-rules_test.sh
 
 scanners-test:
