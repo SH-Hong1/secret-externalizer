@@ -604,3 +604,48 @@ func PlanFindings(stored []StoredFinding, bundles []AutoBundle, findings []findi
 	}
 	return decided, len(p.rows), len(p.bundles)
 }
+
+// HeldClose is a transaction that has closed a job as done and not yet
+// committed, so that it holds the lock on the job's row.
+type HeldClose struct {
+	tx  pgx.Tx
+	pid int
+}
+
+// HoldJobClose closes the job with the given ID as done in a transaction it
+// leaves open. The caller ends it with Commit.
+func (s *Store) HoldJobClose(ctx context.Context, jobID int64) (*HeldClose, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	h := &HeldClose{tx: tx}
+	if err := tx.QueryRow(ctx, "SELECT pg_backend_pid()").Scan(&h.pid); err != nil {
+		return nil, errors.Join(err, tx.Rollback(ctx))
+	}
+	if _, err := tx.Exec(ctx, "UPDATE job SET state = 'done' WHERE id = $1", jobID); err != nil {
+		return nil, errors.Join(err, tx.Rollback(ctx))
+	}
+	return h, nil
+}
+
+// WaitBlocked returns once another session waits for a lock that h holds,
+// or when ctx ends.
+func (h *HeldClose) WaitBlocked(ctx context.Context, s *Store) error {
+	for {
+		var blocked bool
+		if err := s.pool.QueryRow(ctx,
+			"SELECT EXISTS (SELECT 1 FROM pg_stat_activity WHERE $1 = ANY(pg_blocking_pids(pid)))", h.pid).
+			Scan(&blocked); err != nil {
+			return err
+		}
+		if blocked {
+			return nil
+		}
+	}
+}
+
+// Commit commits the close.
+func (h *HeldClose) Commit(ctx context.Context) error {
+	return h.tx.Commit(ctx)
+}

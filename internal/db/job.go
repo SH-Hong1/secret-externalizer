@@ -93,8 +93,14 @@ func (s *Store) ClaimJob(ctx context.Context, workerID string, lease time.Durati
 }
 
 // ExtendJob renews the lease on a job the worker holds. It returns
-// job.ErrLeaseLost when the job is not running or is leased to another
-// worker.
+// job.ErrClosed when the job is done or failed and the worker was the last
+// to hold it, and job.ErrLeaseLost when the job is otherwise not running or
+// is leased to another worker.
+//
+// A renewal that runs while the worker's own close of the job commits
+// waits for that commit and then finds the job closed. The state is read
+// again in a statement of its own because the update's snapshot was taken
+// before that commit.
 func (s *Store) ExtendJob(ctx context.Context, jobID int64, workerID string, lease time.Duration) error {
 	tag, err := s.pool.Exec(ctx, `
 		UPDATE job SET locked_until = now() + $3 * interval '1 second'
@@ -103,10 +109,19 @@ func (s *Store) ExtendJob(ctx context.Context, jobID int64, workerID string, lea
 	if err != nil {
 		return fmt.Errorf("extending job %d: %w", jobID, err)
 	}
-	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("extending job %d: %w", jobID, job.ErrLeaseLost)
+	if tag.RowsAffected() > 0 {
+		return nil
 	}
-	return nil
+	var closed bool
+	if err := s.pool.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM job WHERE id = $1 AND locked_by = $2 AND state IN ('done', 'failed'))`,
+		jobID, workerID).Scan(&closed); err != nil {
+		return fmt.Errorf("reading state of job %d: %w", jobID, err)
+	}
+	if closed {
+		return fmt.Errorf("extending job %d: %w", jobID, job.ErrClosed)
+	}
+	return fmt.Errorf("extending job %d: %w", jobID, job.ErrLeaseLost)
 }
 
 // ReleaseJob gives back a job the worker holds but did not finish, in one

@@ -10,6 +10,10 @@ var (
 	// ErrLeaseLost means the caller no longer holds the lease on the job, so
 	// the job is not the caller's to change.
 	ErrLeaseLost = errors.New("job lease lost")
+	// ErrClosed means the job is done or failed and the caller was the last
+	// worker to hold it, which is how a job looks once the caller has
+	// closed it itself.
+	ErrClosed = errors.New("job closed")
 )
 
 // Kind is what a job does.
