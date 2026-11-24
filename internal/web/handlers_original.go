@@ -15,9 +15,10 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
-// The reasons a reveal shows no value.
+// The reasons the slot of an original shows no value.
 const (
 	msgNoOriginal = "보관된 원본이 없습니다. 다시 스캔하면 보관됩니다."
+	msgNotKept    = "오탐으로 판정한 값은 원본을 보관하지 않습니다. 판정을 바꾸고 다시 스캔하면 보관됩니다."
 	msgStoreDown  = "비밀 저장소에 연결할 수 없습니다. 잠시 뒤 다시 시도해 주세요."
 	msgReadFailed = "비밀 저장소에서 원본을 읽지 못했습니다. 잠시 뒤 다시 시도하고, 계속되면 관리자에게 알려 주세요."
 )

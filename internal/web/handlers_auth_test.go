@@ -770,3 +770,27 @@ func countErrors(t *testing.T, log string) int {
 	}
 	return n
 }
+
+// htmx follows a redirect inside its own request and cannot reach the
+// identity provider, so a request it sends without a session is told to
+// leave the page for the login instead.
+func TestRequireLogin_HtmxRequest(t *testing.T) {
+	e := newTestEnv(t)
+	const target = "/projects/1/triage?sel=b101"
+	res := e.do(t, http.MethodGet, target, http.Header{"Hx-Request": {"true"}})
+	want := "/login?return_to=" + url.QueryEscape(target)
+	if got := res.header.Get("HX-Redirect"); res.status != http.StatusUnauthorized || got != want {
+		t.Errorf("htmx GET %s without login = %d, HX-Redirect %q, want 401 and %q", target, res.status, got, want)
+	}
+	if got := res.location(); got != "" {
+		t.Errorf("htmx GET %s without login has Location %q, want none", target, got)
+	}
+}
+
+// An error page answers an htmx request as well, and htmx shows it only when
+// its configuration lets a response with an error status replace the page.
+func TestLayout_HtmxShowsErrorResponses(t *testing.T) {
+	e := newTestEnv(t)
+	res := e.do(t, http.MethodGet, "/projects", nil, e.user(t))
+	wantContains(t, res.body, `{"code":"[45]..","swap":true,"error":true,"target":"body","swapOverride":"innerHTML"}`)
+}

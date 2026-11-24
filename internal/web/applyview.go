@@ -360,7 +360,10 @@ func dbChecks(blockers []apply.Blocker, scanActive bool) []applyCheck {
 }
 
 // runChecks returns the conditions a check looked at. A condition the
-// check could not reach because an earlier one failed is unchecked.
+// check could not reach because an earlier one failed is unchecked. The last
+// one is named apart from that of dbChecks: the database knows only that
+// verdicts are there to apply, and the check knows whether any place of them
+// can be changed.
 func runChecks(blockers []apply.Blocker) []applyCheck {
 	has := func(bs ...apply.Blocker) bool {
 		for _, b := range bs {
@@ -382,7 +385,7 @@ func runChecks(blockers []apply.Blocker) []applyCheck {
 		conditionOf("커밋되지 않은 변경이 없음", blockers, noState, apply.BlockerDirty),
 		conditionOf("기존 secrets-manifest.yml을 읽을 수 있음", blockers, noFolder, apply.BlockerManifestUnreadable),
 		conditionOf("마지막으로 성공한 스캔이 가장 새 스캔임", blockers, false, apply.BlockerScanNotLatest),
-		conditionOf("적용할 판정이 있음", blockers, false, apply.BlockerNothingToApply),
+		conditionOf("적용할 수 있는 항목이 있음", blockers, false, apply.BlockerNothingToApply),
 	}
 	var unknown []blockerView
 	for _, b := range blockers {
