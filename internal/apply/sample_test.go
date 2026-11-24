@@ -297,17 +297,20 @@ func copyWithoutGit(t *testing.T, src, dst string) {
 		}
 		rel, err := filepath.Rel(src, p)
 		if err != nil {
-			return err
+			return fmt.Errorf("naming %s inside the sample: %w", p, err)
 		}
 		b, err := os.ReadFile(p) //nolint:gosec // G304: the path is the developer's own sample copy
 		if err != nil {
-			return err
+			return fmt.Errorf("reading %s: %w", rel, err)
 		}
 		out := filepath.Join(dst, rel)
 		if err := os.MkdirAll(filepath.Dir(out), 0o750); err != nil {
-			return err
+			return fmt.Errorf("making the folder of %s: %w", rel, err)
 		}
-		return os.WriteFile(out, b, 0o600) //nolint:gosec // G703: out is under t.TempDir
+		if err := os.WriteFile(out, b, 0o600); err != nil { //nolint:gosec // G703: out is under t.TempDir
+			return fmt.Errorf("writing %s: %w", rel, err)
+		}
+		return nil
 	})
 	if err != nil {
 		t.Fatalf("copying the sample from %s: %v", src, err)
