@@ -1,7 +1,9 @@
 package web
 
 import (
+	"crypto/sha256"
 	"crypto/subtle"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,7 +17,12 @@ import (
 
 const (
 	sessionCookie = "se_session"
-	loginCookie   = "se_login"
+	// loginCookiePrefix starts the name of the cookie of each login attempt.
+	loginCookiePrefix = "se_login_"
+	// loginCookiePath limits a login cookie to the callback, the one request
+	// that reads it, so the cookies of unfinished attempts do not ride along
+	// with every other request.
+	loginCookiePath = "/auth/callback"
 	// loginCookieMaxAge is session.AttemptTimeout in seconds, so the cookie
 	// lives as long as the attempt it names.
 	loginCookieMaxAge = int(session.AttemptTimeout / time.Second)
@@ -27,10 +34,15 @@ const (
 // setCookie sets a cookie with the attributes every cookie of this server
 // carries. maxAge 0 makes a browser-session cookie.
 func setCookie(w http.ResponseWriter, name, value string, maxAge int) {
+	setCookieAt(w, name, value, "/", maxAge)
+}
+
+// setCookieAt is setCookie for a cookie sent only to requests under path.
+func setCookieAt(w http.ResponseWriter, name, value, path string, maxAge int) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     name,
 		Value:    value,
-		Path:     "/",
+		Path:     path,
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		Secure:   true,
@@ -41,6 +53,17 @@ func setCookie(w http.ResponseWriter, name, value string, maxAge int) {
 // clearCookie tells the browser to delete the cookie name.
 func clearCookie(w http.ResponseWriter, name string) {
 	setCookie(w, name, "", -1)
+}
+
+// loginCookieName returns the name of the cookie that holds the attempt whose
+// state is state. Each attempt has its own cookie, so a second login started
+// in the same browser does not overwrite the first one's, and the callback
+// finds its attempt from the state the provider sends back. The name carries a
+// hash of the state rather than the state, which keeps it short and made of
+// characters every cookie name may hold.
+func loginCookieName(state string) string {
+	sum := sha256.Sum256([]byte(state))
+	return loginCookiePrefix + hex.EncodeToString(sum[:8])
 }
 
 // safeReturnTo returns s when it is a path on this site no longer than
@@ -61,7 +84,8 @@ func safeReturnTo(s string) string {
 }
 
 // handleLogin starts a login attempt and sends the browser to the identity
-// provider. The attempt is found again through the se_login cookie.
+// provider. The attempt is found again through the cookie loginCookieName
+// names after its state.
 func handleLogin(logger *slog.Logger, rd *renderer, authn Authenticator, attempts AttemptStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		a, err := auth.NewAttempt(safeReturnTo(r.URL.Query().Get("return_to")))
@@ -74,19 +98,25 @@ func handleLogin(logger *slog.Logger, rd *renderer, authn Authenticator, attempt
 			rd.fail(w, r, logger, http.StatusServiceUnavailable, fmt.Errorf("storing login attempt: %w", err))
 			return
 		}
-		setCookie(w, loginCookie, id.Reveal(), loginCookieMaxAge)
+		setCookieAt(w, loginCookieName(a.State), id.Reveal(), loginCookiePath, loginCookieMaxAge)
 		http.Redirect(w, r, authn.AuthCodeURL(a.State, a.Nonce, a.Verifier), http.StatusSeeOther)
 	})
 }
 
-// handleCallback finishes a login. It takes the attempt named by the se_login
-// cookie, so each attempt is used at most once, checks the state, exchanges
-// the code, and only then creates a session.
+// handleCallback finishes a login. It takes the attempt named by the login
+// cookie of the state the provider sent back, so each attempt is used at most
+// once, checks the state, exchanges the code, and only then creates a session.
+// It leaves the cookies of other attempts in this browser alone.
 func handleCallback(logger *slog.Logger, rd *renderer, authn Authenticator, sessions SessionStore, attempts AttemptStore) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		q := r.URL.Query()
-		c, cookieErr := r.Cookie(loginCookie)
-		clearCookie(w, loginCookie)
+		var c *http.Cookie
+		cookieErr := http.ErrNoCookie
+		if q.Has("state") {
+			name := loginCookieName(q.Get("state"))
+			c, cookieErr = r.Cookie(name)
+			setCookieAt(w, name, "", loginCookiePath, -1)
+		}
 
 		if q.Has("error") {
 			if cookieErr == nil {

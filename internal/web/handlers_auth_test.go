@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -115,8 +116,8 @@ func (e *testEnv) do(t *testing.T, method, target string, header http.Header, co
 	return result{status: rec.Code, header: rec.Header(), cookies: (&http.Response{Header: rec.Header()}).Cookies(), body: rec.Body.String()}
 }
 
-// login runs GET /login?return_to=returnTo and returns the se_login cookie
-// and the state the provider was given.
+// login runs GET /login?return_to=returnTo and returns the login cookie
+// named after the attempt and the state the provider was given.
 func (e *testEnv) login(t *testing.T, returnTo string) (cookie, string) {
 	t.Helper()
 	res := e.do(t, http.MethodGet, "/login?"+url.Values{"return_to": {returnTo}}.Encode(), nil)
@@ -127,11 +128,12 @@ func (e *testEnv) login(t *testing.T, returnTo string) (cookie, string) {
 	if err != nil {
 		t.Fatalf("GET /login Location %q: %v", res.location(), err)
 	}
-	c := res.cookie("se_login")
+	state := loc.Query().Get("state")
+	c := res.cookie(web.LoginCookieName(state))
 	if c == nil {
-		t.Fatalf("GET /login set no se_login cookie")
+		t.Fatalf("GET /login set no %s cookie", web.LoginCookieName(state))
 	}
-	return cookie{c.Name, c.Value}, loc.Query().Get("state")
+	return cookie{c.Name, c.Value}, state
 }
 
 // callback runs GET /auth/callback with state and the fake code.
@@ -152,17 +154,17 @@ func (e *testEnv) signIn(t *testing.T, u auth.User) cookie {
 }
 
 // checkCookie checks the attributes every cookie of this server carries and
-// its lifetime. wantMaxAge is 0 for a browser-session cookie and negative for
+// its path and lifetime. wantMaxAge is 0 for a browser-session cookie and negative for
 // a deleted one.
-func checkCookie(t *testing.T, res result, name string, wantMaxAge int) {
+func checkCookie(t *testing.T, res result, name, wantPath string, wantMaxAge int) {
 	t.Helper()
 	c := res.cookie(name)
 	if c == nil {
 		t.Fatalf("response sets no %s cookie, want one", name)
 	}
-	if c.Path != "/" || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode {
-		t.Errorf("cookie %s = Path %q HttpOnly %v Secure %v SameSite %v, want Path \"/\" HttpOnly Secure SameSite=Lax",
-			name, c.Path, c.HttpOnly, c.Secure, c.SameSite)
+	if c.Path != wantPath || !c.HttpOnly || !c.Secure || c.SameSite != http.SameSiteLaxMode {
+		t.Errorf("cookie %s = Path %q HttpOnly %v Secure %v SameSite %v, want Path %q HttpOnly Secure SameSite=Lax",
+			name, c.Path, c.HttpOnly, c.Secure, c.SameSite, wantPath)
 	}
 	switch {
 	case wantMaxAge < 0 && c.MaxAge >= 0:
@@ -198,18 +200,19 @@ func TestLogin_StartsAttempt(t *testing.T) {
 	if !strings.HasPrefix(loc, fakeAuthURL+"?") {
 		t.Errorf("GET /login Location = %q, want the provider address %q", loc, fakeAuthURL)
 	}
-	checkCookie(t, res, "se_login", 600)
-
-	a, ok := e.attempts.get(res.cookie("se_login").Value)
-	if !ok {
-		t.Fatalf("no attempt stored under the se_login cookie")
-	}
-	if a.ReturnTo != "/audit" {
-		t.Errorf("stored attempt ReturnTo = %q, want %q", a.ReturnTo, "/audit")
-	}
 	u, err := url.Parse(loc)
 	if err != nil {
 		t.Fatalf("parsing Location %q: %v", loc, err)
+	}
+	name := web.LoginCookieName(u.Query().Get("state"))
+	checkCookie(t, res, name, "/auth/callback", 600)
+
+	a, ok := e.attempts.get(res.cookie(name).Value)
+	if !ok {
+		t.Fatalf("no attempt stored under the %s cookie", name)
+	}
+	if a.ReturnTo != "/audit" {
+		t.Errorf("stored attempt ReturnTo = %q, want %q", a.ReturnTo, "/audit")
 	}
 	if got := u.Query().Get("state"); got != a.State {
 		t.Errorf("provider was given state %q, want the stored attempt's state", got)
@@ -223,8 +226,8 @@ func TestLogin_StoreDown(t *testing.T) {
 	if res.status != http.StatusServiceUnavailable {
 		t.Errorf("GET /login with the store down status = %d, want 503", res.status)
 	}
-	if res.cookie("se_login") != nil {
-		t.Errorf("GET /login with the store down set se_login, want no cookie")
+	if len(res.cookies) != 0 {
+		t.Errorf("GET /login with the store down set cookies %v, want none", res.cookies)
 	}
 }
 
@@ -240,8 +243,8 @@ func TestCallback_CreatesSession(t *testing.T) {
 	if got := res.location(); got != "/audit" {
 		t.Errorf("callback Location = %q, want %q", got, "/audit")
 	}
-	checkCookie(t, res, "se_session", 0)
-	checkCookie(t, res, "se_login", -1)
+	checkCookie(t, res, "se_session", "/", 0)
+	checkCookie(t, res, c.name, "/auth/callback", -1)
 	if n := e.sessions.count(); n != 1 {
 		t.Errorf("sessions after callback = %d, want 1", n)
 	}
@@ -305,11 +308,59 @@ func TestCallback_Replay(t *testing.T) {
 	}
 }
 
+func TestCallback_TwoAttemptsInOneBrowser(t *testing.T) {
+	tests := []struct {
+		name  string
+		first bool // whether the first attempt's callback arrives first
+	}{
+		{name: "first attempt finishes first", first: true},
+		{name: "second attempt finishes first", first: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newTestEnv(t)
+			c1, state1 := e.login(t, "/one")
+			c2, state2 := e.login(t, "/two")
+			if c1.name == c2.name {
+				t.Fatalf("two logins set the same cookie %s, want one cookie per attempt", c1.name)
+			}
+
+			// The browser sends every login cookie it holds with each callback.
+			order := []struct {
+				state, want string
+				done        cookie
+			}{{state1, "/one", c1}, {state2, "/two", c2}}
+			if !tt.first {
+				order[0], order[1] = order[1], order[0]
+			}
+			held := []cookie{c1, c2}
+			for _, o := range order {
+				res := e.callback(t, o.state, held...)
+				held = slices.DeleteFunc(held, func(c cookie) bool { return c.name == "se_session" })
+				if s := res.cookie("se_session"); s != nil {
+					held = append(held, cookie{s.Name, s.Value})
+				}
+				if got := res.location(); res.status != http.StatusSeeOther || got != o.want {
+					t.Errorf("callback for state of %s = %d %q, want 303 %q", o.want, res.status, got, o.want)
+				}
+				checkCookie(t, res, o.done.name, "/auth/callback", -1)
+				if len(res.cookies) != 2 {
+					t.Errorf("callback for %s set cookies %v, want only se_session and the deletion of %s", o.want, res.cookies, o.done.name)
+				}
+				held = slices.DeleteFunc(held, func(c cookie) bool { return c == o.done })
+			}
+			if n := e.sessions.count(); n != 1 {
+				t.Errorf("sessions after both callbacks = %d, want 1", n)
+			}
+		})
+	}
+}
+
 func TestCallback_ProviderError(t *testing.T) {
 	e := newTestEnv(t)
-	c, _ := e.login(t, "/")
+	c, state := e.login(t, "/")
 
-	res := e.do(t, http.MethodGet, "/auth/callback?error=access_denied", nil, c)
+	res := e.do(t, http.MethodGet, "/auth/callback?"+url.Values{"error": {"access_denied"}, "state": {state}}.Encode(), nil, c)
 
 	if res.status != http.StatusBadRequest {
 		t.Errorf("callback with error status = %d, want 400", res.status)
@@ -323,7 +374,7 @@ func TestCallback_ProviderError(t *testing.T) {
 	if _, ok := e.attempts.get(c.value); ok {
 		t.Errorf("attempt still stored after a provider error, want it removed")
 	}
-	checkCookie(t, res, "se_login", -1)
+	checkCookie(t, res, c.name, "/auth/callback", -1)
 }
 
 func TestCallback_NoRole(t *testing.T) {
@@ -451,7 +502,7 @@ func TestCallback_PreviousSessionDeleteFails(t *testing.T) {
 	if res.status != http.StatusSeeOther {
 		t.Errorf("callback status = %d, want 303 even when the previous session cannot be deleted", res.status)
 	}
-	checkCookie(t, res, "se_session", 0)
+	checkCookie(t, res, "se_session", "/", 0)
 	if n := countErrors(t, e.log.String()); n != 1 {
 		t.Errorf("error log lines = %d, want 1; log = %q", n, e.log.String())
 	}
@@ -511,7 +562,7 @@ func TestCallback_ReturnTo(t *testing.T) {
 			if err != nil {
 				t.Fatalf("PutAttempt() error = %v", err)
 			}
-			res := e.callback(t, a.State, cookie{"se_login", id.Reveal()})
+			res := e.callback(t, a.State, cookie{web.LoginCookieName(a.State), id.Reveal()})
 			if got := res.location(); res.status != http.StatusSeeOther || got != tt.want {
 				t.Errorf("callback for a stored ReturnTo %q = %d %q, want 303 %q", label, res.status, got, tt.want)
 			}
@@ -581,7 +632,7 @@ func TestSession_Expired(t *testing.T) {
 	if got := res.location(); !strings.HasPrefix(got, "/login") {
 		t.Errorf("GET / with an expired session Location = %q, want /login...", got)
 	}
-	checkCookie(t, res, "se_session", -1)
+	checkCookie(t, res, "se_session", "/", -1)
 }
 
 func TestSession_StoreDown(t *testing.T) {
@@ -631,7 +682,7 @@ func TestLogout(t *testing.T) {
 	if n := e.sessions.count(); n != 0 {
 		t.Errorf("sessions after logout = %d, want 0", n)
 	}
-	checkCookie(t, res, "se_session", -1)
+	checkCookie(t, res, "se_session", "/", -1)
 }
 
 func TestLogout_CrossOrigin(t *testing.T) {
@@ -672,7 +723,7 @@ func checkLoggedOut(t *testing.T, res result, what string) {
 	if got := res.location(); got != fakeLogoutURL {
 		t.Errorf("POST /logout %s Location = %q, want %q", what, got, fakeLogoutURL)
 	}
-	checkCookie(t, res, "se_session", -1)
+	checkCookie(t, res, "se_session", "/", -1)
 }
 
 func TestLogout_NoCookie(t *testing.T) {
