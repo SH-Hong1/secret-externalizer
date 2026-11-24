@@ -14,6 +14,7 @@ import (
 
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
@@ -637,6 +638,21 @@ func TestScan_NoWorkerNotice(t *testing.T) {
 				t.Errorf("GET /scans/9 of a %s scan with noWorker = %v has %q = %v, want %v", tt.status, tt.noWorker, notice, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestScan_NoWorkerNotice_OnlyApplyWorkers(t *testing.T) {
+	const notice = "worker가 응답하지 않습니다"
+	e := newTestEnv(t)
+	pid := e.newProject(t)
+	e.scans.put(scan.Scan{ID: 9, ProjectID: pid, Status: scan.StatusQueued})
+	e.scans.onlyKind = job.KindApply
+	res := e.do(t, http.MethodGet, "/scans/9", nil, e.user(t))
+	if res.status != http.StatusOK {
+		t.Fatalf("GET /scans/9 status = %d, want 200", res.status)
+	}
+	if !strings.Contains(res.body, notice) {
+		t.Errorf("GET /scans/9 of a queued scan with only apply workers alive has no %q", notice)
 	}
 }
 

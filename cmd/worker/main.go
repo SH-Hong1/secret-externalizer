@@ -1,5 +1,5 @@
 // Command worker runs the scans, apply checks, and applies that the web
-// program queues.
+// program queues, or only the kinds that WORKER_JOBS names.
 package main
 
 import (
@@ -47,10 +47,10 @@ func main() {
 //
 // A flag error is returned and not printed, so the caller reports it once.
 // Asking for help prints the usage to stdout and is not an error. Otherwise it
-// reads the configuration, prepares the OpenBao client and the scanners,
-// reads the rules version, opens and migrates the database, and runs queued
-// scans, apply checks, and applies until SIGINT, SIGTERM or cancellation of
-// ctx.
+// reads the configuration, prepares the OpenBao client and, when it scans,
+// the scanners and the rules version, opens and migrates the database, and
+// runs the queued jobs of the kinds it was configured for until SIGINT,
+// SIGTERM or cancellation of ctx.
 func run(ctx context.Context, args []string, getenv func(string) string, stdout, stderr io.Writer) error {
 	return runWith(ctx, args, getenv, stdout, stderr, nil, newDeps)
 }
@@ -67,8 +67,8 @@ type workerDeps struct {
 const scannerPath = "/usr/local/bin:/usr/bin:/bin"
 
 // newDeps returns the OpenBao client, as the fingerprinter, the originals
-// store and the vault, and the three scanners that cfg describes. The
-// client does not contact OpenBao until it is first used.
+// store and the vault, and, when the worker scans, the three scanners that
+// cfg describes. The client does not contact OpenBao until it is first used.
 func newDeps(cfg config) (workerDeps, error) {
 	hc, err := bao.NewHTTPClient(cfg.baoCA, 10*time.Second)
 	if err != nil {
@@ -78,20 +78,20 @@ func newDeps(cfg config) (workerDeps, error) {
 	if err != nil {
 		return workerDeps{}, fmt.Errorf("preparing openbao client: %w", err)
 	}
+	deps := workerDeps{fingerprints: client, originals: client, vault: client}
+	if !cfg.jobs.scans() {
+		return deps, nil
+	}
 	env := scanexec.Env{Path: scannerPath, Home: scanHome(cfg), TmpDir: scanTmp(cfg)}
-	return workerDeps{
-		fingerprints: client,
-		originals:    client,
-		vault:        client,
-		scanners: []scan.Scanner{
-			betterleaks.New(cfg.betterleaksBin, filepath.Join(cfg.rulesDir, "betterleaks.toml"), env),
-			// The wrapper always excludes .git, target, build, and
-			// node_modules. Project excludes are applied by the runner,
-			// which leaves out results for files it did not list.
-			opengrep.New(cfg.opengrepBin, filepath.Join(cfg.rulesDir, "opengrep"), nil, env),
-			keyfile.New(),
-		},
-	}, nil
+	deps.scanners = []scan.Scanner{
+		betterleaks.New(cfg.betterleaksBin, filepath.Join(cfg.rulesDir, "betterleaks.toml"), env),
+		// The wrapper always excludes .git, target, build, and
+		// node_modules. Project excludes are applied by the runner,
+		// which leaves out results for files it did not list.
+		opengrep.New(cfg.opengrepBin, filepath.Join(cfg.rulesDir, "opengrep"), nil, env),
+		keyfile.New(),
+	}
+	return deps, nil
 }
 
 // The folders under cfg.scanTempDir: the scanners' home and temporary
@@ -137,13 +137,15 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	if err != nil {
 		return err
 	}
-	rulesVersion, err := ruleset.Version(cfg.rulesDir)
-	if err != nil {
-		return fmt.Errorf("reading rules version: %w", err)
-	}
-	for _, d := range []string{scanHome(cfg), scanTmp(cfg), scanCopies(cfg)} {
-		if err := os.MkdirAll(d, 0o700); err != nil {
-			return fmt.Errorf("making scan folder: %w", err)
+	var rulesVersion string
+	if cfg.jobs.scans() {
+		if rulesVersion, err = ruleset.Version(cfg.rulesDir); err != nil {
+			return fmt.Errorf("reading rules version: %w", err)
+		}
+		for _, d := range []string{scanHome(cfg), scanTmp(cfg), scanCopies(cfg)} {
+			if err := os.MkdirAll(d, 0o700); err != nil {
+				return fmt.Errorf("making scan folder: %w", err)
+			}
 		}
 	}
 	workerID, err := newWorkerID()
@@ -168,29 +170,33 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	if !cfg.baoTLS {
 		logger.WarnContext(ctx, "openbao connection is not encrypted", "bao_addr", cfg.baoAddr)
 	}
-	runner := scan.NewRunner(logger, database, sd.fingerprints, sd.originals, sd.scanners, scan.Options{
-		WorkerID:     workerID,
-		Root:         cfg.root,
-		RulesVersion: rulesVersion,
-		TempDir:      scanCopies(cfg),
-		Git:          cfg.gitBin,
-		MaxFileBytes: scan.DefaultMaxFileBytes,
-		TimeLimit:    scan.DefaultTimeLimit,
-	})
-	// Scans read cfg.root, the read-only mount. Only an apply the user
-	// confirmed changes files, through cfg.applyRoot.
-	applier := apply.NewRunner(logger, database, sd.vault, apply.Options{
-		WorkerID:     workerID,
-		Root:         cfg.applyRoot,
-		Git:          cfg.gitBin,
-		MaxFileBytes: scan.DefaultMaxFileBytes,
-	})
-	opts := job.Options{WorkerID: workerID, Poll: cfg.poll, Lease: cfg.lease, Heartbeat: cfg.heartbeat}
-	handle := job.Dispatch(map[job.Kind]job.Handler{
-		job.KindScan:       runner.Handle,
-		job.KindApplyCheck: applier.Check,
-		job.KindApply:      applier.Apply,
-	})
+	handlers := map[job.Kind]job.Handler{}
+	if cfg.jobs.scans() {
+		runner := scan.NewRunner(logger, database, sd.fingerprints, sd.originals, sd.scanners, scan.Options{
+			WorkerID:     workerID,
+			Root:         cfg.root,
+			RulesVersion: rulesVersion,
+			TempDir:      scanCopies(cfg),
+			Git:          cfg.gitBin,
+			MaxFileBytes: scan.DefaultMaxFileBytes,
+			TimeLimit:    scan.DefaultTimeLimit,
+		})
+		handlers[job.KindScan] = runner.Handle
+	}
+	if cfg.jobs.applies() {
+		// Scans read cfg.root, the read-only mount. Only an apply the user
+		// confirmed changes files, through cfg.applyRoot.
+		applier := apply.NewRunner(logger, database, sd.vault, apply.Options{
+			WorkerID:     workerID,
+			Root:         cfg.applyRoot,
+			Git:          cfg.gitBin,
+			MaxFileBytes: scan.DefaultMaxFileBytes,
+		})
+		handlers[job.KindApplyCheck] = applier.Check
+		handlers[job.KindApply] = applier.Apply
+	}
+	opts := job.Options{WorkerID: workerID, Kinds: cfg.jobs.kinds(), Poll: cfg.poll, Lease: cfg.lease, Heartbeat: cfg.heartbeat}
+	handle := job.Dispatch(handlers)
 	if err := job.Run(ctx, logger, database, handle, opts); err != nil {
 		return fmt.Errorf("running jobs: %w", err)
 	}

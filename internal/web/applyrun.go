@@ -11,6 +11,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
@@ -171,7 +172,7 @@ func handleApplyRun(logger *slog.Logger, rd *renderer, projects ProjectStore, sc
 		page := newApplyRunPage(p, run)
 		page.User, _ = userFrom(ctx) // requireLogin guarantees a user
 		if run.State == apply.StateQueued {
-			if page.NoWorker, err = noWorker(ctx, scans); err != nil {
+			if page.NoWorker, err = noWorker(ctx, scans, job.KindApply); err != nil {
 				rd.fail(w, r, logger, http.StatusInternalServerError, err)
 				return
 			}

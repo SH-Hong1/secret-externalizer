@@ -26,17 +26,21 @@ const (
 	CheckGaveUpReason = "worker stopped during the check three times"
 )
 
-// ClaimJob hands one job to the worker and leases it for lease. The lease
-// runs on the database clock. A job is claimable when it is queued or when
-// its lease has run out. Jobs are handed out in the order they were made,
-// whatever their kind. It returns job.ErrNoJob when there is none.
+// ClaimJob hands one job of the given kinds to the worker and leases it for
+// lease; no kinds means every kind. The lease runs on the database clock. A
+// job is claimable when it is queued or when its lease has run out. Jobs of
+// the given kinds are handed out in the order they were made. It returns
+// job.ErrNoJob when there is none.
+//
+// Jobs of every kind that have used their last attempt are given up, not
+// only those of the given kinds: giving up a job only writes records.
 //
 // In the same transaction, a job whose lease has run out after its last
 // attempt is marked failed together with its scan or apply run, so that a
 // job that kills its worker does not run forever. The records an apply run
 // wrote about its files are left as they are; the next check or apply of the
 // project reconciles them with the disk.
-func (s *Store) ClaimJob(ctx context.Context, workerID string, lease time.Duration) (_ job.Job, err error) {
+func (s *Store) ClaimJob(ctx context.Context, workerID string, lease time.Duration, kinds ...job.Kind) (_ job.Job, err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return job.Job{}, fmt.Errorf("starting transaction: %w", err)
@@ -68,12 +72,12 @@ func (s *Store) ClaimJob(ctx context.Context, workerID string, lease time.Durati
 			locked_by = $1, locked_until = now() + $2 * interval '1 second'
 		WHERE id = (
 			SELECT id FROM job
-			WHERE attempts < $3
+			WHERE attempts < $3 AND kind = ANY($4)
 				AND (state = 'queued' OR (state = 'running' AND locked_until <= now()))
 			ORDER BY id LIMIT 1
 			FOR UPDATE SKIP LOCKED)
 		RETURNING id, kind, coalesce(scan_id, 0), coalesce(apply_id, 0), attempts`,
-		workerID, lease.Seconds(), maxJobAttempts).Scan(&j.ID, &j.Kind, &j.ScanID, &j.ApplyID, &j.Attempts)
+		workerID, lease.Seconds(), maxJobAttempts, kindNames(kinds)).Scan(&j.ID, &j.Kind, &j.ScanID, &j.ApplyID, &j.Attempts)
 	noJob := errors.Is(err, pgx.ErrNoRows)
 	if err != nil && !noJob {
 		return job.Job{}, fmt.Errorf("claiming job: %w", err)
@@ -221,18 +225,20 @@ func (s *Store) closeLeased(ctx context.Context, jobID int64, write func(pgx.Tx)
 	return nil
 }
 
-// Beat records that the worker is alive and asking for jobs. It also removes
-// the records of workers that have not been seen for a day, which are
-// workers that no longer exist: every process picks a new ID.
-func (s *Store) Beat(ctx context.Context, workerID string) (err error) {
+// Beat records that the worker is alive and asking for jobs of the given
+// kinds; no kinds means every kind. It also removes the records of workers
+// that have not been seen for a day, which are workers that no longer exist:
+// every process picks a new ID.
+func (s *Store) Beat(ctx context.Context, workerID string, kinds ...job.Kind) (err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
 	}
 	defer rollback(ctx, tx, &err)
 	if _, err := tx.Exec(ctx, `
-		INSERT INTO worker_beat (worker_id, seen_at) VALUES ($1, now())
-		ON CONFLICT (worker_id) DO UPDATE SET seen_at = excluded.seen_at`, workerID); err != nil {
+		INSERT INTO worker_beat (worker_id, seen_at, kinds) VALUES ($1, now(), $2)
+		ON CONFLICT (worker_id) DO UPDATE SET seen_at = excluded.seen_at, kinds = excluded.kinds`,
+		workerID, kindNames(kinds)); err != nil {
 		return fmt.Errorf("recording beat of worker: %w", err)
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM worker_beat WHERE seen_at < now() - interval '1 day'`); err != nil {
@@ -244,17 +250,32 @@ func (s *Store) Beat(ctx context.Context, workerID string) (err error) {
 	return nil
 }
 
-// WorkerAlive reports whether a worker is serving the queue: one has asked
-// for a job within the last within, or one holds a job under a lease that
-// has not run out, which is a worker busy with a long job.
-func (s *Store) WorkerAlive(ctx context.Context, within time.Duration) (bool, error) {
+// WorkerAlive reports whether a worker is serving the jobs of kind k: one
+// that asks for that kind has asked for a job within the last within, or one
+// holds a job of that kind under a lease that has not run out, which is a
+// worker busy with a long job.
+func (s *Store) WorkerAlive(ctx context.Context, k job.Kind, within time.Duration) (bool, error) {
 	var alive bool
 	err := s.pool.QueryRow(ctx, `
-		SELECT EXISTS (SELECT 1 FROM worker_beat WHERE seen_at > now() - $1 * interval '1 second')
-			OR EXISTS (SELECT 1 FROM job WHERE state = 'running' AND locked_until > now())`,
-		within.Seconds()).Scan(&alive)
+		SELECT EXISTS (SELECT 1 FROM worker_beat
+				WHERE seen_at > now() - $2 * interval '1 second' AND $1 = ANY(kinds))
+			OR EXISTS (SELECT 1 FROM job WHERE kind = $1 AND state = 'running' AND locked_until > now())`,
+		string(k), within.Seconds()).Scan(&alive)
 	if err != nil {
 		return false, fmt.Errorf("reading worker liveness: %w", err)
 	}
 	return alive, nil
+}
+
+// kindNames returns the names of kinds as the job table stores them, or the
+// names of every kind when kinds is empty.
+func kindNames(kinds []job.Kind) []string {
+	if len(kinds) == 0 {
+		kinds = job.Kinds()
+	}
+	names := make([]string, len(kinds))
+	for i, k := range kinds {
+		names[i] = string(k)
+	}
+	return names
 }

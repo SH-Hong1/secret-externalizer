@@ -16,6 +16,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/dashboard"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/report"
@@ -63,10 +64,10 @@ type ProjectStore interface {
 // the ID is unknown. ScansByProject returns the project's scans, newest
 // first. CategoryCounts returns the number of findings and locations a scan
 // found in each category, leaving out the categories it found nothing in.
-// WorkerAlive reports whether a worker has asked for a job within the given
-// time, or is busy with one.
+// WorkerAlive reports whether a worker that runs jobs of the given kind has
+// asked for a job within the given time, or is busy with one of that kind.
 type ScanStore interface {
-	WorkerAlive(ctx context.Context, within time.Duration) (bool, error)
+	WorkerAlive(ctx context.Context, k job.Kind, within time.Duration) (bool, error)
 	RequestScan(ctx context.Context, projectID project.ID, by audit.Actor) (scan.ID, error)
 	Scan(ctx context.Context, id scan.ID) (scan.Scan, error)
 	ScansByProject(ctx context.Context, projectID project.ID) ([]scan.Scan, error)

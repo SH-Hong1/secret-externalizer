@@ -26,6 +26,11 @@ const (
 	KindApply Kind = "apply"
 )
 
+// Kinds returns every kind of job, in a new slice.
+func Kinds() []Kind {
+	return []Kind{KindScan, KindApplyCheck, KindApply}
+}
+
 // Job is a claimed job. ScanID is the ID of the scan a scan job runs, and 0
 // for the other kinds; ApplyID is the ID of the apply run an apply-check or
 // apply job works on, and 0 for a scan job.

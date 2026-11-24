@@ -1,5 +1,5 @@
 # Local development stack: postgres, valkey, keycloak, openbao, pdf, web,
-# and worker.
+# worker, which scans, and applier, which applies.
 #
 # Every password and secret in this file, in deploy/postgres/init.sql, and in
 # deploy/keycloak/realm.json is a fake value for local development only. Do
@@ -19,11 +19,12 @@
 # and the networks section at the end of this file. No service can open a
 # connection outside the host's container network: the networks with
 # published ports have NAT turned off, and the others are internal. openbao
-# publishes no port and only web and the worker reach it. valkey publishes no
-# port either and only web reaches it, over TLS and as its own ACL user. The worker, and so
-# the scanners it runs, is only on internal networks. pdf publishes no port
-# either and sits alone with web on the internal network "pdf"; see decision
-# 0043. web and the worker reach openbao over TLS.
+# publishes no port and only web, the worker, and the applier reach it.
+# valkey publishes no port either and only web reaches it, over TLS and as its
+# own ACL user. The worker, and so the scanners it runs, and the applier are
+# only on internal networks. pdf publishes no port either and sits alone with
+# web on the internal network "pdf"; see decision 0043. web, the worker, and
+# the applier reach openbao over TLS.
 #
 # OpenBao's unseal key is a file on the host, outside every volume:
 # OPENBAO_UNSEAL_KEY_FILE, or $HOME/.config/secret-externalizer/openbao-unseal.key
@@ -46,7 +47,8 @@ services:
       - ./deploy/postgres/init.sql:/docker-entrypoint-initdb.d/10-keycloak.sql:ro
     ports:
       - "127.0.0.1:15432:5432"
-    # edge for the host port, keycloak, and web; db for the worker.
+    # edge for the host port, keycloak, and web; db for the worker and the
+    # applier.
     networks:
       - edge
       - db
@@ -235,8 +237,8 @@ services:
     entrypoint: ["/bin/sh", "/make-secrets.sh"]
     environment:
       HOME: /tmp
-      # The user and group the worker runs as; the user must own the
-      # worker's secret-id. The script refuses root and non-numbers.
+      # The user and group the worker and the applier run as; the user must
+      # own their secret-id. The script refuses root and non-numbers.
       SE_UID: ${SE_UID:-65532}
       SE_GID: ${SE_GID:-65532}
     volumes:
@@ -477,16 +479,20 @@ services:
       pdf:
         condition: service_started
 
+  # Runs only scans, and with them the scanners. It gets only the read-only
+  # mount of the workspace, so neither it nor a scanner it runs can change
+  # a project's files; see decision 0068.
   worker:
     build:
       context: .
       dockerfile: deploy/worker/Dockerfile
       args:
         VERSION: compose-dev
+    image: secret-externalizer-worker:compose-dev
     environment:
+      WORKER_JOBS: scan
       DATABASE_URL: postgres://se_app:dev-only-se-app-password@postgres:5432/secret_externalizer # local development only
       WORKSPACE_ROOT: /workspace
-      APPLY_WORKSPACE_ROOT: /workspace-rw
       BAO_ADDR: https://openbao:8200
       BAO_CA_FILE: /run/secrets/openbao/ca.crt
       BAO_ROLE_ID: se-worker
@@ -499,47 +505,73 @@ services:
       # UTF-8 copies of a scan's EUC-KR files, removed when the scan ends.
       SCAN_TEMP_DIR: /tmp/scan
     volumes:
-      # The same host folder twice. Scans give the scanners only paths
-      # under the read-only mount; only an apply the user confirmed changes
-      # files, through the read-write mount. The scanners run in this
-      # container as the same user, so one that misbehaves can still open
-      # /workspace-rw by its absolute path; see decision 0032.
       - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace:ro
-      - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace-rw
-      # Only the worker's own directory of the openbao-secrets volume: its
+      # Only the worker role's directory of the openbao-secrets volume: its
       # secret-id and the CA, not OpenBao's private key or the web role's
       # secret-id.
-      - type: volume
+      - &worker-secrets
+        type: volume
         source: openbao-secrets
         target: /run/secrets/openbao
         read_only: true
         volume:
           subpath: worker
-    # Files an apply writes belong to this user. On a Linux host, set
-    # SE_UID=$(id -u) SE_GID=$(id -g) so that is the owner of the workspace.
-    user: "${SE_UID:-65532}:${SE_GID:-65532}"
+    # The user must be able to read the workspace. On a Linux host, set
+    # SE_UID=$(id -u) SE_GID=$(id -g).
+    user: &worker-user "${SE_UID:-65532}:${SE_GID:-65532}"
     read_only: true
     tmpfs:
       # Holds the UTF-8 copies of the EUC-KR files of the scan that is
       # running, so it must fit those; it counts against the host's memory.
       - /tmp:size=1g
-    cap_drop:
+    cap_drop: &worker-caps
       - ALL
-    security_opt:
+    security_opt: &worker-security
       - no-new-privileges:true
     stop_grace_period: 15s
     # Internal networks only: the worker and the scanners reach postgres
     # and OpenBao and nothing else.
-    networks:
+    networks: &worker-networks
       - db
       - bao
     # A worker that stopped takes up its jobs again once their leases end.
     restart: unless-stopped
-    depends_on:
+    depends_on: &worker-depends
       postgres:
         condition: service_healthy
       openbao:
         condition: service_healthy
+
+  # Runs only apply checks and applies, from the same image as the worker
+  # but without running any scanner. It is the only service with the
+  # read-write mount of the workspace, and it changes files only while it
+  # carries out an apply the user confirmed. The confirmation scan after an
+  # apply is a scan, so the worker runs it.
+  applier:
+    # The worker's build makes this image; it is never pulled.
+    image: secret-externalizer-worker:compose-dev
+    pull_policy: never
+    environment:
+      WORKER_JOBS: apply
+      DATABASE_URL: postgres://se_app:dev-only-se-app-password@postgres:5432/secret_externalizer # local development only
+      APPLY_WORKSPACE_ROOT: /workspace-rw
+      BAO_ADDR: https://openbao:8200
+      BAO_CA_FILE: /run/secrets/openbao/ca.crt
+      BAO_ROLE_ID: se-worker
+      BAO_SECRET_ID_FILE: /run/secrets/openbao/secret-id
+    volumes:
+      - ${SE_WORKSPACE:?set SE_WORKSPACE to the folder that holds the projects to scan, for example SE_WORKSPACE=$$HOME/work docker compose up}:/workspace-rw
+      - *worker-secrets
+    # Files an apply writes belong to this user, so on a Linux host
+    # SE_UID and SE_GID should be the owner of the workspace.
+    user: *worker-user
+    read_only: true
+    cap_drop: *worker-caps
+    security_opt: *worker-security
+    stop_grace_period: 15s
+    networks: *worker-networks
+    restart: unless-stopped
+    depends_on: *worker-depends
 
 networks:
   # Carries the published ports of web, keycloak, and postgres, and
@@ -550,13 +582,13 @@ networks:
   edge:
     driver_opts:
       com.docker.network.bridge.enable_ip_masquerade: "false"
-  # The worker to postgres.
+  # The worker and the applier to postgres.
   db:
     internal: true
   # Web to valkey.
   valkey:
     internal: true
-  # Web and the worker to OpenBao.
+  # Web, the worker, and the applier to OpenBao.
   bao:
     internal: true
   # Has no route out of the host's container network: only web and pdf are

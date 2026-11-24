@@ -1,17 +1,17 @@
 # 로컬에서 띄우기
 
-`compose.yaml`은 postgres, valkey, Keycloak, OpenBao, web, worker, PDF 변환기(`pdf`)를 한 번에 띄워 Keycloak으로 로그인해 볼 수 있게 한다. 이 파일과 `deploy/` 아래의 비밀번호와 시크릿은 모두 `dev-only-…` 형태의 가짜 값이며 로컬 개발에만 쓴다. 공유하거나 배포하는 환경에 그대로 쓰지 않는다.
+`compose.yaml`은 postgres, valkey, Keycloak, OpenBao, web, worker(스캔), applier(적용), PDF 변환기(`pdf`)를 한 번에 띄워 Keycloak으로 로그인해 볼 수 있게 한다. 이 파일과 `deploy/` 아래의 비밀번호와 시크릿은 모두 `dev-only-…` 형태의 가짜 값이며 로컬 개발에만 쓴다. 공유하거나 배포하는 환경에 그대로 쓰지 않는다.
 
 ## 띄우고 내리기
 
-Docker Engine 26 이상과, 볼륨 마운트의 `subpath`를 지원하는 그에 맞는 Compose가 필요하다. worker와 web은 `openbao-secrets` 볼륨에서 각자의 폴더(`worker`, `web`)만 `volume.subpath`로 마운트하는데, 이전 Engine이나 이 옵션을 모르는 Compose에서는 worker와 web이 뜨지 않는다. 아래의 `docker compose`는 따로 설치한 `docker-compose`로 바꿔 써도 된다.
+Docker Engine 26 이상과, 볼륨 마운트의 `subpath`를 지원하는 그에 맞는 Compose가 필요하다. worker, applier, web은 `openbao-secrets` 볼륨에서 각자의 폴더(worker와 applier는 `worker`, web은 `web`)만 `volume.subpath`로 마운트하는데, 이전 Engine이나 이 옵션을 모르는 Compose에서는 이 셋이 뜨지 않는다. 아래의 `docker compose`는 따로 설치한 `docker-compose`로 바꿔 써도 된다.
 
 처음 띄우기 전에 OpenBao의 봉인 해제 키를 호스트에 만든다. 키는 Docker 볼륨 밖의 파일 `~/.config/secret-externalizer/openbao-unseal.key`(바꾸려면 `OPENBAO_UNSEAL_KEY_FILE`)에 있고, 이 파일이 없으면 compose가 openbao를 만들지 못한다(`bind source path does not exist`).
 
 ```sh
 make openbao-unseal-key        # 한 번만. 이미 있으면 확인만 하고 그대로 둔다
 docker compose up --build -d   # 처음에는 Keycloak이 realm을 가져오느라 30초쯤 걸린다
-docker compose ps              # postgres, valkey, keycloak, openbao는 healthy, web과 worker는 running
+docker compose ps              # postgres, valkey, keycloak, openbao는 healthy, web, worker, applier는 running
 docker compose logs -f web
 docker compose down            # 데이터(postgres, OpenBao 볼륨)는 남긴다
 docker compose down -v         # 볼륨까지 지운다. 다음 기동 때 realm을 새로 가져오고, OpenBao에 보관한 원본도 사라진다
@@ -23,27 +23,27 @@ docker compose down -v         # 볼륨까지 지운다. 다음 기동 때 realm
 
 브라우저에서 `http://localhost:8080/`을 열면 Keycloak 로그인 화면으로 넘어간다.
 
-## 작업 공간과 worker
+## 작업 공간, worker, applier
 
-worker는 등록한 프로젝트 폴더를 읽어 스캔한다. 프로젝트는 작업 공간 루트 아래의 폴더이므로, 루트로 쓸 폴더를 `SE_WORKSPACE`에 절대 경로로 준다. compose는 이 폴더를 worker 컨테이너에 두 번 마운트한다.
+같은 worker 이미지가 두 서비스로 뜬다. worker는 스캔만(`WORKER_JOBS=scan`), applier는 적용의 점검과 적용만(`WORKER_JOBS=apply`) 한다. 프로젝트는 작업 공간 루트 아래의 폴더이므로, 루트로 쓸 폴더를 `SE_WORKSPACE`에 절대 경로로 준다. compose는 이 폴더를 서비스마다 하나씩 마운트한다.
 
-| 컨테이너 안의 경로 | 마운트 | 쓰는 것 |
-|---|---|---|
-| `/workspace` (`WORKSPACE_ROOT`) | 읽기 전용 | 스캔과 스캐너(betterleaks, opengrep) |
-| `/workspace-rw` (`APPLY_WORKSPACE_ROOT`) | 읽기-쓰기 | 사용자가 확인한 적용과 그 점검 |
+| 서비스 | 컨테이너 안의 경로 | 마운트 | 쓰는 것 |
+|---|---|---|---|
+| worker | `/workspace` (`WORKSPACE_ROOT`) | 읽기 전용 | 스캔과 스캐너(betterleaks, opengrep) |
+| applier | `/workspace-rw` (`APPLY_WORKSPACE_ROOT`) | 읽기-쓰기 | 사용자가 확인한 적용과 그 점검 |
 
-스캔은 스캐너에 읽기 전용 마운트의 경로만 넘기고, 사용자가 확인한 적용만 읽기-쓰기 마운트로 파일을 바꾼다. 두 마운트가 막는 것은 스캔과 스캐너가 넘겨받은 경로로 쓰는 일이다. 스캐너(betterleaks, opengrep)는 같은 컨테이너에서 같은 사용자로 돌므로, 잘못 만들어졌거나 바뀐 스캐너는 `/workspace-rw`를 절대 경로로 열어 쓸 수 있다. 이를 줄이는 것은 `deploy/worker/scanners.lock`의 체크섬으로 고정한 스캐너 판본과, 스캔 한 번이 작업 공간에 아무것도 쓰지 않는다는 확인이다. 스캔을 다른 컨테이너나 사용자로 나누는 일은 남은 일이다(`docs/decisions/0032-apply-order-and-resuming.md`, `docs/next-steps.md`).
+스캐너는 worker 컨테이너에서만 돌고, 그 컨테이너에는 읽기 전용 마운트만 있다. 그래서 잘못 만들어졌거나 바뀐 스캐너도 소스를 바꿀 수 없다. applier는 스캐너를 실행하지 않는다. 적용이 끝난 뒤의 확인 스캔은 스캔이므로 worker가 한다. 두 서비스는 같은 AppRole(`se-worker`)과 secret-id를 쓴다(`docs/decisions/0068-scan-and-apply-in-separate-containers.md`).
 
 ```sh
 export SE_WORKSPACE=$HOME/work     # 프로젝트 폴더들이 들어 있는 폴더
 docker compose up --build -d
 ```
 
-- `SE_WORKSPACE`가 없으면 compose가 안내 문구와 함께 멈춘다. worker를 띄우지 않는 명령(`ps`, `down`)에도 compose 파일을 읽을 때 같은 오류가 나므로 셸에 계속 설정해 둔다.
+- `SE_WORKSPACE`가 없으면 compose가 안내 문구와 함께 멈춘다. worker와 applier를 띄우지 않는 명령(`ps`, `down`)에도 compose 파일을 읽을 때 같은 오류가 나므로 셸에 계속 설정해 둔다.
 - macOS에서는 Docker가 공유하는 경로(보통 홈 폴더 아래)여야 한다. `/tmp` 같은 경로는 컨테이너에서 빈 폴더로 보인다.
 - 프로젝트를 등록할 때의 경로는 `SE_WORKSPACE` 기준의 상대 경로다. 예를 들어 `$HOME/work/shop`을 스캔하려면 `shop`으로 등록한다.
-- worker는 `SE_UID`와 `SE_GID`로 정한 사용자로 실행된다. 기본값은 둘 다 65532다. 둘 다 숫자여야 하고, root(0)로는 실행하지 않는다(`openbao-secrets`가 거부해 worker가 뜨지 않는다). Linux 호스트의 Docker(네이티브)에서는 bind mount가 호스트 소유권을 그대로 유지하므로, 스캔할 파일과 폴더를 그 사용자가 읽을 수 있어야 하고, 적용하려면 쓸 수 있어야 한다. 작업 공간의 주인으로 실행하려면 `SE_UID=$(id -u) SE_GID=$(id -g) docker compose up -d`처럼 띄운다. worker가 적용으로 쓴 파일의 소유자는 worker의 사용자다. 읽을 수 없는 파일과 폴더(예: `0700` 폴더, `0600` 개인키나 `.env`)는 스캔에서 오류 없이 건너뛰고 건너뛴 수를 센다. macOS의 colima나 Docker Desktop에서는 소유권이 바뀌어 보이므로 이 문제가 생기지 않는다.
-- `openbao-secrets`는 뜰 때마다 worker의 secret-id(`worker/secret-id`)와 그 폴더의 소유자를 `SE_UID`로 맞춘다(web의 것은 65532 그대로). `SE_UID`를 바꾸면 `docker compose up -d`가 `openbao-secrets`를 다시 실행해 이미 있는 볼륨의 소유자도 바꾼다.
+- worker와 applier는 `SE_UID`와 `SE_GID`로 정한 사용자로 실행된다. 기본값은 둘 다 65532다. 둘 다 숫자여야 하고, root(0)로는 실행하지 않는다(`openbao-secrets`가 거부해 둘 다 뜨지 않는다). Linux 호스트의 Docker(네이티브)에서는 bind mount가 호스트 소유권을 그대로 유지하므로, 스캔할 파일과 폴더를 그 사용자가 읽을 수 있어야 하고, 적용하려면 쓸 수 있어야 한다. 작업 공간의 주인으로 실행하려면 `SE_UID=$(id -u) SE_GID=$(id -g) docker compose up -d`처럼 띄운다. applier가 적용으로 쓴 파일의 소유자는 그 사용자다. 읽을 수 없는 파일과 폴더(예: `0700` 폴더, `0600` 개인키나 `.env`)는 스캔에서 오류 없이 건너뛰고 건너뛴 수를 센다. macOS의 colima나 Docker Desktop에서는 소유권이 바뀌어 보이므로 이 문제가 생기지 않는다.
+- `openbao-secrets`는 뜰 때마다 worker와 applier가 함께 쓰는 secret-id(`worker/secret-id`)와 그 폴더의 소유자를 `SE_UID`로 맞춘다(web의 것은 65532 그대로). `SE_UID`를 바꾸면 `docker compose up -d`가 `openbao-secrets`를 다시 실행해 이미 있는 볼륨의 소유자도 바꾼다.
 - worker는 큐에 쌓인 스캔을 하나씩 실행한다. 파일마다 UTF-8이나 EUC-KR 텍스트로 읽고, betterleaks, opengrep, 키 파일 탐지기를 돌려 찾은 값을 항목으로 저장한다. postgres에는 값의 지문, 가린 미리보기, 위치, 가린 주변 줄만 남고, 비밀 값의 원본은 OpenBao에 보관한다. 고객정보는 원본을 보관하지 않고 주변 줄도 남기지 않는다. 실패하면 화면에는 정해진 사유만 보이고 자세한 오류는 `docker compose logs worker`에 남는다.
 - 스캔 하나는 30분을 넘기면 `scan took longer than the time limit`으로 실패한다. 20MiB가 넘는 파일, 바이너리 파일, UTF-8도 EUC-KR도 아닌 파일은 텍스트로 스캔하지 않고 건너뛴 수에 센다. 경로가 UTF-8이 아니거나 제어 문자가 든 파일도 건너뛴 수에 센다. 키 저장소(`.jks`, `.p12` 등)는 바이너리라도 키 파일 항목이 된다.
 - 스캔이 성공하면 worker 로그(`docker compose logs worker`)에 `scan finished` 기록이 하나 남는다. 스캔 ID(`scan_id`), 스캔이 목록에 넣은 일반 파일 수(`files`, 텍스트로 읽지 못하거나 경로를 저장할 수 없어 건너뛴 파일도 센다), 건너뛴 수(`skipped`), 버린 건수(`dropped`), 항목 수(`findings`), 텍스트로 읽지 못해 건너뛴 파일에 스캐너가 낸 결과 수(`results_in_skipped_files`), 도구별로 파일을 일부만 분석했다고 알린 오류 수(`scanner_errors`, opengrep의 파일별 10초 시간 초과나 부분 파싱 등)가 들어 있다. 건너뛴 파일이 있으면 `scan skipped files` 기록에 처음 50개의 상대 경로(`paths`)와 전체 수(`total`)가 남는다. 경로의 제어 문자와 깨진 UTF-8은 `U+FFFD`로 바뀐다. 읽지 못한 폴더는 수만 `skipped`에 들어가고 경로는 남지 않는다. 건너뛴 파일의 이름(경로순 처음 200개, UTF-8이 아니거나 제어 문자가 든 경로는 빼고 수에만 센다)과 도구별 스캐너 오류 수는 데이터베이스에도 저장되어 스캔 화면의 "검사하지 못한 것"에 보인다.
@@ -52,8 +52,8 @@ docker compose up --build -d
 - OpenBao에 닿지 않으면 스캔은 `the secret store could not be reached; see the worker log`로 실패하고 postgres에는 항목을 하나도 저장하지 않는다. 그 실행이 실패하기 전에 OpenBao에 이미 보관한 원본은 남아 있다가, 그 프로젝트의 다음 스캔이 성공하면 그 스캔에 없는 것이 지워진다.
 - 커밋 해시는 프로젝트 폴더가 git 저장소 안에 있을 때만 기록한다. 저장소가 아니거나 커밋이 없으면 비워 둔다.
 - worker가 스캔 중에 멈추면 임대(2분)가 끝난 뒤 다시 실행한다. 세 번 멈추면 스캔이 `failed`로 끝난다.
-- worker는 스캔과 함께 적용의 점검(`apply-check`)과 적용(`apply`) 작업도 처리한다. 둘 다 `/workspace-rw`의 프로젝트 폴더를 git으로 확인하고, 저장소를 바꾸는 git 명령은 실행하지 않는다. `APPLY_WORKSPACE_ROOT`가 없으면 모든 점검이 `workspace-read-only`로, git이 없으면 `git-missing`으로 막힌다.
-- compose의 worker는 `restart: unless-stopped`다. worker가 적용 중에 죽으면 다시 뜬 worker가 임대(2분)가 끝난 뒤 그 작업을 이어 간다. 이어 가는 적용과 다음 점검은 먼저 기록과 디스크를 맞추고(이미 바꾼 파일은 적용된 것으로 센다), 저장이 확인된 값만 소스에서 지운다. 세 번 멈추면 적용이 `failed`로 끝난다.
+- applier는 적용의 점검(`apply-check`)과 적용(`apply`) 작업을 처리한다. 둘 다 `/workspace-rw`의 프로젝트 폴더를 git으로 확인하고, 저장소를 바꾸는 git 명령은 실행하지 않는다. git이 없으면 모든 점검이 `git-missing`으로 막힌다. 로그는 `docker compose logs applier`에 남는다. applier가 떠 있지 않으면 점검 중인 적용 화면과 대기 중인 적용 결과 화면에 "worker가 응답하지 않습니다"가 보인다. 대기 중인 스캔 화면의 같은 안내는 worker만 본다.
+- compose의 worker와 applier는 `restart: unless-stopped`다. applier가 적용 중에 죽으면 다시 뜬 applier가 임대(2분)가 끝난 뒤 그 작업을 이어 간다. 이어 가는 적용과 다음 점검은 먼저 기록과 디스크를 맞추고(이미 바꾼 파일은 적용된 것으로 센다), 저장이 확인된 값만 소스에서 지운다. 세 번 멈추면 적용이 `failed`로 끝난다.
 - 적용은 파일을 같은 폴더의 임시 파일(`<이름>.se-apply-<난수 16자리>.tmp`)에 쓴 뒤 바꿔 넣는다. 중간에 죽어 남은 임시 파일은 그 프로젝트의 다음 점검이나 적용이 지운다. 도구는 스스로 만들었다고 기록한 임시 파일만 지운다.
 
 ## 스캔을 끝까지 해 보기
@@ -95,7 +95,7 @@ git add -A && git -c user.name=dev -c user.email=dev@example.invalid commit -q -
 ```
 
 - `git config core.autocrlf false`를 빼지 않는다. 호스트의 git에 `core.autocrlf`가 켜져 있으면 CRLF 파일이 LF로 커밋되고, 그 설정이 없는 worker 컨테이너의 git은 그 파일을 "커밋되지 않은 변경"으로 본다. 실제 프로젝트에서 같은 일이 생기면 그 파일 이름이 점검 화면의 "커밋되지 않은 변경"에 나온다.
-- worker가 작업본에 쓸 수 있어야 한다. Linux 호스트에서는 `SE_UID=$(id -u) SE_GID=$(id -g) docker compose up -d`로 띄운다.
+- applier가 작업본에 쓸 수 있어야 한다. Linux 호스트에서는 `SE_UID=$(id -u) SE_GID=$(id -g) docker compose up -d`로 띄운다.
 
 1. 프로젝트를 등록하고 스캔한 뒤 판정한다. 외부화와 삭제·마스킹으로 판정한 묶음만 적용 대상이다.
 2. 프로젝트 화면의 "적용"(`/projects/{id}/apply`)에서 "조건 점검"을 누른다. worker가 소스를 바꾸지 않고 조건(git 작업본, 저장소 설정, 커밋되지 않은 변경, manifest, 최신 스캔, 적용할 판정)을 확인하고, 바뀔 위치와 건너뛸 위치를 사유와 함께 보인다.
@@ -146,7 +146,7 @@ docker compose exec -e BAO_ADDR=https://127.0.0.1:8200 -e BAO_CACERT=/openbao/se
 ## 이미지를 다시 빌드할 때
 
 - web과 worker는 같은 마이그레이션 파일을 가지고 뜰 때 스키마를 확인한다. 새 마이그레이션이 든 web이 먼저 뜨면, 그 파일이 없는 이전 worker 이미지는 다시 시작할 때 `schema_migration records versions [N] that this binary has no migration file for`로 뜨지 않는다(이미 떠 있던 worker는 계속 돌지만 재시작하면 멈춘다). 마이그레이션이 바뀐 커밋을 받으면 web과 worker를 함께 다시 빌드한다.
-- Docker VM의 메모리가 2GB(colima 기본값)이면 Go 이미지 빌드가 매우 느리다. 전체 스택이 떠 있는 채 web을 빌드하자 90분 넘게 끝나지 않고 Keycloak이 메모리 부족으로 죽은 일이 있었고, `pdf-test`와 `openbao-test`를 멈춘 채 worker 하나를 빌드하는 데 약 16분이 걸렸다. 빌드 전에 `test` 프로필의 서비스를 멈추고, 이미지를 하나씩 빌드한 뒤(`docker compose build worker`) `docker compose up -d --no-deps --no-build worker`로 바꿔 띄운다. 가능하면 VM 메모리를 4GB 이상으로 늘린다(`colima stop && colima start --memory 4`).
+- Docker VM의 메모리가 2GB(colima 기본값)이면 Go 이미지 빌드가 매우 느리다. 전체 스택이 떠 있는 채 web을 빌드하자 90분 넘게 끝나지 않고 Keycloak이 메모리 부족으로 죽은 일이 있었고, `pdf-test`와 `openbao-test`를 멈춘 채 worker 하나를 빌드하는 데 약 16분이 걸렸다. 빌드 전에 `test` 프로필의 서비스를 멈추고, 이미지를 하나씩 빌드한 뒤(`docker compose build worker`) `docker compose up -d --no-deps --no-build worker applier`로 바꿔 띄운다. worker와 applier는 같은 이미지(`secret-externalizer-worker:compose-dev`)를 쓰므로 한 번만 빌드하면 된다. 가능하면 VM 메모리를 4GB 이상으로 늘린다(`colima stop && colima start --memory 4`).
 
 ## OpenBao
 
@@ -155,7 +155,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
 | 서비스 | 내용 |
 |---|---|
 | `openbao-secrets` | 한 번 실행되고 끝난다. `openbao-secrets` 볼륨에 AppRole secret-id(`worker/secret-id`, `web/secret-id`)를 난수로, OpenBao의 TLS 인증서(`tls/`)와 그 CA(`worker/ca.crt`, `web/ca.crt`)를 만든다. 이미 있는 파일은 그대로 두고, worker의 파일과 그 폴더의 소유자만 매번 `SE_UID`(기본 65532)로 맞춘다. 볼륨에 예전의 봉인 해제 키(`unseal/`)가 남아 있으면 `make openbao-unseal-key`를 실행하라는 메시지로 멈춘다 |
-| `openbao` | 원본을 보관한다. 호스트에 포트를 열지 않고 TLS만 받으며, 내부 네트워크 `bao`의 worker(쓰기)와 web(원본 보기의 읽기)만 쓴다. 데이터는 `openbao-data` 볼륨에, 봉인 해제 키는 호스트 파일에 있고 compose가 그 파일을 openbao에만 `/run/secrets/openbao-unseal-key`로 넘긴다 |
+| `openbao` | 원본을 보관한다. 호스트에 포트를 열지 않고 TLS만 받으며, 내부 네트워크 `bao`의 worker와 applier(쓰기)와 web(원본 보기의 읽기)만 쓴다. 데이터는 `openbao-data` 볼륨에, 봉인 해제 키는 호스트 파일에 있고 compose가 그 파일을 openbao에만 `/run/secrets/openbao-unseal-key`로 넘긴다 |
 | `openbao-test` | `test` 프로필에서만 뜬다. 통합 테스트용 `-dev` 서버이며 `127.0.0.1:18200`에 열린다. 메모리에만 저장하고 루트 토큰은 `dev-only-openbao-test-root-token`이다 |
 
 - 처음 뜰 때 OpenBao가 스스로 초기화(self-init)한다. transit 키 `fingerprint`, KV v2 마운트 `secret`, AppRole `worker`와 `web`, 정책, 표준 출력 audit device를 만든다. 루트 토큰은 초기화가 끝나면 폐기되어 남지 않는다.
@@ -177,7 +177,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
 
 ### 봉인 해제 키를 볼륨 밖으로 옮긴 뒤
 
-이전에 만든 `openbao-secrets` 볼륨에는 봉인 해제 키가 `unseal/key`로 들어 있다. 새 compose로 띄우기 전에 한 번 `make openbao-unseal-key`를 실행한다. 스크립트가 볼륨의 키를 호스트 파일로 복사하고, 파일을 다시 읽어 볼륨의 것과 같은지 확인한 뒤에만 볼륨에서 지운다. 같은 키이므로 OpenBao의 데이터는 그대로 열린다. 그 뒤 `docker compose up -d openbao`가 `openbao-secrets`를 다시 실행해 TLS 인증서를 만들고, web과 worker는 새 이미지로 다시 띄운다(`docker compose up -d --build web worker`).
+이전에 만든 `openbao-secrets` 볼륨에는 봉인 해제 키가 `unseal/key`로 들어 있다. 새 compose로 띄우기 전에 한 번 `make openbao-unseal-key`를 실행한다. 스크립트가 볼륨의 키를 호스트 파일로 복사하고, 파일을 다시 읽어 볼륨의 것과 같은지 확인한 뒤에만 볼륨에서 지운다. 같은 키이므로 OpenBao의 데이터는 그대로 열린다. 그 뒤 `docker compose up -d openbao`가 `openbao-secrets`를 다시 실행해 TLS 인증서를 만들고, web, worker, applier는 새 이미지로 다시 띄운다(`docker compose up -d --build web worker applier`).
 
 - 호스트 파일과 볼륨의 키가 다르면 아무것도 바꾸지 않고 멈춘다. `openbao-data`를 연 키를 호스트 파일 자리에 두고 다시 실행한다.
 - `openbao-data` 볼륨은 있는데 어디에도 키가 없으면 새 키를 만들지 않고 멈춘다. 새 키로는 그 저장소를 열 수 없다.
@@ -243,7 +243,7 @@ realm 설정은 `deploy/keycloak/realm.json`에 있다. Keycloak은 기동할 �
 | openbao-test | `127.0.0.1:18200` | 통합 테스트. `test` 프로필에서만 뜬다 |
 | pdf-test | `http://127.0.0.1:13000` | 통합 테스트. `test` 프로필에서만 뜬다 |
 
-`openbao`는 호스트에 포트를 열지 않는다. web과 worker만 내부 네트워크 `bao`에서 TLS로 `openbao:8200`에 접속한다. `pdf`도 포트를 열지 않고, web만 내부 네트워크 `pdf`에서 `pdf:3000`으로 접속한다. `valkey`도 포트를 열지 않고, web만 내부 네트워크 `valkey`에서 TLS로 `valkey:6379`에 접속한다.
+`openbao`는 호스트에 포트를 열지 않는다. web, worker, applier만 내부 네트워크 `bao`에서 TLS로 `openbao:8200`에 접속한다. `pdf`도 포트를 열지 않고, web만 내부 네트워크 `pdf`에서 `pdf:3000`으로 접속한다. `valkey`도 포트를 열지 않고, web만 내부 네트워크 `valkey`에서 TLS로 `valkey:6379`에 접속한다.
 
 ## 네트워크
 
@@ -252,13 +252,13 @@ realm 설정은 `deploy/keycloak/realm.json`에 있다. Keycloak은 기동할 �
 | 네트워크 | 종류 | 붙는 서비스 |
 |---|---|---|
 | `edge` | bridge, NAT 끔. 호스트 포트를 연다 | web, keycloak, postgres |
-| `db` | internal | postgres, worker |
+| `db` | internal | postgres, worker, applier |
 | `valkey` | internal | valkey, web |
-| `bao` | internal | openbao, web, worker |
+| `bao` | internal | openbao, web, worker, applier |
 | `pdf` | internal | pdf, web |
 | `test` | bridge, NAT 끔. 호스트 포트를 연다 | valkey-test, openbao-test, pdf-test (`test` 프로필) |
 
-- worker와 스캐너는 postgres와 OpenBao에만 닿고 바깥 이름도 풀지 못한다. 스캐너를 올리거나 바꿀 때 바깥 연결이 필요한 기능(규칙 내려받기, 버전 확인 등)을 켜면 스캔이 실패한다.
+- worker와 스캐너, applier는 postgres와 OpenBao에만 닿고 바깥 이름도 풀지 못한다. 스캐너를 올리거나 바꿀 때 바깥 연결이 필요한 기능(규칙 내려받기, 버전 확인 등)을 켜면 스캔이 실패한다.
 - `openbao-secrets`와 `valkey-secrets`는 네트워크 없이(`network_mode: none`) 뜬다.
 - 네트워크 구성을 바꾼 `compose.yaml`을 처음 받으면 `docker compose up -d`가 컨테이너를 새 네트워크로 다시 만든다. 이전의 `secret-externalizer_default` 네트워크는 남아 있으면 `docker network rm secret-externalizer_default`로 지운다.
 
@@ -290,22 +290,25 @@ web은 기동할 때 discovery 문서를 2초 간격으로 최대 60초 동안 �
 
 ## worker 환경 변수
 
+worker와 applier는 같은 실행 파일이고 `WORKER_JOBS`로 나뉜다. "스캔"이라고 적은 변수는 스캔하는 worker(`all`, `scan`)에만 필요하고, 적용만 하는 worker(`apply`)는 읽지 않는다.
+
 | 이름 | 필수 | 내용 |
 |---|---|---|
+| `WORKER_JOBS` | | 실행할 작업 종류. `all`(기본값, 스캔과 적용 모두), `scan`(스캔만), `apply`(적용의 점검과 적용만). `scan`에 `APPLY_WORKSPACE_ROOT`를 함께 주면 기동하지 않는다. 스캐너가 읽기-쓰기 마운트에 닿지 않게 하려는 것이다. compose에서는 worker가 `scan`, applier가 `apply` |
 | `DATABASE_URL` | 예 | web과 같은 postgres 주소. worker도 기동할 때 마이그레이션을 실행한다 |
-| `WORKSPACE_ROOT` | 예 | 스캔이 읽는 작업 공간 루트. 절대 경로이고 폴더여야 한다. compose에서는 읽기 전용 마운트 `/workspace` |
-| `APPLY_WORKSPACE_ROOT` | | 적용이 파일을 바꾸는 작업 공간 루트. `WORKSPACE_ROOT`와 같은 폴더를 읽기-쓰기로 마운트한 경로다. 절대 경로이고 폴더여야 한다. 비우면 적용의 모든 점검이 `workspace-read-only`로 막힌다. compose에서는 `/workspace-rw` |
+| `WORKSPACE_ROOT` | 스캔 | 스캔이 읽는 작업 공간 루트. 절대 경로이고 폴더여야 한다. compose에서는 읽기 전용 마운트 `/workspace` |
+| `APPLY_WORKSPACE_ROOT` | `apply`에서 예 | 적용이 파일을 바꾸는 작업 공간 루트. `WORKSPACE_ROOT`와 같은 폴더를 읽기-쓰기로 마운트한 경로다. 절대 경로이고 폴더여야 한다. `all`에서 비우면 적용의 모든 점검이 `workspace-read-only`로 막히고, `scan`에서는 주면 안 된다. compose에서는 applier의 `/workspace-rw` |
 | `BAO_ADDR` | 예 | OpenBao 주소. `http://` 또는 `https://`로 시작하고 경로가 없어야 한다. compose에서는 `https://openbao:8200`. `http://`이면 시작할 때 `openbao connection is not encrypted` 경고를 남긴다 |
 | `BAO_CA_FILE` | 아니요 | OpenBao의 인증서가 이어져야 하는 CA 인증서(PEM) 파일. 주면 `BAO_ADDR`가 `https://`여야 하고 이 CA만 믿는다. 주지 않은 `https://` 주소는 시스템의 루트 인증서로 확인한다. compose에서는 `/run/secrets/openbao/ca.crt` |
 | `BAO_ROLE_ID` | 예 | AppRole role-id. compose에서는 `se-worker` |
 | `BAO_SECRET_ID_FILE` | 예 | AppRole secret-id가 든 파일. 앞뒤 공백은 뗀다. compose에서는 `openbao-secrets` 볼륨의 `worker` 폴더만 `/run/secrets/openbao`에 읽기 전용으로 마운트하고 `/run/secrets/openbao/secret-id`를 쓴다. secret-id는 로그와 오류 메시지에 남지 않는다 |
-| `BETTERLEAKS_BIN` | 예 | betterleaks 실행 파일의 절대 경로. compose에서는 `/usr/local/bin/betterleaks` |
-| `OPENGREP_BIN` | 예 | opengrep 실행 파일의 절대 경로. compose에서는 `/usr/local/bin/opengrep` |
-| `RULES_DIR` | 예 | 탐지 규칙 폴더의 절대 경로. `betterleaks.toml` 파일과 `opengrep` 폴더가 있어야 한다. compose에서는 `/rules` |
-| `SCAN_TEMP_DIR` | 예 | 스캐너의 HOME(`home`)과 TMPDIR(`tmp`), 스캔마다의 EUC-KR 사본(`copies/<스캔 ID>`)을 두는 폴더의 절대 경로. 없으면 worker가 만든다. tmpfs 위에 둔다. compose에서는 `/tmp/scan` |
+| `BETTERLEAKS_BIN` | 스캔 | betterleaks 실행 파일의 절대 경로. compose에서는 `/usr/local/bin/betterleaks` |
+| `OPENGREP_BIN` | 스캔 | opengrep 실행 파일의 절대 경로. compose에서는 `/usr/local/bin/opengrep` |
+| `RULES_DIR` | 스캔 | 탐지 규칙 폴더의 절대 경로. `betterleaks.toml` 파일과 `opengrep` 폴더가 있어야 한다. compose에서는 `/rules` |
+| `SCAN_TEMP_DIR` | 스캔 | 스캐너의 HOME(`home`)과 TMPDIR(`tmp`), 스캔마다의 EUC-KR 사본(`copies/<스캔 ID>`)을 두는 폴더의 절대 경로. 없으면 worker가 만든다. tmpfs 위에 둔다. compose에서는 `/tmp/scan` |
 | `GIT_BIN` | | 커밋 해시와 적용 전의 작업본 상태를 읽는 git 실행 파일. 비우면 `/usr/bin/git`이 있을 때 그것을 쓰고, 없으면 커밋 해시를 기록하지 않고 적용의 모든 점검이 `git-missing`으로 막힌다 |
 
-실행 파일이나 규칙 폴더가 없으면 worker가 기동하지 않는다. 기동할 때 규칙 버전을 계산해 로그에 남긴다.
+스캔하는 worker는 실행 파일이나 규칙 폴더가 없으면 기동하지 않고, 기동할 때 규칙 버전을 계산해 로그에 남긴다.
 
 확인 간격(2초), 임대(2분), 연장 간격(30초), 스캔 제한 시간(30분), 파일 크기 한도(20MiB)는 환경 변수로 바꾸지 않는다.
 

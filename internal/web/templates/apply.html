@@ -59,7 +59,7 @@
 {{end}}{{template "checks" .DBChecks}}<p class="muted">git 작업본, 커밋되지 않은 변경, 저장소 설정, manifest는 worker가 점검합니다. 점검은 소스를 바꾸지 않습니다.</p>
 <div class="form-actions">{{template "check-button" .}}</div>
 </section>
-{{else if eq .View "checking"}}<div class="card card-pad flex flex-col gap-2.5">
+{{else if eq .View "checking"}}{{if .NoWorker}}{{template "noworker"}}{{end}}<div class="card card-pad flex flex-col gap-2.5">
 <div class="progress" role="progressbar" aria-label="조건 점검 중"></div>
 <p class="text-2">점검 중입니다. worker가 소스를 바꾸지 않고 조건과 바꿀 위치를 확인합니다. 이 화면은 3초마다 새로 고쳐집니다.</p>
 </div>

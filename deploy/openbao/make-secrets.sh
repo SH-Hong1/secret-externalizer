@@ -14,23 +14,25 @@
 #   /secrets/tls/tls.key        its private key     openbao (100:1000), 0400
 #   /secrets/tls/ca.crt         CA certificate      openbao (100:1000), 0444
 #
-# OpenBao (uid 100, gid 1000) reads every file. The worker and web containers
-# mount only their own directory, so neither sees OpenBao's private key or
-# the other role's secret-id.
+# OpenBao (uid 100, gid 1000) reads every file. The worker and applier
+# containers mount only the worker directory, and the web container only the
+# web directory, so none sees OpenBao's private key or the other role's
+# secret-id.
 #
 # The unseal key is not in this volume. It is a file on the host that
 # deploy/openbao/unseal-key.sh makes and compose hands to OpenBao alone.
 # When the volume holds an unseal/ folder, this script stops and asks for
 # unseal-key.sh, which moves a key found there to the host file.
 #
-# The certificate is for the name openbao, which web and the worker use, and
-# for 127.0.0.1, which the health check uses. The CA's private key is made in
-# /tmp and is gone when this container ends, so no one can sign another
-# certificate with it; a new certificate means removing the four certificate
-# files, which makes a new CA. Both certificates last ten years: this is a
+# The certificate is for the name openbao, which web, the worker, and the
+# applier use, and for 127.0.0.1, which the health check uses. The CA's
+# private key is made in /tmp and is gone when this container ends, so no one
+# can sign another certificate with it; a new certificate means removing the
+# four certificate files, which makes a new CA. Both certificates last ten years: this is a
 # local development stack, and nothing renews them.
 #
-# SE_UID and SE_GID are the uid and gid the worker runs as, 65532 when unset.
+# SE_UID and SE_GID are the uid and gid the worker and the applier run as,
+# 65532 when unset.
 # Both must be numbers other than 0. The owner of the worker's directory and
 # secret-id is set to SE_UID on every run, so a volume made for another uid
 # follows a changed SE_UID. Their group stays OpenBao's (1000), which reads

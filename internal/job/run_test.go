@@ -60,16 +60,20 @@ type fakeQueue struct {
 	extendErrs []error
 	releases   []int64
 	beats      int
+	// claimKinds and beatKinds are the kinds of the last claim and beat.
+	claimKinds []job.Kind
+	beatKinds  []job.Kind
 }
 
 func newFakeQueue(jobs ...job.Job) *fakeQueue {
 	return &fakeQueue{jobs: jobs, extended: make(chan struct{}, 100)}
 }
 
-func (q *fakeQueue) ClaimJob(_ context.Context, _ string, _ time.Duration) (job.Job, error) {
+func (q *fakeQueue) ClaimJob(_ context.Context, _ string, _ time.Duration, kinds ...job.Kind) (job.Job, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.claims++
+	q.claimKinds = slices.Clone(kinds)
 	if len(q.claimErrs) > 0 {
 		err := q.claimErrs[0]
 		q.claimErrs = q.claimErrs[1:]
@@ -83,10 +87,11 @@ func (q *fakeQueue) ClaimJob(_ context.Context, _ string, _ time.Duration) (job.
 	return j, nil
 }
 
-func (q *fakeQueue) Beat(_ context.Context, _ string) error {
+func (q *fakeQueue) Beat(_ context.Context, _ string, kinds ...job.Kind) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 	q.beats++
+	q.beatKinds = slices.Clone(kinds)
 	return q.beatErr
 }
 
@@ -631,4 +636,30 @@ func TestRun_SurvivesBeatError(t *testing.T) {
 	if !strings.Contains(logs.String(), `"level":"WARN"`) || strings.Contains(logs.String(), `"level":"ERROR"`) {
 		t.Errorf("Run() with a failing beat logged:\n%s\nwant a warning and no error", logs.String())
 	}
+}
+
+func TestRun_AsksForItsKinds(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		q := newFakeQueue()
+		ctx, cancel := context.WithCancel(t.Context())
+		want := []job.Kind{job.KindApplyCheck, job.KindApply}
+		opts := job.Options{WorkerID: "applier", Kinds: want, Poll: time.Second, Lease: time.Minute, Heartbeat: time.Second}
+		done := make(chan error, 1)
+		go func() {
+			done <- job.Run(ctx, discardLogger(), q, func(context.Context, job.Job) error { return nil }, opts)
+		}()
+		synctest.Wait() // Run has beaten, claimed nothing, and waits for the next poll
+		cancel()
+		if err := <-done; err != nil {
+			t.Fatalf("Run() error = %v", err)
+		}
+		q.mu.Lock()
+		defer q.mu.Unlock()
+		if diff := cmp.Diff(want, q.claimKinds); diff != "" {
+			t.Errorf("Run(Kinds: %v) claimed with kinds (-want +got):\n%s", want, diff)
+		}
+		if diff := cmp.Diff(want, q.beatKinds); diff != "" {
+			t.Errorf("Run(Kinds: %v) beat with kinds (-want +got):\n%s", want, diff)
+		}
+	})
 }
