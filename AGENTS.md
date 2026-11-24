@@ -1,12 +1,14 @@
 # Go rules for secret-externalizer
 
 These rules apply to every change in this repository. They are checked by
-`make check`, which the git hooks in `.githooks/` run before a commit, and
-by review. Where two well-known guides disagree, the rule written here is
-the one this project follows.
+`make check`, which the git hooks in `.githooks/` run before a commit, by
+the CI on every pull request, and by the rules review in that CI. Where two
+well-known guides disagree, the rule written here is the one this project
+follows.
 
-The design lives in `docs/superpowers/specs/`. Decisions and their reasons
-live in `docs/adr/`. Changes are listed in `CHANGELOG.md`.
+The design lives in `docs/design/secret-externalizer.md`. Decisions and
+their reasons live in `docs/adr/`. Changes are listed in `CHANGELOG.md`.
+Remaining work is tracked in GitHub Issues.
 
 ## Project layout
 
@@ -268,19 +270,57 @@ Sources: Go Code Review Comments; Google Go Style Guide; Let's Go; 100 Go Mistak
   `[Unreleased]`.
 - Every decision that a later reader could reasonably question gets a file in
   `docs/adr/`, following `docs/adr/README.md`.
-- Code, comments, commit messages, and this file are written in English.
-  `CHANGELOG.md` and everything under `docs/` are written in Korean.
+- Code, comments, commit messages, pull request titles, and this file are
+  written in English. `CHANGELOG.md`, `README.md`, pull request bodies,
+  issues, and everything under `docs/` are written in Korean.
 
 Sources: Effective Go; Go Code Review Comments; Practical Go.
+
+## Commit messages
+
+- The first line is `<type>(<scope>): <subject>`. The type is one of `build`,
+  `ci`, `docs`, `feat`, `fix`, `perf`, `refactor`, `revert`, `style`, and
+  `test`. The scope is optional, lower-case, and names the package or area.
+  Add `!` after the type or scope for a breaking change.
+- The subject is in the imperative, starts with a lower-case letter, has no
+  full stop, and the whole first line is at most 72 characters.
+- The second line is blank. The body says what changed and why.
+- The body has a line `Refs #<issue>` or `Closes #<issue>`.
+- `scripts/commit-lint.sh` checks these rules in the `commit-msg` hook and,
+  for the pull request title and body, in the CI.
+
+Sources: Angular commit message guidelines.
+
+## Work tracking
+
+- A feature or a group of related work is a milestone. A task is an issue
+  that one pull request finishes. Each issue carries one `type: *` label, and
+  `needs: decision` while it waits for a decision.
+- One task has one branch and one pull request. The pull request title
+  follows the commit message format, because the squash merge makes it the
+  commit subject on `main`. The body says what changed and what was checked,
+  and ends with `Closes #<issue>`.
+- `main` takes changes only through pull requests, squash-merged after the
+  `check`, `integration`, `pull-request`, and `review` checks pass. Start the
+  merge with `gh pr merge --auto --squash` when the pull request is opened.
+- When the rules review reports something that is not a violation, add the
+  label `review: override`. It does not pass a Security finding.
+- A plan for a larger change is written in Korean under
+  `docs/superpowers/plans/` and is implemented after the user has reviewed
+  it.
+
+Sources: the project's ADR 0072, 0073, and 0074.
 
 ## Formatting and tooling
 
 - Format with `make fmt`, which runs gofumpt and goimports. Do not format by
   hand and do not argue with the formatter.
 - `make check` runs the linters, `go vet`, the tests with the race detector,
-  the git hook, commit message, and linter rule tests, the scanner
-  fetch-script test (`make scanners-test`), and the deploy script tests
-  (`make deploy-scripts-test`). It must pass before a task is finished.
+  the git hook, commit message, rules review verdict, and linter rule tests,
+  the scanner fetch-script test (`make scanners-test`), and the deploy script
+  tests (`make deploy-scripts-test`). It must pass before a task is
+  finished. A fresh clone runs `make setup` once, which installs the tools
+  and turns the git hooks on.
 - Fix a lint finding. Do not suppress it. Where suppression really is correct,
   write `//nolint:<linter> // <reason>` on that line.
 - `gosec` rule G204 is turned off in `.golangci.yml`. It reports every

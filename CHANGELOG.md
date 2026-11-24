@@ -6,6 +6,7 @@
 
 ### 변경
 
+- `README.md`를 두었다(구성, 빠른 시작, 개발 준비, 검사, 일하는 방식, 문서 지도). `AGENTS.md`에 "Commit messages"와 "Work tracking" 절을 더하고, PR 제목은 영어, PR 본문과 Issue는 한국어로 쓴다는 언어 규칙을 더했다
 - 설계 문서를 Design Doc 형식으로 다시 써 `docs/design/secret-externalizer.md` 한 곳에 두었다. 처음 설계와 설정 키 설계, 그 뒤의 결정(ADR 0001~0074)을 반영한 지금의 시스템을 설명하고 근거는 ADR 번호로 가리킨다. 두 원본(`docs/superpowers/specs/2026-11-18-secret-externalizer-design.md`, `2026-11-23-finding-key-design.md`)은 지웠다
 - 결정 기록을 `docs/decisions/`에서 `docs/adr/`로, 화면 시안을 `docs/design/`에서 `docs/design/screens/`로 옮겼다. 번호와 본문은 그대로이고, 이 문서를 포함한 참조 경로를 새 위치로 고쳤다
 - AGENTS.md 규칙 검토를 PR마다 CI의 `review` 작업이 한다. 검토자(Claude)가 Go 소스, `go.mod`, 템플릿, SQL이 바뀐 PR의 diff를 읽고 위반 목록을 내면, PR에 댓글 하나를 남기고 위반이 있으면 체크를 실패시킨다. `review: override` 라벨은 Security 절이 아닌 위반만 통과시키고, 판정을 내지 못하면 체크가 실패한다. 저장소 secret `CLAUDE_CODE_OAUTH_TOKEN`이나 `ANTHROPIC_API_KEY`가 필요하다. `main`은 `check`, `integration`, `pull-request`, `review`가 통과해야 병합된다(`docs/adr/0073-rules-review-runs-in-ci.md`)
