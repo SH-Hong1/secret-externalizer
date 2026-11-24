@@ -13,7 +13,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
@@ -75,27 +74,27 @@ func fullReport() report.Data {
 	}
 	d.PreviousTotals = d.Totals
 	d.PreviousTotals.Found = report.Count{Bundles: 82, Locations: 101}
-	d.Changes = []report.Change{
-		{Run: 2, Item: apply.Item{
-			BundleID: 11, File: "src/main/resources/application-prod.yml", StartLine: 14, Line: 14, Action: apply.ActionReplace,
-			Category: finding.CategoryStorage, Kind: finding.KindPassword, Name: "ext.db.main.password",
-			StorePath: "secret/data/projects/3/ext.db.main.password", Tracked: true, CodeChange: true, Status: apply.StatusApplied,
-		}},
-		{Run: 2, Item: apply.Item{
-			BundleID: 12, File: "keys/deploy.pem", Action: apply.ActionRemoveFile,
-			Category: finding.CategorySSH, Kind: finding.KindKeyFile, Name: "EXT_SSH_DEPLOY_KEY",
-			StorePath: "secret/data/projects/3/ext.ssh.deploy.key", Tracked: true, Status: apply.StatusApplied,
-		}},
-	}
+	d.Externalized = report.List[report.Entry]{Total: 2, Rows: []report.Entry{
+		{
+			Bundle: 12, Name: "EXT_SSH_DEPLOY_KEY", Category: finding.CategorySSH, Kind: finding.KindKeyFile,
+			StorePath: "secret/data/projects/3/ext.ssh.deploy.key", PlaceTotal: 1,
+			Places: []report.Place{{File: "keys/deploy.pem", Removed: true, Run: 2}},
+		},
+		{
+			Bundle: 11, Name: "ext.db.main.password", Category: finding.CategoryStorage, Kind: finding.KindPassword,
+			StorePath: "secret/data/projects/3/ext.db.main.password", PlaceTotal: 1, CodeChange: true, Reappeared: true,
+			Places: []report.Place{{File: "src/main/resources/application-prod.yml", Line: 14, Run: 2}},
+		},
+	}}
 	d.Redactions = []report.Redaction{
 		{Kind: finding.KindPhone, File: "logs/app.log", Untracked: true, Bundles: 2, Locations: 5},
 	}
 	decided := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
-	d.Lines = []report.Line{
-		{
-			Bundle: 21, Category: finding.CategoryPartnerSession, Kind: finding.KindToken, File: "web/login.jsp", FirstLine: 3,
-			Files: 1, Bundles: 1, Locations: 1, Frontend: true,
-		},
+	d.Structure = report.List[report.Line]{Total: 1, Rows: []report.Line{{
+		Bundle: 21, Category: finding.CategoryPartnerSession, Kind: finding.KindToken, File: "web/login.jsp", FirstLine: 3,
+		Files: 1, Bundles: 1, Locations: 1, Frontend: true,
+	}}}
+	d.Remaining = report.List[report.Line]{Total: 2, Rows: []report.Line{
 		{
 			Bundle: 22, Category: finding.CategoryOther, Kind: finding.KindToken, File: "conf/a.properties", FirstLine: 8,
 			Files: 2, Bundles: 1, Locations: 3, Verdict: triage.VerdictHold, Reason: triage.HoldConfirm,
@@ -106,11 +105,11 @@ func fullReport() report.Data {
 			Files: 1, Bundles: 1, Locations: 1, Verdict: triage.VerdictExternalize, Name: "db.main.password",
 			DecidedAt: decided, Applied: report.AppliedBefore,
 		},
-		{
-			Bundle: 23, Category: finding.CategoryOther, Kind: finding.KindOther, File: "test/Fixture.java", FirstLine: 20,
-			Files: 1, Bundles: 1, Locations: 1, Verdict: triage.VerdictFalsePositive, Note: "test fixture", DecidedAt: decided,
-		},
-	}
+	}}
+	d.FalsePositives = report.List[report.Line]{Total: 1, Rows: []report.Line{{
+		Bundle: 23, Category: finding.CategoryOther, Kind: finding.KindOther, File: "test/Fixture.java", FirstLine: 20,
+		Files: 1, Bundles: 1, Locations: 1, Verdict: triage.VerdictFalsePositive, Note: "test fixture", DecidedAt: decided,
+	}}}
 	d.Events = []report.Event{
 		{
 			At: decided, Actor: audit.Actor{Subject: "fake-subject", Name: "Fake User"}, Action: audit.ActionVerdict,
@@ -239,12 +238,13 @@ func TestHandleReport_Empty(t *testing.T) {
 func TestHandleReport_Capped(t *testing.T) {
 	e := newTestEnv(t)
 	d := emptyReport()
-	for i := range report.MaxRows + 5 {
-		d.Lines = append(d.Lines, report.Line{
+	for i := range report.MaxRows {
+		d.Remaining.Rows = append(d.Remaining.Rows, report.Line{
 			Bundle: triage.BundleID(i + 1), Category: finding.CategoryOther, Kind: finding.KindToken,
 			File: "conf/a.properties", FirstLine: i + 1, Files: 1, Bundles: 1, Locations: 1,
 		})
 	}
+	d.Remaining.Total = report.MaxRows + 5
 	e.reports.put(d)
 	res := e.getReport(t)
 	wantIn(t, "GET /scans/7/report with MaxRows+5 remaining lines", res.body, "처음 100줄만 싣습니다. 외 5줄.")
@@ -257,8 +257,8 @@ func TestHandleReport_Escapes(t *testing.T) {
 	)
 	e := newTestEnv(t)
 	d := fullReport()
-	d.Lines[1].File, d.Lines[1].Note = file, note
-	d.Changes[0].Item.File = file
+	d.Remaining.Rows[0].File, d.Remaining.Rows[0].Note = file, note
+	d.Externalized.Rows[1].Places[0].File = file
 	d.Redactions[0].File = file
 	d.Events[0].File = file
 	d.Events[0].Detail[audit.DetailNote] = note
@@ -350,7 +350,7 @@ func TestHandleReportPDF_Document(t *testing.T) {
 	const file = "<img src=x onerror=alert(1)>.yml"
 	e := newTestEnv(t)
 	d := fullReport()
-	d.Lines[1].File = file
+	d.Remaining.Rows[0].File = file
 	e.reports.put(d)
 	if res := e.getReportPDF(t); res.status != http.StatusOK {
 		t.Fatalf("GET /scans/7/report.pdf status = %d, want 200; body:\n%s", res.status, res.body)

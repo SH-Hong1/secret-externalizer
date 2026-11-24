@@ -10,7 +10,6 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
@@ -31,7 +30,9 @@ func cappedReport() report.Data {
 // places on each externalized entry.
 func filledReport(rows, places int) report.Data {
 	d := fullReport()
-	d.Changes, d.Redactions, d.Lines, d.Events = nil, nil, nil, nil
+	d.Redactions, d.Events = nil, nil
+	d.Structure, d.Remaining, d.FalsePositives = report.List[report.Line]{}, report.List[report.Line]{}, report.List[report.Line]{}
+	d.Externalized = report.List[report.Entry]{}
 	decided := time.Date(2026, 11, 20, 8, 0, 0, 0, time.UTC)
 	path := func(i int) string {
 		return fmt.Sprintf("src/main/resources/설정/운영/%s/application-%04d.properties", strings.Repeat("모듈-하위폴더/", 6), i)
@@ -41,14 +42,15 @@ func filledReport(rows, places int) report.Data {
 	unbroken := strings.Repeat("a", 160) + ".yml"
 
 	for i := range rows {
-		for j := range places {
-			d.Changes = append(d.Changes, report.Change{Run: 2, Item: apply.Item{
-				BundleID: triage.BundleID(1000 + i), File: path(j), Line: j + 1, Action: apply.ActionReplace,
-				Category: finding.CategoryStorage, Kind: finding.KindPassword, Name: fmt.Sprintf("ext.db.main%04d.password", i),
-				StorePath: fmt.Sprintf("secret/data/projects/3/ext.db.main%04d.password", i), Tracked: true, CodeChange: i%2 == 0,
-				Status: apply.StatusApplied,
-			}})
+		e := report.Entry{
+			Bundle: triage.BundleID(1000 + i), Name: fmt.Sprintf("ext.db.main%04d.password", i),
+			Category: finding.CategoryStorage, Kind: finding.KindPassword,
+			StorePath: fmt.Sprintf("secret/data/projects/3/ext.db.main%04d.password", i), PlaceTotal: places, CodeChange: i%2 == 0,
 		}
+		for j := range places {
+			e.Places = append(e.Places, report.Place{File: path(j), Line: j + 1, Run: 2})
+		}
+		d.Externalized.Rows = append(d.Externalized.Rows, e)
 		file := path(i)
 		if i == 0 {
 			file = unbroken
@@ -56,21 +58,19 @@ func filledReport(rows, places int) report.Data {
 		d.Redactions = append(d.Redactions, report.Redaction{
 			Kind: finding.KindPhone, File: file, Untracked: i%3 == 0, Bundles: 37, Locations: 120,
 		})
-		d.Lines = append(d.Lines,
-			report.Line{
-				Bundle: triage.BundleID(5000 + i), Category: finding.CategoryPartnerSession, Kind: finding.KindToken,
-				File: "web/화면/" + file + ".jsp", FirstLine: i + 1, Files: 3, Bundles: 1, Locations: 4, Frontend: true,
-			},
-			report.Line{
-				Bundle: triage.BundleID(6000 + i), Category: finding.CategoryOther, Kind: finding.KindToken, File: file,
-				FirstLine: i + 1, Files: 2, Bundles: 1, Locations: 3, Verdict: triage.VerdictHold, Reason: triage.HoldConfirm,
-				Note: note, DecidedAt: decided,
-			},
-			report.Line{
-				Bundle: triage.BundleID(7000 + i), Category: finding.CategoryOther, Kind: finding.KindOther, File: file,
-				FirstLine: i + 1, Files: 1, Bundles: 1, Locations: 1, Verdict: triage.VerdictFalsePositive, Note: note, DecidedAt: decided,
-			},
-		)
+		d.Structure.Rows = append(d.Structure.Rows, report.Line{
+			Bundle: triage.BundleID(5000 + i), Category: finding.CategoryPartnerSession, Kind: finding.KindToken,
+			File: "web/화면/" + file + ".jsp", FirstLine: i + 1, Files: 3, Bundles: 1, Locations: 4, Frontend: true,
+		})
+		d.Remaining.Rows = append(d.Remaining.Rows, report.Line{
+			Bundle: triage.BundleID(6000 + i), Category: finding.CategoryOther, Kind: finding.KindToken, File: file,
+			FirstLine: i + 1, Files: 2, Bundles: 1, Locations: 3, Verdict: triage.VerdictHold, Reason: triage.HoldConfirm,
+			Note: note, DecidedAt: decided,
+		})
+		d.FalsePositives.Rows = append(d.FalsePositives.Rows, report.Line{
+			Bundle: triage.BundleID(7000 + i), Category: finding.CategoryOther, Kind: finding.KindOther, File: file,
+			FirstLine: i + 1, Files: 1, Bundles: 1, Locations: 1, Verdict: triage.VerdictFalsePositive, Note: note, DecidedAt: decided,
+		})
 		d.Events = append(d.Events, report.Event{
 			At: decided, Actor: audit.Actor{Subject: "fake-subject", Name: "가짜 사용자"}, Action: audit.ActionVerdict,
 			Detail: map[string]string{
@@ -79,6 +79,8 @@ func filledReport(rows, places int) report.Data {
 			Bundles: 37, Category: finding.CategoryOther, Kind: finding.KindToken, File: file,
 		})
 	}
+	d.Structure.Total, d.Remaining.Total, d.FalsePositives.Total = rows, rows, rows
+	d.Externalized.Total = rows
 	d.EventTotal = rows + 10
 	return d
 }

@@ -9,7 +9,6 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
-	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/audit"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
@@ -19,109 +18,6 @@ import (
 )
 
 var now = time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
-
-func bundleIDs(lines []report.Line) []triage.BundleID {
-	var ids []triage.BundleID
-	for _, l := range lines {
-		ids = append(ids, l.Bundle)
-	}
-	return ids
-}
-
-func TestBuild_Partition(t *testing.T) {
-	lines := []report.Line{
-		{Bundle: 1, File: "a/x.jsp", FirstLine: 3, Verdict: triage.VerdictFalsePositive, Frontend: true},
-		{Bundle: 2, File: "a/y.java", FirstLine: 3, Verdict: triage.VerdictFalsePositive},
-		{Bundle: 3, File: "b/x.jsp", FirstLine: 1, Frontend: true},
-		{Bundle: 4, File: "b/y.java", FirstLine: 1, Verdict: triage.VerdictHold, Reason: triage.HoldStructure},
-		{Category: finding.CategoryCustomerData, Kind: finding.KindPhone, File: "c/x.jsp", FirstLine: 9, Verdict: triage.VerdictRedact, Bundles: 2},
-		{Bundle: 5, File: "d.java", Verdict: triage.VerdictHold, Reason: triage.HoldLater},
-		{Bundle: 6, File: "e.java"},
-		{Bundle: 7, File: "f.java", Verdict: triage.VerdictExternalize},
-	}
-	r := report.Build(report.Data{Lines: lines}, now)
-
-	tests := []struct {
-		name string
-		got  report.List[report.Line]
-		want []triage.BundleID
-	}{
-		{"false positives", r.FalsePositives, []triage.BundleID{1, 2}},
-		{"structure", r.Structure, []triage.BundleID{3, 4}},
-		{"remaining", r.Remaining, []triage.BundleID{0, 5, 6, 7}},
-	}
-	sum := 0
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if diff := cmp.Diff(tt.want, bundleIDs(tt.got.Rows)); diff != "" {
-				t.Errorf("Build(...).%s bundles mismatch (-want +got):\n%s", tt.name, diff)
-			}
-			if tt.got.Total != len(tt.want) {
-				t.Errorf("Build(...).%s.Total = %d, want %d", tt.name, tt.got.Total, len(tt.want))
-			}
-		})
-		sum += tt.got.Total
-	}
-	if sum != len(lines) {
-		t.Errorf("sum of Totals = %d, want %d", sum, len(lines))
-	}
-}
-
-func TestBuild_Externalized(t *testing.T) {
-	item := func(name, file string, line int, mod func(*apply.Item)) report.Change {
-		it := apply.Item{
-			BundleID: 7, Name: name, File: file, Line: line, Action: apply.ActionReplace,
-			Category: finding.CategoryOther, Kind: finding.KindPassword,
-			StorePath: "projects/1/db/main/password",
-		}
-		if mod != nil {
-			mod(&it)
-		}
-		return report.Change{Run: 3, Item: it}
-	}
-	changes := []report.Change{
-		item("EXT_DB_MAIN_PASSWORD", "deploy.sh", 3, nil),
-		item("ext.db.main.password", "b.xml", 31, nil),
-		item("ext.db.main.password", "a.yml", 14, nil),
-		item("ext.db.main.password", "k/key.pem", 0, func(i *apply.Item) { i.Action = apply.ActionRemoveFile }),
-		item("ext.db.main.password", "Conn.java", 8, func(i *apply.Item) { i.CodeChange = true }),
-	}
-	lines := []report.Line{{Bundle: 7, File: "a.yml", Applied: report.AppliedBefore}}
-	r := report.Build(report.Data{Changes: changes, Lines: lines}, now)
-
-	want := []report.Entry{
-		{
-			Bundle: 7, Name: "EXT_DB_MAIN_PASSWORD", Category: finding.CategoryOther, Kind: finding.KindPassword,
-			StorePath: "projects/1/db/main/password", PlaceTotal: 1, Reappeared: true,
-			Places: []report.Place{{File: "deploy.sh", Line: 3, Run: 3}},
-		},
-		{
-			Bundle: 7, Name: "ext.db.main.password", Category: finding.CategoryOther, Kind: finding.KindPassword,
-			StorePath: "projects/1/db/main/password", PlaceTotal: 4, Reappeared: true, CodeChange: true,
-			Places: []report.Place{
-				{File: "Conn.java", Line: 8, Run: 3},
-				{File: "a.yml", Line: 14, Run: 3},
-				{File: "b.xml", Line: 31, Run: 3},
-				{File: "k/key.pem", Removed: true, Run: 3},
-			},
-		},
-	}
-	// Names sort by byte value, so the upper-case name comes first.
-	if diff := cmp.Diff(want, r.Externalized.Rows); diff != "" {
-		t.Errorf("Build(...).Externalized.Rows mismatch (-want +got):\n%s", diff)
-	}
-
-	r = report.Build(report.Data{Changes: changes}, now)
-	for _, e := range r.Externalized.Rows {
-		if e.Reappeared {
-			t.Errorf("Build(...) entry %s Reappeared = true without a line, want false", e.Name)
-		}
-	}
-	r = report.Build(report.Data{Changes: changes, Lines: []report.Line{{Bundle: 7, Applied: report.AppliedAfter}}}, now)
-	if r.Externalized.Rows[0].Reappeared {
-		t.Errorf("Build(...) Reappeared = true for an apply after the scan, want false")
-	}
-}
 
 func TestBuild_RedactedKinds(t *testing.T) {
 	in := []report.Redaction{
@@ -147,25 +43,44 @@ func TestBuild_RedactedKinds(t *testing.T) {
 
 func TestBuild_Caps(t *testing.T) {
 	var d report.Data
+	lines := make([]report.Line, 0, report.MaxRows+5)
 	for i := range report.MaxRows + 5 {
-		d.Lines = append(d.Lines, report.Line{Bundle: triage.BundleID(i + 1), File: fmt.Sprintf("f%05d", i)})
+		lines = append(lines, report.Line{Bundle: triage.BundleID(i + 1), File: fmt.Sprintf("f%05d", i)})
 	}
+	d.Structure = report.List[report.Line]{Rows: lines, Total: report.MaxRows + 5}
+	d.Remaining = report.List[report.Line]{Rows: lines[:3], Total: report.MaxRows + 700}
+	d.FalsePositives = report.List[report.Line]{Rows: lines[:2], Total: 2}
+	places := make([]report.Place, 0, report.MaxPlaces+3)
 	for i := range report.MaxPlaces + 3 {
-		d.Changes = append(d.Changes, report.Change{Item: apply.Item{BundleID: 1, Name: "ext.a.b", File: fmt.Sprintf("f%03d", i), Line: 1}})
+		places = append(places, report.Place{File: fmt.Sprintf("f%03d", i), Line: 1})
 	}
+	entries := make([]report.Entry, 0, report.MaxRows+1)
+	for i := range report.MaxRows + 1 {
+		entries = append(entries, report.Entry{
+			Bundle: triage.BundleID(i + 1), Name: fmt.Sprintf("ext.a.b%03d", i), Places: places, PlaceTotal: 4000,
+		})
+	}
+	d.Externalized = report.List[report.Entry]{Rows: entries, Total: report.MaxRows + 1}
 	d.Events = make([]report.Event, report.MaxRows)
 	d.EventTotal = report.MaxRows + 1400
 	r := report.Build(d, now)
 
-	if got := len(r.Remaining.Rows); got != report.MaxRows {
-		t.Errorf("len(Remaining.Rows) = %d, want %d", got, report.MaxRows)
+	if got := len(r.Structure.Rows); got != report.MaxRows || r.Structure.Total != report.MaxRows+5 || r.Structure.More() != 5 {
+		t.Errorf("Structure = %d rows of %d, More() %d, want %d of %d, 5",
+			got, r.Structure.Total, r.Structure.More(), report.MaxRows, report.MaxRows+5)
 	}
-	if r.Remaining.Total != report.MaxRows+5 || r.Remaining.More() != 5 {
-		t.Errorf("Remaining Total, More() = %d, %d, want %d, 5", r.Remaining.Total, r.Remaining.More(), report.MaxRows+5)
+	if got := len(r.Remaining.Rows); got != 3 || r.Remaining.More() != report.MaxRows+697 {
+		t.Errorf("Remaining = %d rows, More() %d, want 3, %d", got, r.Remaining.More(), report.MaxRows+697)
+	}
+	if got := len(r.FalsePositives.Rows); got != 2 || r.FalsePositives.More() != 0 {
+		t.Errorf("FalsePositives = %d rows, More() %d, want 2, 0", got, r.FalsePositives.More())
+	}
+	if got := len(r.Externalized.Rows); got != report.MaxRows || r.Externalized.More() != 1 {
+		t.Errorf("Externalized = %d rows, More() %d, want %d, 1", got, r.Externalized.More(), report.MaxRows)
 	}
 	e := r.Externalized.Rows[0]
-	if len(e.Places) != report.MaxPlaces || e.PlaceTotal != 53 {
-		t.Errorf("entry places = %d of %d, want %d of 53", len(e.Places), e.PlaceTotal, report.MaxPlaces)
+	if len(e.Places) != report.MaxPlaces || e.PlaceTotal != 4000 {
+		t.Errorf("entry places = %d of %d, want %d of 4000", len(e.Places), e.PlaceTotal, report.MaxPlaces)
 	}
 	if r.History.More() != 1400 {
 		t.Errorf("History.More() = %d, want 1400", r.History.More())
@@ -213,8 +128,12 @@ func TestBuild_KeepsNoInput(t *testing.T) {
 				SkippedFiles:  []string{"big.bin"},
 				ScannerErrors: map[string]int{"opengrep": 1},
 			},
-			Lines:      []report.Line{{Bundle: 1, File: "a"}},
-			Changes:    []report.Change{{Item: apply.Item{BundleID: 1, Name: "ext.a.b", File: "a", Line: 1}}},
+			Structure:      report.List[report.Line]{Rows: []report.Line{{Bundle: 1, File: "a"}}, Total: 1},
+			Remaining:      report.List[report.Line]{Rows: []report.Line{{Bundle: 2, File: "b"}}, Total: 1},
+			FalsePositives: report.List[report.Line]{Rows: []report.Line{{Bundle: 3, File: "c"}}, Total: 1},
+			Externalized: report.List[report.Entry]{Rows: []report.Entry{{
+				Bundle: 1, Name: "ext.a.b", Places: []report.Place{{File: "a", Line: 1}}, PlaceTotal: 1,
+			}}, Total: 1},
 			Redactions: []report.Redaction{{Kind: finding.KindPhone, File: "p", Bundles: 1, Locations: 1}},
 			Events:     []report.Event{{Actor: audit.Actor{Name: "x"}, Detail: map[string]string{"verdict": "hold"}}},
 			EventTotal: 1,
@@ -228,9 +147,11 @@ func TestBuild_KeepsNoInput(t *testing.T) {
 	d.Scan.ToolVersions["betterleaks"] = "changed"
 	d.Scan.SkippedFiles[0] = "changed"
 	d.Scan.ScannerErrors["opengrep"] = 99
-	d.Lines[0].File = "changed"
-	d.Changes[0].Item.File = "changed"
-	d.Changes[0].Item.Name = "ext.changed.name"
+	d.Structure.Rows[0].File = "changed"
+	d.Remaining.Rows[0].File = "changed"
+	d.FalsePositives.Rows[0].File = "changed"
+	d.Externalized.Rows[0].Name = "ext.changed.name"
+	d.Externalized.Rows[0].Places[0].File = "changed"
 	d.Redactions[0].File = "changed"
 	d.Events[0].Detail["verdict"] = "changed"
 	d.Events[0].Actor.Name = "changed"
