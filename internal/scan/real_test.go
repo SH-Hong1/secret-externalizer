@@ -10,6 +10,8 @@ import (
 
 	"golang.org/x/text/encoding/korean"
 
+	"github.com/google/go-cmp/cmp"
+
 	"github.com/SH-Hong1/secret-externalizer/internal/betterleaks"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/opengrep"
@@ -233,5 +235,54 @@ func TestHandle_RealScannersSplitURL(t *testing.T) {
 			len(f.Locations) != 1 || fmt.Sprint(f.Locations[0].Detections) != fmt.Sprint(want) {
 			t.Errorf("password finding = %+v, want the password at one location found by %v", f, want)
 		}
+	}
+}
+
+// TestHandle_RealScannersKeysOfOneFile scans the rule cases and checks that
+// the same account and the same password under three environment keys of one
+// file are six findings, each with the key it is assigned to.
+func TestHandle_RealScannersKeysOfOneFile(t *testing.T) {
+	blBin := realBin(t, "BETTERLEAKS_BIN", "betterleaks")
+	ogBin := realBin(t, "OPENGREP_BIN", "opengrep")
+	rules, err := filepath.Abs(filepath.Join("..", "..", "rules"))
+	if err != nil {
+		t.Fatalf("Abs(rules) error = %v", err)
+	}
+	e := newEnv(t, nil)
+	if err := os.CopyFS(e.dir, os.DirFS(filepath.Join("..", "ruleset", "testdata", "rule-cases"))); err != nil {
+		t.Fatalf("copying rule-cases: %v", err)
+	}
+	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
+	bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
+	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env)
+
+	if err := e.handle(t.Context(), bl, og); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	const file = "conf/multi-env.properties"
+	type found struct {
+		Kind finding.Kind
+		Line int
+	}
+	got := map[string]found{}
+	for _, f := range e.result(t).Findings {
+		if f.File != file || f.Category != finding.CategoryStorage {
+			continue
+		}
+		if _, dup := got[f.Key]; dup {
+			t.Errorf("Handle() has two storage findings under key %q in %s, want one", f.Key, file)
+		}
+		got[f.Key] = found{f.Kind, f.Locations[0].StartLine}
+	}
+	want := map[string]found{
+		"local.db.username": {finding.KindAccount, 1},
+		"local.db.password": {finding.KindPassword, 2},
+		"dev.db.username":   {finding.KindAccount, 3},
+		"dev.db.password":   {finding.KindPassword, 4},
+		"live.db.username":  {finding.KindAccount, 5},
+		"live.db.password":  {finding.KindPassword, 6},
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("storage findings of %s by key mismatch (-want +got):\n%s", file, diff)
 	}
 }

@@ -110,7 +110,8 @@
 {{end}}{{with .Original}}{{template "original" .}}
 {{end}}<div class="detail-block">
 <h3 class="detail-subtitle">같은 값이 나온 위치 {{.Locations}}곳</h3>
-{{range .Members}}{{$m := .}}{{range $i, $l := .Locations}}<div class="code-box">
+{{range .Members}}{{$m := .}}{{with .Key}}<p class="text-2"><span class="muted">키</span> <span class="mono">{{.}}</span></p>
+{{end}}{{range $i, $l := .Locations}}<div class="code-box">
 <div class="code-head">
 <span class="code-file">{{$l.Where}}</span>
 <span class="grow"></span>

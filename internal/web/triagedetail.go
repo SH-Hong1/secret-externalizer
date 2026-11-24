@@ -110,11 +110,13 @@ type appliedInfo struct {
 	StorePath string
 }
 
-// memberView is one member of a bundle. MoveAction is where its move forms
-// post; Split is set for every member after the first, which can be split
-// off into a bundle of its own.
+// memberView is one member of a bundle. Key is the configuration key of its
+// value, empty when it has none. MoveAction is where its move forms post;
+// Split is set for every member after the first, which can be split off into
+// a bundle of its own.
 type memberView struct {
 	MoveAction string
+	Key        string
 	Split      bool
 	Locations  []locationView
 }
@@ -262,6 +264,7 @@ func newBundleDetail(id project.ID, ret string, b triage.Bundle, s triage.Sugges
 	for i, m := range b.Members {
 		mv := memberView{
 			MoveAction: "/projects/" + pid + "/findings/" + strconv.FormatInt(int64(m.FindingID), 10) + "/move",
+			Key:        m.Key,
 			Split:      i > 0,
 		}
 		for _, l := range m.Locations {
@@ -300,13 +303,17 @@ func (d *bundleDetail) lock() {
 }
 
 // newMoveTargets labels the bundles a member can move to with their number
-// and verdict, and their name or first place.
+// and verdict, and their name or first place, followed by the key of that
+// place when it has one.
 func newMoveTargets(same []triage.Entry) []moveTarget {
 	out := make([]moveTarget, 0, len(same))
 	for _, e := range same {
 		where := e.File + ":" + strconv.Itoa(e.FirstLine)
 		if e.Name != "" {
 			where = entryName(e)
+		}
+		if e.Key != "" {
+			where += " · " + e.Key
 		}
 		id := strconv.FormatInt(int64(e.Bundle), 10)
 		out = append(out, moveTarget{Value: id, Label: "묶음 #" + id + " · " + verdictOf(e.Verdict).Label + " · " + where})

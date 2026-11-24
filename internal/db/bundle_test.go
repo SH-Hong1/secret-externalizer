@@ -73,20 +73,36 @@ func save(t *testing.T, s *db.Store, pid project.ID, findings ...finding.Finding
 
 func bundleOf(t *testing.T, s *db.Store, pid project.ID, fp, file string) triage.BundleID {
 	t.Helper()
-	id, err := s.BundleOf(t.Context(), pid, fp, file)
+	return bundleOfKey(t, s, pid, fp, file, "")
+}
+
+func bundleOfKey(t *testing.T, s *db.Store, pid project.ID, fp, file, key string) triage.BundleID {
+	t.Helper()
+	id, err := s.BundleOfKey(t.Context(), pid, fp, file, key)
 	if err != nil {
-		t.Fatalf("BundleOf(%d, %.8s, %q) error = %v", pid, fp, file, err)
+		t.Fatalf("BundleOfKey(%d, %.8s, %q, %q) error = %v", pid, fp, file, key, err)
 	}
 	return id
 }
 
 func findingID(t *testing.T, s *db.Store, pid project.ID, fp, file string) finding.ID {
 	t.Helper()
-	row, err := s.FindingRow(t.Context(), pid, fp, file)
+	return findingIDOfKey(t, s, pid, fp, file, "")
+}
+
+func findingIDOfKey(t *testing.T, s *db.Store, pid project.ID, fp, file, key string) finding.ID {
+	t.Helper()
+	row, err := s.FindingRowOfKey(t.Context(), pid, fp, file, key)
 	if err != nil {
-		t.Fatalf("FindingRow(%d, %.8s, %q) error = %v", pid, fp, file, err)
+		t.Fatalf("FindingRowOfKey(%d, %.8s, %q, %q) error = %v", pid, fp, file, key, err)
 	}
 	return finding.ID(row.ID)
+}
+
+// keyed returns f with the configuration key key.
+func keyed(f finding.Finding, key string) finding.Finding {
+	f.Key = key
+	return f
 }
 
 func decide(t *testing.T, s *db.Store, pid project.ID, d triage.Decision, ids ...triage.BundleID) {
@@ -1059,5 +1075,290 @@ func TestMoveFinding_KeepsLastFindingOfAppliedBundle(t *testing.T) {
 	}
 	if b := readBundle(t, s, pid, sid, pw); b.Decision != externalizeDB || len(b.Members) != 1 {
 		t.Errorf("Bundle(%d) after the refused move = %+v with %d members, want %+v with 1", pw, b.Decision, len(b.Members), externalizeDB)
+	}
+}
+
+// keysFile is the file the keyed passwords of these tests are in.
+const keysFile = "conf/c.properties"
+
+// pwKey returns the password of fpA in keysFile under key, at line 3.
+func pwKey(key string) finding.Finding {
+	return keyed(password(keysFile), key)
+}
+
+func TestSaveResult_KeysInOneFileStartApart(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	save(t, s, pid,
+		pwKey("local.db.password"), pwKey("dev.db.password"), pwKey("live.db.password"),
+		keyed(password("conf/other.properties"), "db.password"))
+
+	local := bundleOfKey(t, s, pid, fpA, keysFile, "local.db.password")
+	dev := bundleOfKey(t, s, pid, fpA, keysFile, "dev.db.password")
+	live := bundleOfKey(t, s, pid, fpA, keysFile, "live.db.password")
+	other := bundleOfKey(t, s, pid, fpA, "conf/other.properties", "db.password")
+	if local != other {
+		t.Errorf("bundles of local and other.properties = %d, %d, want one shared bundle", local, other)
+	}
+	if dev == local || live == local || dev == live {
+		t.Errorf("bundles of local, dev, live = %d, %d, %d, want three different bundles", local, dev, live)
+	}
+	if n, err := s.Count(ctx, "bundle"); err != nil || n != 3 {
+		t.Errorf("rows in bundle = %d, %v, want 3", n, err)
+	}
+}
+
+func TestSaveResult_NewKeyNeverInheritsDecision(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, pwKey("local.db.password"), pwKey("dev.db.password"))
+	local := bundleOfKey(t, s, pid, fpA, keysFile, "local.db.password")
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.local.main.password"}, local)
+
+	alpha := keyed(fnd(fpA, keysFile, finding.CategoryStorage, finding.KindPassword, 1), "alpha.db.password")
+	second := save(t, s, pid, alpha, pwKey("local.db.password"), pwKey("dev.db.password"))
+	got := bundleOfKey(t, s, pid, fpA, keysFile, "alpha.db.password")
+	if got == local {
+		t.Fatalf("bundle of alpha.db.password = %d, want a bundle other than local's", got)
+	}
+	if b := readBundle(t, s, pid, second, got); b.Decision != (triage.Decision{}) {
+		t.Errorf("Bundle(%d).Decision of alpha.db.password = %+v, want none", got, b.Decision)
+	}
+}
+
+func TestSaveResult_NewKeyAfterMemberGone(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	first := save(t, s, pid, pwKey("local.db.password"))
+	local := bundleOfKey(t, s, pid, fpA, keysFile, "local.db.password")
+	want := triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.local.main.password"}
+	decide(t, s, pid, want, local)
+
+	second := save(t, s, pid, pwKey("renamed.db.password"))
+	renamed := bundleOfKey(t, s, pid, fpA, keysFile, "renamed.db.password")
+	if renamed == local {
+		t.Fatalf("bundle of renamed.db.password = %d, want a new bundle", renamed)
+	}
+	if b := readBundle(t, s, pid, second, renamed); b.Decision != (triage.Decision{}) {
+		t.Errorf("Bundle(%d).Decision of renamed.db.password = %+v, want none", renamed, b.Decision)
+	}
+	if got := bundleOfKey(t, s, pid, fpA, keysFile, "local.db.password"); got != local {
+		t.Errorf("bundle of local.db.password = %d, want %d", got, local)
+	}
+	if b := readBundle(t, s, pid, first, local); b.Decision != want {
+		t.Errorf("Bundle(%d).Decision of local.db.password = %+v, want %+v", local, b.Decision, want)
+	}
+}
+
+func TestSaveResult_KeylessAfterKeyed(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	keys := []string{"local.db.password", "dev.db.password", "live.db.password"}
+	names := []triage.Name{"db.local.main.password", "db.dev.main.password", "db.prod.main.password"}
+	keyedScan := func() []finding.Finding {
+		var out []finding.Finding
+		for _, k := range keys {
+			out = append(out, pwKey(k))
+		}
+		return out
+	}
+	first := save(t, s, pid, keyedScan()...)
+	type state struct {
+		ID       finding.ID
+		Bundle   triage.BundleID
+		Decision triage.Decision
+	}
+	read := func(sid scan.ID) []state {
+		var out []state
+		for _, k := range keys {
+			b := bundleOfKey(t, s, pid, fpA, keysFile, k)
+			out = append(out, state{
+				ID: findingIDOfKey(t, s, pid, fpA, keysFile, k), Bundle: b,
+				Decision: readBundle(t, s, pid, sid, b).Decision,
+			})
+		}
+		return out
+	}
+	for i, k := range keys {
+		decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: names[i]},
+			bundleOfKey(t, s, pid, fpA, keysFile, k))
+	}
+	before := read(first)
+
+	keyless := password(keysFile)
+	for _, line := range []int{4, 5} {
+		keyless.Locations = append(keyless.Locations, fnd(fpA, keysFile, finding.CategoryStorage, finding.KindPassword, line).Locations...)
+	}
+	second := save(t, s, pid, keyless)
+	b := bundleOf(t, s, pid, fpA, keysFile)
+	for _, st := range before {
+		if b == st.Bundle {
+			t.Errorf("bundle of the keyless finding = %d, want a new bundle", b)
+		}
+	}
+	if got := readBundle(t, s, pid, second, b); got.Decision != (triage.Decision{}) {
+		t.Errorf("Bundle(%d).Decision of the keyless finding = %+v, want none", b, got.Decision)
+	}
+	keylessID := findingID(t, s, pid, fpA, keysFile)
+
+	third := save(t, s, pid, keyedScan()...)
+	if diff := cmp.Diff(before, read(third)); diff != "" {
+		t.Errorf("keyed findings after a keyless scan (-want +got):\n%s", diff)
+	}
+	if got := findingID(t, s, pid, fpA, keysFile); got != keylessID {
+		t.Errorf("keyless finding after the third scan = %d, want %d with no key", got, keylessID)
+	}
+}
+
+func TestSaveResult_NewKeyBesideKeylessAndKeyed(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, pwKey("alpha.db.password"))
+	alpha := findingIDOfKey(t, s, pid, fpA, keysFile, "alpha.db.password")
+	save(t, s, pid, password(keysFile))
+	keyless := findingID(t, s, pid, fpA, keysFile)
+	keylessBundle := bundleOf(t, s, pid, fpA, keysFile)
+
+	save(t, s, pid, pwKey("beta.db.password"))
+	beta := findingIDOfKey(t, s, pid, fpA, keysFile, "beta.db.password")
+	if beta == keyless || beta == alpha {
+		t.Errorf("finding of beta.db.password = %d, want a new row beside keyless %d and alpha %d", beta, keyless, alpha)
+	}
+	if got := findingID(t, s, pid, fpA, keysFile); got != keyless {
+		t.Errorf("keyless finding after the beta scan = %d, want %d with no key", got, keyless)
+	}
+	b := bundleOfKey(t, s, pid, fpA, keysFile, "beta.db.password")
+	if b == keylessBundle || b == bundleOfKey(t, s, pid, fpA, keysFile, "alpha.db.password") {
+		t.Errorf("bundle of beta.db.password = %d, want a bundle of its own", b)
+	}
+	if n, err := s.Count(ctx, "finding"); err != nil || n != 3 {
+		t.Errorf("rows in finding = %d, %v, want 3", n, err)
+	}
+}
+
+func TestSaveResult_LegacyFoundKeylessInSameScanIsNotAdopted(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, password(keysFile))
+	legacy := findingID(t, s, pid, fpA, keysFile)
+
+	keylessAgain := password(keysFile)
+	withKey := keyed(fnd(fpA, keysFile, finding.CategoryStorage, finding.KindPassword, 5), "live.db.password")
+	save(t, s, pid, keylessAgain, withKey)
+	if got := findingID(t, s, pid, fpA, keysFile); got != legacy {
+		t.Errorf("keyless finding after the scan = %d, want the legacy finding %d", got, legacy)
+	}
+	if got := findingIDOfKey(t, s, pid, fpA, keysFile, "live.db.password"); got == legacy {
+		t.Errorf("finding of live.db.password = %d, want a new row, not the legacy finding", got)
+	}
+	if n, err := s.Count(ctx, "finding"); err != nil || n != 2 {
+		t.Errorf("rows in finding = %d, %v, want 2", n, err)
+	}
+}
+
+// assertLegacyAdopts stores legacy, a finding with no key, decides its bundle
+// with d, and rescans its file with keys local, dev and live. It checks that
+// local takes over the finding with its bundle and decision and that dev and
+// live start in undecided bundles of their own.
+func assertLegacyAdopts(t *testing.T, legacy finding.Finding, d triage.Decision) {
+	t.Helper()
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	save(t, s, pid, legacy)
+	fp, file := legacy.Fingerprint, legacy.File
+	id := findingID(t, s, pid, fp, file)
+	bundle := bundleOf(t, s, pid, fp, file)
+	decide(t, s, pid, d, bundle)
+
+	second := save(t, s, pid, keyed(legacy, "local.db.password"), keyed(legacy, "dev.db.password"), keyed(legacy, "live.db.password"))
+	if got := findingIDOfKey(t, s, pid, fp, file, "local.db.password"); got != id {
+		t.Errorf("finding of local.db.password = %d, want the legacy finding %d", got, id)
+	}
+	if got := bundleOfKey(t, s, pid, fp, file, "local.db.password"); got != bundle {
+		t.Errorf("bundle of local.db.password = %d, want the legacy bundle %d", got, bundle)
+	}
+	if b := readBundle(t, s, pid, second, bundle); b.Decision != d {
+		t.Errorf("Bundle(%d).Decision after the keyed scan = %+v, want %+v", bundle, b.Decision, d)
+	}
+	for _, k := range []string{"dev.db.password", "live.db.password"} {
+		b := bundleOfKey(t, s, pid, fp, file, k)
+		if b == bundle {
+			t.Errorf("bundle of %s = %d, want a new bundle", k, b)
+			continue
+		}
+		if got := readBundle(t, s, pid, second, b); got.Decision != (triage.Decision{}) {
+			t.Errorf("Bundle(%d).Decision of %s = %+v, want none", b, k, got.Decision)
+		}
+	}
+	if _, err := s.FindingRow(ctx, pid, fp, file); err == nil {
+		t.Errorf("FindingRow(%s with no key) error = nil, want no such finding", file)
+	}
+	if n, err := s.Count(ctx, "finding"); err != nil || n != 3 {
+		t.Errorf("rows in finding = %d, %v, want 3", n, err)
+	}
+}
+
+func TestSaveResult_LegacyFindingAdoptsFirstKey(t *testing.T) {
+	assertLegacyAdopts(t, password(keysFile),
+		triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"})
+}
+
+func TestSaveResult_LegacyOwnBundleAdopts(t *testing.T) {
+	assertLegacyAdopts(t, host(keysFile),
+		triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"})
+}
+
+func TestBundle_MembersCarryKey(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	sid := save(t, s, pid, pwKey("live.db.password"), password("conf/other.properties"))
+	b := bundleOfKey(t, s, pid, fpA, keysFile, "live.db.password")
+	decide(t, s, pid, externalizeDB, b)
+
+	keys := func(bundle triage.Bundle) map[string]string {
+		out := map[string]string{}
+		for _, m := range bundle.Members {
+			out[m.File] = m.Key
+		}
+		return out
+	}
+	want := map[string]string{keysFile: "live.db.password", "conf/other.properties": ""}
+
+	if diff := cmp.Diff(want, keys(readBundle(t, s, pid, sid, b))); diff != "" {
+		t.Errorf("Bundle(%d) member keys (-want +got):\n%s", b, diff)
+	}
+	id := requestCheck(t, s, pid)
+	in := applyInput(t, s, id)
+	if len(in.Bundles) != 1 {
+		t.Fatalf("ApplyInput(%d) has %d bundles, want 1", id, len(in.Bundles))
+	}
+	if diff := cmp.Diff(want, keys(in.Bundles[0])); diff != "" {
+		t.Errorf("ApplyInput(%d) member keys (-want +got):\n%s", id, diff)
+	}
+}
+
+func TestSameValueBundles_ReadsKeyOfFirstMember(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	sid := save(t, s, pid,
+		pwKey("local.db.password"), pwKey("dev.db.password"),
+		keyed(password("conf/other.properties"), "db.password"))
+	local := bundleOfKey(t, s, pid, fpA, keysFile, "local.db.password")
+	dev := bundleOfKey(t, s, pid, fpA, keysFile, "dev.db.password")
+
+	got, err := s.SameValueBundles(t.Context(), pid, sid, dev)
+	if err != nil {
+		t.Fatalf("SameValueBundles(%d, %d, %d) error = %v", pid, sid, dev, err)
+	}
+	want := []triage.Entry{{
+		Bundle: local, Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "****",
+		File: keysFile, Key: "local.db.password", FirstLine: 3, Count: 2, Bundles: 1,
+	}}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("SameValueBundles(%d, %d, %d) (-want +got):\n%s", pid, sid, dev, diff)
 	}
 }

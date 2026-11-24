@@ -28,6 +28,10 @@ type spot struct {
 	// value is the bytes that are fingerprinted and kept as the original:
 	// the span of Text, or the file's bytes on disk for a whole-file result.
 	value Value
+	// keyAt is the byte offset in the file's Text at which the configuration
+	// key of the value is looked for. The components of a split URL share
+	// the offset of the URL, which is the value assigned to the key.
+	keyAt int
 }
 
 // placedFile is a file that has at least one placed result.
@@ -54,6 +58,9 @@ type placedFile struct {
 	// be placed may be. They are masked as well, in case surrounding lines
 	// are ever shown for such a file.
 	unplaced []finding.Span
+	// urls are the ranges of the URLs that splitConnections split into
+	// components. A value inside one of them is assigned to the URL's key.
+	urls []finding.Span
 }
 
 // locate re-reads every file that raws refer to and places each result in
@@ -138,7 +145,7 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 			dropped++
 			continue
 		}
-		pf.spots = append(pf.spots, spot{raw: raw, span: span, value: Value(pf.file.Text[span.Start:span.End])})
+		pf.spots = append(pf.spots, spot{raw: raw, span: span, value: Value(pf.file.Text[span.Start:span.End]), keyAt: span.Start})
 	}
 	return pf, dropped
 }
@@ -170,8 +177,10 @@ func splitConnections(placed []*placedFile) []*placedFile {
 				}
 				continue
 			}
+			pf.urls = append(pf.urls, s.span)
 			for _, p := range parts {
 				c := s
+				c.keyAt = s.span.Start
 				c.raw.Kind = p.Kind
 				c.span = finding.Span{Start: s.span.Start + p.Span.Start, End: s.span.Start + p.Span.End}
 				c.value = s.value[p.Span.Start:p.Span.End]
@@ -288,6 +297,75 @@ func (pf *placedFile) showsContext() bool {
 		}
 	}
 	return false
+}
+
+// keyAt returns the byte offset at which the configuration key of s is read.
+// A value inside a URL that splitConnections split takes the start of that
+// URL, the outermost one when URLs overlap, whichever rule reported the
+// value. A value inside any other scheme://... token takes the start of the
+// token, so that the user name or the parameter name before the value is
+// never read as its key. Any other value takes s.keyAt.
+func (pf *placedFile) keyAt(s spot) int {
+	if s.raw.wholeFile() {
+		return s.keyAt
+	}
+	at := -1
+	for _, u := range pf.urls {
+		if u.Start <= s.span.Start && s.span.End <= u.End && (at < 0 || u.Start < at) {
+			at = u.Start
+		}
+	}
+	if at >= 0 {
+		return at
+	}
+	if start, ok := urlStart(pf.file.Text, s.span.Start); ok {
+		return start
+	}
+	return s.keyAt
+}
+
+// urlStart returns the start of the scheme://... token that holds byte at
+// of text, if one does: a "://" earlier on the line with no white space,
+// quote, '<' or '>' between it and at. The token starts at its scheme, or at
+// a "jdbc:" before the scheme, as in jdbc:mysql://.
+func urlStart(text []byte, at int) (int, bool) {
+	ls := bytes.LastIndexByte(text[:at], '\n') + 1
+	sep := bytes.LastIndex(text[ls:at], []byte("://"))
+	if sep < 0 {
+		return 0, false
+	}
+	sep += ls
+	for _, b := range text[sep+len("://") : at] {
+		if isSpace(b) || isQuote(b) || b == '<' || b == '>' {
+			return 0, false
+		}
+	}
+	run := sep
+	for run > ls && isSchemeChar(text[run-1]) {
+		run--
+	}
+	if run == sep {
+		return 0, false
+	}
+	scheme := text[run:sep]
+	if j := bytes.LastIndex(bytes.ToLower(scheme), []byte("jdbc:")); j >= 0 && (j == 0 || !isAlnum(scheme[j-1])) {
+		return run + j, true
+	}
+	start := run + bytes.LastIndexByte(scheme, ':') + 1
+	if start == sep {
+		return 0, false
+	}
+	return start, true
+}
+
+// isSchemeChar reports whether b may appear in a URL scheme, counting the
+// ':' that joins the parts of a scheme such as jdbc:mysql.
+func isSchemeChar(b byte) bool {
+	return isAlnum(b) || b == '+' || b == '-' || b == '.' || b == ':'
+}
+
+func isAlnum(b byte) bool {
+	return b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
 }
 
 // spans returns the ranges to mask in the file's surrounding lines: every

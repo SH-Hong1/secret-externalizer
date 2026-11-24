@@ -44,7 +44,7 @@ func TestHandle_MergesTools(t *testing.T) {
 	}
 	got := e.result(t)
 	want := []finding.Finding{{
-		Fingerprint: fingerprintOf(password), File: propsFile,
+		Fingerprint: fingerprintOf(password), File: propsFile, Key: "jdbc.password",
 		// storage-credential comes before other-secret, and the kind comes
 		// from the detection that gave the category.
 		Category: finding.CategoryStorage, Kind: finding.KindPassword,
@@ -100,7 +100,7 @@ func TestHandle_SameValueTwoFiles(t *testing.T) {
 }
 
 func TestHandle_SameValueTwiceInFile(t *testing.T) {
-	e := newEnv(t, map[string]string{propsFile: "a=" + password + "\n#\nb=" + password + "\n"})
+	e := newEnv(t, map[string]string{propsFile: "a=" + password + "\n#\na=" + password + "\n"})
 	if err := e.handle(t.Context(), passwordBL(), passwordOG()); err != nil {
 		t.Fatalf("Handle() error = %v", err)
 	}
@@ -108,11 +108,220 @@ func TestHandle_SameValueTwiceInFile(t *testing.T) {
 	if len(got) != 1 || len(got[0].Locations) != 2 {
 		t.Fatalf("Handle() findings = %+v, want one finding with two locations", got)
 	}
+	if got[0].Key != "a" {
+		t.Errorf("Handle() key = %q, want %q", got[0].Key, "a")
+	}
 	for i, line := range []int{1, 3} {
 		l := got[0].Locations[i]
 		if l.StartLine != line || l.StartCol != 3 || len(l.Detections) != 2 {
 			t.Errorf("location %d = %+v, want line %d column 3 found by both tools", i, l, line)
 		}
+	}
+}
+
+func TestHandle_SameValueDifferentKeys(t *testing.T) {
+	content := "local.db.password=" + password + "\ndev.db.password=" + password + "\nlive.db.password=" + password + "\n"
+	e := newEnv(t, map[string]string{propsFile: content})
+	if err := e.handle(t.Context(), passwordBL(), passwordOG()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t).Findings
+	if len(got) != 3 {
+		t.Fatalf("Handle() findings = %+v, want three", got)
+	}
+	for i, key := range []string{"local.db.password", "dev.db.password", "live.db.password"} {
+		if got[i].Key != key || len(got[i].Locations) != 1 || got[i].Fingerprint != fingerprintOf(password) {
+			t.Errorf("finding %d = %+v, want key %q, one location, the password's fingerprint", i, got[i], key)
+		}
+	}
+	if e.orig.puts != 1 {
+		t.Errorf("Handle() put %d pending values, want 1 for one fingerprint", e.orig.puts)
+	}
+}
+
+func TestHandle_KeyInCRLFAndEUCKR(t *testing.T) {
+	text := "# 주문 설정\r\ndb.password=" + password + "\r\n"
+	euckr, err := korean.EUCKR.NewEncoder().String(text)
+	if err != nil {
+		t.Fatalf("encoding EUC-KR: %v", err)
+	}
+	e := newEnv(t, map[string]string{"crlf/a.properties": text, "euckr/a.properties": euckr})
+	if err := e.handle(t.Context(), passwordOG()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t).Findings
+	if len(got) != 2 {
+		t.Fatalf("Handle() findings = %+v, want two", got)
+	}
+	for _, f := range got {
+		if f.Key != "db.password" {
+			t.Errorf("Handle() key in %s = %q, want %q", f.File, f.Key, "db.password")
+		}
+	}
+}
+
+func TestHandle_URLComponentsShareKey(t *testing.T) {
+	const url = "jdbc:mysql://shop_app:dev-only-fake-pw@db.invalid:3306/shop" //nolint:gosec // G101: an obviously fake fixture value
+	e := newEnv(t, map[string]string{propsFile: "live.jdbc.url=" + url + "\n"})
+	scanner := &needleScanner{tool: "opengrep", rule: "properties-url", category: finding.CategoryStorage, kind: finding.KindURL, needle: url}
+	if err := e.handle(t.Context(), scanner); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t).Findings
+	if len(got) != 4 {
+		t.Fatalf("Handle() findings = %+v, want four components", got)
+	}
+	for _, f := range got {
+		if f.Key != "live.jdbc.url" {
+			t.Errorf("Handle() %s key = %q, want %q", f.Kind, f.Key, "live.jdbc.url")
+		}
+	}
+}
+
+// URLs holding password, as a query parameter and as the user information.
+const (
+	queryURL    = "jdbc:mysql://db.invalid/shop?user=shop_app&password=" + password
+	userInfoURL = "jdbc:mysql://shop_app:" + password + "@db.invalid:3306/shop"
+)
+
+func TestHandle_URLKeyIndependentOfScannerOrder(t *testing.T) {
+	files := []struct {
+		name, rel string
+		text      func(url string) string
+	}{
+		{"properties", "conf/db.properties", func(url string) string {
+			return "dev.jdbc.url=" + url + "\nlive.jdbc.url=" + url + "\n"
+		}},
+		{"yaml", "conf/application.yml", func(url string) string {
+			return "dev:\n  jdbc:\n    url: " + url + "\nlive:\n  jdbc:\n    url: " + url + "\n"
+		}},
+	}
+	for _, url := range []struct{ name, value string }{{"query", queryURL}, {"user info", userInfoURL}} {
+		for _, file := range files {
+			for _, urlFirst := range []bool{false, true} {
+				name := fmt.Sprintf("%s/%s/url rule first %t", url.name, file.name, urlFirst)
+				t.Run(name, func(t *testing.T) {
+					e := newEnv(t, map[string]string{file.rel: file.text(url.value)})
+					direct := passwordBL()
+					urlRule := &needleScanner{tool: "opengrep", rule: "properties-url", category: finding.CategoryStorage, kind: finding.KindURL, needle: url.value}
+					scanners := []scan.Scanner{direct, urlRule}
+					if urlFirst {
+						scanners = []scan.Scanner{urlRule, direct}
+					}
+					if err := e.handle(t.Context(), scanners...); err != nil {
+						t.Fatalf("Handle() error = %v", err)
+					}
+					var keys []string
+					for _, f := range e.result(t).Findings {
+						if f.Fingerprint != fingerprintOf(password) {
+							continue
+						}
+						if len(f.Locations) != 1 {
+							t.Errorf("Handle() password finding with key %q has %d locations, want 1", f.Key, len(f.Locations))
+						}
+						keys = append(keys, f.Key)
+					}
+					if diff := cmp.Diff([]string{"dev.jdbc.url", "live.jdbc.url"}, keys); diff != "" {
+						t.Errorf("Handle() keys of the password (-want +got):\n%s", diff)
+					}
+				})
+			}
+		}
+	}
+}
+
+func TestHandle_ValueInUnsplitURLTakesKeyOfURL(t *testing.T) {
+	tests := []struct {
+		name, rel, text, want string
+	}{
+		{"properties user info", "conf/db.properties", "db.url=jdbc:mysql://shopadmin:" + password + "@db.invalid/shop\n", "db.url"},
+		{"properties query", "conf/db.properties", "db.url=jdbc:mysql://db.invalid/shop?password=" + password + "\n", "db.url"},
+		{"yaml user info", "conf/application.yml", "db:\n  url: jdbc:mysql://shopadmin:" + password + "@db.invalid/shop\n", "db.url"},
+		{"yaml quoted", "conf/application.yml", "db:\n  url: \"jdbc:mysql://shopadmin:" + password + "@db.invalid/shop\"\n", "db.url"},
+		{"properties colon", "conf/db.properties", "db.url:jdbc:mysql://shopadmin:" + password + "@db.invalid/shop\n", "db.url"},
+		{"ssh scheme", "conf/db.properties", "repo.url=ssh://deploy:" + password + "@git.invalid/shop.git\n", "repo.url"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{tt.rel: tt.text})
+			if err := e.handle(t.Context(), passwordBL()); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+			got := e.result(t).Findings
+			if len(got) != 1 || got[0].Key != tt.want {
+				t.Errorf("Handle(%q) findings = %+v, want one with key %q", tt.text, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestHandle_KeyNeverHoldsValueFoundElsewhere(t *testing.T) {
+	e := newEnv(t, map[string]string{
+		"a.properties": "acct=shopadmin\n",
+		"b.properties": "shopadmin.password=" + password + "\n",
+	})
+	user := &needleScanner{tool: "opengrep", rule: "properties-user", category: finding.CategoryStorage, kind: finding.KindAccount, needle: "shopadmin"}
+	if err := e.handle(t.Context(), passwordOG(), user); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	found := false
+	for _, f := range e.result(t).Findings {
+		if f.File != "b.properties" || f.Fingerprint != fingerprintOf(password) {
+			continue
+		}
+		found = true
+		if f.Key != "" {
+			t.Errorf("Handle() key of the password in b.properties = %q, want none", f.Key)
+		}
+	}
+	if !found {
+		t.Errorf("Handle() found no password in b.properties, want one with no key")
+	}
+}
+
+func TestHandle_NoKeyWhereCustomerDataMayBe(t *testing.T) {
+	const token = "dev-only-fake-bearer-token" //nolint:gosec // G101: an obviously fake fixture value
+	tests := []struct {
+		name, rel, text string
+	}{
+		{"customer data path", "logs/app.log", "api.token=" + token + "\n"},
+		{"file with customer data", "conf/app.properties", "api.token=" + token + "\nsupport.phone=" + phone + "\n"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{tt.rel: tt.text})
+			tok := &needleScanner{tool: "opengrep", rule: "properties-token", category: finding.CategoryOther, kind: finding.KindOther, needle: token}
+			cust := &needleScanner{tool: "betterleaks", rule: "customer-phone", category: finding.CategoryCustomerData, kind: finding.KindPhone, needle: phone, lineCol: true}
+			if err := e.handle(t.Context(), tok, cust); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+			found := false
+			for _, f := range e.result(t).Findings {
+				if f.Fingerprint != fingerprintOf(token) {
+					continue
+				}
+				found = true
+				if f.Key != "" {
+					t.Errorf("Handle() key of the token in %s = %q, want none", tt.rel, f.Key)
+				}
+			}
+			if !found {
+				t.Errorf("Handle() found no token in %s, want one with no key", tt.rel)
+			}
+		})
+	}
+}
+
+func TestHandle_NoKeyForValueOverLines(t *testing.T) {
+	const value = "dev-only-fake-first-line\ndev-only-fake-second-line"
+	e := newEnv(t, map[string]string{propsFile: "db.password=" + value + "\n"})
+	s := &needleScanner{tool: "opengrep", rule: "properties-password", category: finding.CategoryStorage, kind: finding.KindPassword, needle: value}
+	if err := e.handle(t.Context(), s); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := e.result(t).Findings
+	if len(got) != 1 || got[0].Key != "" {
+		t.Errorf("Handle() findings = %+v, want one with no key", got)
 	}
 }
 
@@ -202,7 +411,7 @@ func TestHandle_CRLFAndEUCKR(t *testing.T) {
 }
 
 func TestHandle_BOM(t *testing.T) {
-	content := "\uFEFFdb.password=" + password + "\r\nb=" + password + "\r\n"
+	content := "\uFEFFdb.password=" + password + "\r\ndb.password=" + password + "\r\n"
 	e := newEnv(t, map[string]string{propsFile: content})
 	if err := e.handle(t.Context(), passwordBL(), passwordOG()); err != nil {
 		t.Fatalf("Handle() error = %v", err)
@@ -211,7 +420,10 @@ func TestHandle_BOM(t *testing.T) {
 	if got.Dropped != 0 || len(got.Findings) != 1 || len(got.Findings[0].Locations) != 2 {
 		t.Fatalf("Handle() = %+v, want one finding at two locations and nothing dropped", got)
 	}
-	for i, want := range [][2]int{{1, 13}, {2, 3}} {
+	if got.Findings[0].Key != "db.password" {
+		t.Errorf("Handle() key = %q, want %q", got.Findings[0].Key, "db.password")
+	}
+	for i, want := range [][2]int{{1, 13}, {2, 13}} {
 		l := got.Findings[0].Locations[i]
 		if l.StartLine != want[0] || l.StartCol != want[1] || len(l.Detections) != 2 {
 			t.Errorf("location %d = %+v, want line %d column %d found by both tools", i, l, want[0], want[1])

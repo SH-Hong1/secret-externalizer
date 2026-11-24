@@ -48,6 +48,9 @@ func TestHandle_NoContextInCustomerDataFiles(t *testing.T) {
 			if l := got.Findings[0].Locations[0]; l.Context != nil || l.ContextFirstLine != 0 {
 				t.Errorf("Handle(token in %s) location = %+v, want no surrounding lines", rel, l)
 			}
+			if k := got.Findings[0].Key; k != "" {
+				t.Errorf("Handle(token in %s) key = %q, want none", rel, k)
+			}
 			for _, dump := range dumps(t, got) {
 				if v := containsAny(dump, append([]string{bearer}, undetected...)...); v != "" {
 					t.Errorf("Handle(token in %s) saved a result that holds %q:\n%s", rel, v, dump)
@@ -170,6 +173,9 @@ func TestHandle_CustomerDataFindingDropsFileContext(t *testing.T) {
 		t.Fatalf("Handle() = %+v, want two findings", got)
 	}
 	for _, f := range got.Findings {
+		if f.Key != "" {
+			t.Errorf("Handle() %s key = %q, want none in a file with customer data", f.Kind, f.Key)
+		}
 		for _, l := range f.Locations {
 			if l.Context != nil || l.ContextFirstLine != 0 {
 				t.Errorf("Handle() %s location = %+v, want no surrounding lines in a file with customer data", f.Kind, l)

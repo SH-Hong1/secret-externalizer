@@ -30,16 +30,16 @@ const (
 // time joins, creating it when needed. Customer data and kinds that do not
 // share a bundle get a new own bundle; a finding in a Frontend file joins the
 // frontend bundle of its fingerprint, and any other the shared one.
+//
+// A finding gets a new own bundle instead when the shared or frontend bundle
+// holds a finding of the same file under another key, the empty key
+// included, whichever scan found it. A new key of a file therefore never
+// takes over the decision and name given to another key of that file, even
+// one that is gone from the source or already applied.
 func bundleForNew(ctx context.Context, tx pgx.Tx, projectID int64, f finding.Finding) (triage.BundleID, error) {
 	var id triage.BundleID
 	if f.Category == finding.CategoryCustomerData || !triage.SharesBundle(f.Kind) {
-		err := tx.QueryRow(ctx,
-			"INSERT INTO bundle (project_id, fingerprint, origin) VALUES ($1, $2, $3) RETURNING id",
-			projectID, f.Fingerprint, originOwn).Scan(&id)
-		if err != nil {
-			return 0, fmt.Errorf("creating bundle: %w", err)
-		}
-		return id, nil
+		return newOwnBundle(ctx, tx, projectID, f)
 	}
 	origin := originShared
 	if triage.Frontend(f.File) {
@@ -49,6 +49,15 @@ func bundleForNew(ctx context.Context, tx pgx.Tx, projectID int64, f finding.Fin
 		"SELECT id FROM bundle WHERE project_id = $1 AND fingerprint = $2 AND origin = $3",
 		projectID, f.Fingerprint, origin).Scan(&id)
 	if err == nil {
+		var otherKey bool
+		if err := tx.QueryRow(ctx,
+			"SELECT EXISTS (SELECT 1 FROM finding WHERE bundle_id = $1 AND file_path = $2 AND key <> $3)",
+			id, f.File, f.Key).Scan(&otherKey); err != nil {
+			return 0, fmt.Errorf("reading keys of %s bundle: %w", origin, err)
+		}
+		if otherKey {
+			return newOwnBundle(ctx, tx, projectID, f)
+		}
 		return id, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
@@ -58,6 +67,19 @@ func bundleForNew(ctx context.Context, tx pgx.Tx, projectID int64, f finding.Fin
 		"INSERT INTO bundle (project_id, fingerprint, origin) VALUES ($1, $2, $3) RETURNING id",
 		projectID, f.Fingerprint, origin).Scan(&id); err != nil {
 		return 0, fmt.Errorf("creating %s bundle: %w", origin, err)
+	}
+	return id, nil
+}
+
+// newOwnBundle creates an own bundle for the fingerprint of f and returns
+// its ID.
+func newOwnBundle(ctx context.Context, tx pgx.Tx, projectID int64, f finding.Finding) (triage.BundleID, error) {
+	var id triage.BundleID
+	err := tx.QueryRow(ctx,
+		"INSERT INTO bundle (project_id, fingerprint, origin) VALUES ($1, $2, $3) RETURNING id",
+		projectID, f.Fingerprint, originOwn).Scan(&id)
+	if err != nil {
+		return 0, fmt.Errorf("creating bundle: %w", err)
 	}
 	return id, nil
 }
@@ -114,7 +136,7 @@ func lockBundle(ctx context.Context, tx pgx.Tx, projectID project.ID, id triage.
 	}
 	b.AppliedAt = timeOf(appliedAt)
 	rows, err := tx.Query(ctx, `
-		SELECT id, file_path, category, kind, preview, has_original,
+		SELECT id, file_path, key, category, kind, preview, has_original,
 			coalesce(last_scan_id = (
 				SELECT id FROM scan WHERE project_id = $2 AND status = 'succeeded' ORDER BY id DESC LIMIT 1
 			), false)
@@ -131,7 +153,7 @@ func lockBundle(ctx context.Context, tx pgx.Tx, projectID project.ID, id triage.
 			preview string
 			current bool
 		)
-		if err := rows.Scan(&m.FindingID, &m.File, &c, &k, &preview, &m.HasOriginal, &current); err != nil {
+		if err := rows.Scan(&m.FindingID, &m.File, &m.Key, &c, &k, &preview, &m.HasOriginal, &current); err != nil {
 			return lockedBundle{}, fmt.Errorf("reading member row: %w", err)
 		}
 		lb.findings++

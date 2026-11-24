@@ -60,10 +60,12 @@ type Decision struct {
 }
 
 // Member is one finding of a bundle: the value in one file, with the
-// locations of one scan.
+// locations of one scan. Key is the configuration key the value is assigned
+// to, or empty when the scan found none.
 type Member struct {
 	FindingID   finding.ID
 	File        string
+	Key         string
 	HasOriginal bool
 	Locations   []finding.Location
 }
@@ -215,7 +217,9 @@ type GroupKey struct {
 // Entry is one line of the triage list. A secret bundle has Bundle set and
 // Bundles equal to one. Customer data is listed by group: Bundle is zero,
 // Group is set, and Bundles counts the bundles in the group. File is the
-// first file of the line and Count the number of locations in the scan.
+// first file of the line, Key the configuration key of the member in it
+// (empty for none and for customer data), and Count the number of
+// locations in the scan.
 // Shell reports that every member the scan found is in a ShellFile, so the
 // name takes its shell form there. Applied reports that an apply stored the
 // bundle's value and changed the source for it.
@@ -227,6 +231,7 @@ type Entry struct {
 	Kind      finding.Kind
 	Preview   string
 	File      string
+	Key       string
 	FirstLine int
 	Count     int
 	Bundles   int

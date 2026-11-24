@@ -320,3 +320,38 @@ func TestAdapt(t *testing.T) {
 		})
 	}
 }
+
+func TestSuggestName_StoredKey(t *testing.T) {
+	tests := []struct {
+		name string
+		file string
+		key  string
+		line string
+		want triage.Name
+	}{
+		{"local prefix", "conf/config.properties", "local.db.password", "", "db.local.main.password"},
+		{"dev prefix", "conf/config.properties", "dev.db.password", "", "db.dev.main.password"},
+		{"live prefix", "conf/config.properties", "live.db.password", "", "db.prod.main.password"},
+		{"target word", "conf/config.properties", "order.db.password", "", "db.order.password"},
+		{"environment in the middle", "conf/application.yml", "spring.datasource.live.password", "", "db.prod.main.password"},
+		{"camel case", "conf/context.xml", "liveDataSource.password", "", "db.prod.data.password"},
+		{"file environment first", "conf/application-dev.yml", "live.db.password", "", "db.dev.live.password"},
+		{"no stored key", "conf/config.properties", "", "    password: ****", "db.main.password"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			loc := finding.Location{StartLine: 3, StartCol: 15, ContextFirstLine: 2}
+			if tt.line != "" {
+				loc.Context = []string{"before", tt.line, "after"}
+			}
+			b := triage.Bundle{
+				Category: finding.CategoryStorage,
+				Kind:     finding.KindPassword,
+				Members:  []triage.Member{{File: tt.file, Key: tt.key, Locations: []finding.Location{loc}}},
+			}
+			if got := triage.SuggestName(b, nil); got != tt.want {
+				t.Errorf("SuggestName(file %q, key %q, line %q) = %q, want %q", tt.file, tt.key, tt.line, got, tt.want)
+			}
+		})
+	}
+}

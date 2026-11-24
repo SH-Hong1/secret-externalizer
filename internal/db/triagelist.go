@@ -71,7 +71,7 @@ func (s *Store) Bundle(ctx context.Context, projectID project.ID, scanID scan.ID
 // sets b's category, kind and preview from the member with the lowest ID.
 func readMembers(ctx context.Context, tx pgx.Tx, scanID scan.ID, b *triage.Bundle) error {
 	rows, err := tx.Query(ctx, `
-		SELECT f.id, f.file_path, f.category, f.kind, f.preview, f.has_original,
+		SELECT f.id, f.file_path, f.key, f.category, f.kind, f.preview, f.has_original,
 			`+locationColumns+`
 		FROM finding f JOIN location l ON l.finding_id = f.id
 		WHERE f.bundle_id = $1 AND l.scan_id = $2
@@ -88,7 +88,7 @@ func readMembers(ctx context.Context, tx pgx.Tx, scanID scan.ID, b *triage.Bundl
 			k       finding.Kind
 			preview string
 		)
-		dest := []any{&m.FindingID, &m.File, &c, &k, &preview, &m.HasOriginal}
+		dest := []any{&m.FindingID, &m.File, &m.Key, &c, &k, &preview, &m.HasOriginal}
 		l, err := scanLocation(rows, dest...)
 		if err != nil {
 			return err
@@ -113,12 +113,13 @@ func readMembers(ctx context.Context, tx pgx.Tx, scanID scan.ID, b *triage.Bundl
 // scanBundles starts a query with the common table expression scan_bundle:
 // one row per bundle of project $1 with a member that scan $2 found. Its
 // category, kind and preview are those of the member with the lowest ID; its
-// file and first_line are the first file and the first line in it; locations
-// counts the locations of the scan; shell is true when every member is in a
-// shell script and applied when an apply stored the bundle's value.
+// file, first_line and key are those of the first member by file and first
+// line; locations counts the locations of the scan; shell is true when every
+// member is in a shell script and applied when an apply stored the bundle's
+// value.
 const scanBundles = `
 	WITH member AS (
-		SELECT f.id, f.bundle_id, f.file_path, f.category, f.kind, f.preview,
+		SELECT f.id, f.bundle_id, f.file_path, f.key, f.category, f.kind, f.preview,
 			min(l.start_line) AS first_line, count(*) AS locations
 		FROM finding f JOIN location l ON l.finding_id = f.id
 		WHERE f.project_id = $1 AND l.scan_id = $2
@@ -130,6 +131,7 @@ const scanBundles = `
 			(array_agg(m.preview ORDER BY m.id))[1] AS preview,
 			(array_agg(m.file_path ORDER BY m.file_path, m.first_line))[1] AS file,
 			(array_agg(m.first_line ORDER BY m.file_path, m.first_line))[1] AS first_line,
+			(array_agg(m.key ORDER BY m.file_path, m.first_line))[1] AS key,
 			sum(m.locations)::int AS locations,
 			bool_and(lower(m.file_path) LIKE '%.sh') AS shell,
 			b.applied_at IS NOT NULL AS applied
@@ -142,11 +144,11 @@ const scanBundles = `
 // triage list. A secret bundle is a line of its own; customer data is one
 // line per file, kind and verdict, with bundle zero.
 const scanEntries = scanBundles + `, entry AS (
-		SELECT id AS bundle, category, kind, preview, name, file, first_line, verdict,
+		SELECT id AS bundle, category, kind, preview, name, file, key, first_line, verdict,
 			locations AS count, 1 AS bundles, shell, applied
 		FROM scan_bundle WHERE category <> 'customer-data'
 		UNION ALL
-		SELECT 0, 'customer-data', kind, (array_agg(preview ORDER BY id))[1], NULL, file, min(first_line), verdict,
+		SELECT 0, 'customer-data', kind, (array_agg(preview ORDER BY id))[1], NULL, file, '', min(first_line), verdict,
 			sum(locations)::int, count(*)::int, false, false
 		FROM scan_bundle WHERE category = 'customer-data'
 		GROUP BY file, kind, verdict
@@ -193,7 +195,7 @@ func (s *Store) Entries(ctx context.Context, projectID project.ID, scanID scan.I
 		}
 		p.Pages = max(1, (p.Total+triage.PageSize-1)/triage.PageSize)
 		p.Page = min(max(f.Page, 1), p.Pages)
-		entries, err := readEntries(ctx, tx, scanEntries+" SELECT bundle, category, kind, preview, name, file, first_line, verdict, count, bundles, shell, applied FROM entry"+
+		entries, err := readEntries(ctx, tx, scanEntries+" SELECT bundle, category, kind, preview, name, file, key, first_line, verdict, count, bundles, shell, applied FROM entry"+
 			entryFilter+" ORDER BY category, file, first_line, bundle, kind, verdict LIMIT $6 OFFSET $7",
 			projectID, scanID, f.Category, verdict, all, triage.PageSize, (p.Page-1)*triage.PageSize)
 		p.Entries = entries
@@ -261,7 +263,7 @@ func readEntries(ctx context.Context, tx pgx.Tx, query string, args ...any) ([]t
 			e    triage.Entry
 			name *string
 		)
-		if err := rows.Scan(&e.Bundle, &e.Category, &e.Kind, &e.Preview, &name, &e.File, &e.FirstLine,
+		if err := rows.Scan(&e.Bundle, &e.Category, &e.Kind, &e.Preview, &name, &e.File, &e.Key, &e.FirstLine,
 			&e.Verdict, &e.Count, &e.Bundles, &e.Shell, &e.Applied); err != nil {
 			return nil, fmt.Errorf("reading entry row: %w", err)
 		}
@@ -323,7 +325,7 @@ func (s *Store) SameValueBundles(ctx context.Context, projectID project.ID, scan
 	err := s.readOnly(ctx, func(tx pgx.Tx) error {
 		var err error
 		out, err = readEntries(ctx, tx, scanBundles+`
-			SELECT sb.id, sb.category, sb.kind, sb.preview, sb.name, sb.file, sb.first_line, sb.verdict, sb.locations, 1,
+			SELECT sb.id, sb.category, sb.kind, sb.preview, sb.name, sb.file, sb.key, sb.first_line, sb.verdict, sb.locations, 1,
 				sb.shell, sb.applied
 			FROM scan_bundle sb
 				JOIN bundle o ON o.id = sb.id
