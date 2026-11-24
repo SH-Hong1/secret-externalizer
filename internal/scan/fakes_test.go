@@ -69,8 +69,13 @@ type fakeStore struct {
 	failErr    error
 	saveErr    error
 	settledErr error
+	newerErr   error
 
-	events *events
+	// newerAt is the number of the HasNewerScan call from which it reports a
+	// newer scan; zero means never.
+	newerAt    int
+	newerCalls int
+	events     *events
 	// settled are the fingerprints SettledFingerprints returns.
 	settled []string
 	project project.Project
@@ -113,6 +118,14 @@ func (f *fakeStore) SettledFingerprints(context.Context, project.ID) ([]string, 
 	}
 	f.events.add("settled")
 	return slices.Clone(f.settled), nil
+}
+
+func (f *fakeStore) HasNewerScan(context.Context, project.ID, scan.ID) (bool, error) {
+	f.newerCalls++
+	if f.newerErr != nil {
+		return false, f.newerErr
+	}
+	return f.newerAt != 0 && f.newerCalls >= f.newerAt, nil
 }
 
 // fakeFingerprinter computes an HMAC with fakeKey, or fails with err.

@@ -682,6 +682,39 @@ func TestHandle_DeletesStalePending(t *testing.T) {
 	}
 }
 
+func TestHandle_KeepsPendingWhenNewerScanExists(t *testing.T) {
+	stale := strings.Repeat("e", 64)
+	other := strings.Repeat("d", 64)
+	for _, tt := range []struct {
+		name       string
+		newerAt    int
+		newerErr   error
+		wantDelete []string
+		wantLog    bool
+	}{
+		{name: "newer scan before the first delete", newerAt: 1, wantDelete: nil},
+		{name: "newer scan after the first delete", newerAt: 2, wantDelete: []string{other}},
+		{name: "check fails", newerErr: errors.New("reading scans: connection reset"), wantDelete: nil, wantLog: true},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{propsFile: "jdbc.password=" + password + "\n"})
+			e.orig.pending[stale] = []byte("dev-only-old-value")
+			e.orig.pending[other] = []byte("dev-only-other-value")
+			e.store.newerAt, e.store.newerErr = tt.newerAt, tt.newerErr
+
+			if err := e.handle(t.Context(), passwordOG()); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+			if diff := cmp.Diff(tt.wantDelete, e.orig.deleted); diff != "" {
+				t.Errorf("Handle() deleted (-want +got):\n%s", diff)
+			}
+			if got := strings.Contains(e.logs.String(), "removing stale pending values failed"); got != tt.wantLog {
+				t.Errorf("Handle() logged the failed clean-up = %v, want %v; log = %s", got, tt.wantLog, e.logs)
+			}
+		})
+	}
+}
+
 // accountOG finds account the way opengrep reports values.
 func accountOG() *needleScanner {
 	return &needleScanner{tool: "opengrep", rule: "properties-user", category: finding.CategoryStorage, kind: finding.KindAccount, needle: account}

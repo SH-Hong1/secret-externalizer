@@ -80,7 +80,7 @@
 - [ ] 기간은 추이에만 걸린다. 타일, 분류별, 규칙, 프로젝트 표는 언제나 지금 상태다. 기간 안의 증감이나 그 기간에 내린 오탐 판정은 볼 수 없다.
 - [ ] 차트에 확대, 범례 끄기, 기간 끌어 고르기가 없고 자동으로 새로 고치지 않는다. 대시보드의 PDF 내보내기도 없다.
 - [ ] 프로젝트 표의 "마지막 스캔" 시각은 스캔을 요청한 시각이고, 추이의 막대와 표는 끝난 시각이다. 대기가 길었던 스캔(예제의 #8)은 두 시각이 18분 다르다.
-- [ ] 스캔의 순서를 정하는 규칙이 둘이다. 마지막 성공한 스캔(`basis`)과 추이의 점은 (끝난 시각, ID)로 고르고(`db.Store.Dashboard`, `dashboard.Build`는 받은 점의 순서를 따른다), 증감의 앞 스캔은 `readProjectStates`가 `max(id)`로 ID가 `basis`보다 작은 스캔 가운데서 고른다. 프로젝트 하나에 스캔이 한 번에 하나만 돌므로 지금은 갈리지 않는다. worker를 늘리기 전에 앞 스캔도 (끝난 시각, ID)로 맞춘다.
+- [x] 스캔의 순서를 정하는 규칙이 둘이다. 2026-11-24에 앞 스캔도 (끝난 시각, ID)로 골랐다(`docs/decisions/0060-multi-worker-readiness.md`). 원래 항목: 스캔의 순서를 정하는 규칙이 둘이다. 마지막 성공한 스캔(`basis`)과 추이의 점은 (끝난 시각, ID)로 고르고(`db.Store.Dashboard`, `dashboard.Build`는 받은 점의 순서를 따른다), 증감의 앞 스캔은 `readProjectStates`가 `max(id)`로 ID가 `basis`보다 작은 스캔 가운데서 고른다. 프로젝트 하나에 스캔이 한 번에 하나만 돌므로 지금은 갈리지 않는다. worker를 늘리기 전에 앞 스캔도 (끝난 시각, ID)로 맞춘다.
 - [ ] 큰 눈금에서 건수가 작은 조각은 높이가 0에 가깝게 그려져 보이지 않는다(막대의 `<title>`과 표에는 수가 있다). 조각의 최소 높이를 둘지 정한다(`docs/decisions/0046-chart-drawn-on-the-server.md`).
 - [ ] 화면이 780px보다 좁으면 차트가 틀 안에서 가로로 스크롤되고, 처음에는 가장 오래된 막대가 보인다. 가장 새 막대를 보려면 오른쪽으로 밀어야 한다. 스크롤 틀(`chart-scroll`, `table-wrap`)은 키보드로 초점을 줄 수 없다.
 - [ ] 스캔한 프로젝트가 하나도 없으면 타일과 함께 분류별, 규칙 절도 보이지 않는다.
@@ -173,7 +173,7 @@
 - [x] 규칙의 알려진 오탐: `TOKEN_HEADER = "X-Auth-Token"` 같은 상수, `MSG_PWD` 같은 메시지 상수, SpEL `#{…}` 값, DB가 아닌 pool bean의 `url`/`user`, 원격 명령의 `sed -i`. 2026-11-23에 다섯 가지를 모두 고쳤다(0052).
 - [ ] 규칙을 고친 뒤에 남은 누락(0052의 "알려진 한계"): 두 줄 이상인 YAML 블록 스칼라 비밀번호, 목록 항목(`- password: >`)의 블록 스칼라, `p:dbPassword` 같은 `p:` 속성(`p:password`만 찾는다), `settings.xml`의 `<proxy>` 안 계정과 비밀번호, 하이픈 없는 지역 전화번호, 이름에 `pool`만 있고 class가 알려진 데이터 소스가 아닌 bean의 `url`/`user`, 변수 이름이 `…Header`, `…Name`, `…Url`처럼 끝나는데 실제 비밀 값인 Java 문자열, 글자 그대로 `#{…}` 모양인 비밀 값.
 - [ ] 규칙을 고친 뒤에 남은 오탐(0052): 메시지 묶음(`messages*.properties`)의 `label.password=비밀번호`, `changePassword=…` 같은 줄(키 끝이 넓어져 전보다 늘 수 있다), 따옴표와 `user@` 없이 쓴 원격 명령의 `-i`(`ssh host sed -i …`), 로그에서 다른 뜻의 10~11자리 숫자가 `01`로 시작하는 경우.
-- [ ] worker가 둘 이상일 때: 오래된 임시 원본 정리가 다음 스캔의 `PutPending`과 겹치면 `has_original = true`인데 원본이 없는 항목이 생길 수 있다. worker를 늘리기 전에 삭제 직전에 최신 스캔을 다시 확인하게 한다. 적용도 worker 하나를 전제로 한다. 임대를 잃은 뒤 한 실행을 두 worker가 함께 잡으면 기록이 틀릴 수 있다(파일은 바뀌었는데 항목이 `interrupted`). 값은 사라지지 않는다(`docs/decisions/0038-apply-file-records.md`).
+- [ ] worker가 둘 이상일 때(정리는 2026-11-24에 삭제 직전 확인으로 틈을 줄였고 0이 되지는 않았다, `docs/decisions/0060-multi-worker-readiness.md`; 적용은 남았다): 오래된 임시 원본 정리가 다음 스캔의 `PutPending`과 겹치면 `has_original = true`인데 원본이 없는 항목이 생길 수 있다. worker를 늘리기 전에 삭제 직전에 최신 스캔을 다시 확인하게 한다. 적용도 worker 하나를 전제로 한다. 임대를 잃은 뒤 한 실행을 두 worker가 함께 잡으면 기록이 틀릴 수 있다(파일은 바뀌었는데 항목이 `interrupted`). 값은 사라지지 않는다(`docs/decisions/0038-apply-file-records.md`).
 - [x] compose의 worker에 `restart:` 정책이 없다. 하나뿐인 worker가 죽으면 스캔이 "실행 중"으로 남고 그 프로젝트의 새 스캔을 막는다. 2026-11-20에 계획 5 Task 11에서 `restart: unless-stopped`를 두었다. 다시 뜬 worker가 임대가 끝난 작업을 이어 간다.
 - [ ] compose의 모든 서비스가 한 네트워크를 쓴다. web이 `openbao:8200`에 닿을 수 있고(자격 증명은 없다) worker와 스캔 도구가 바깥으로 나갈 수 있다. 네트워크를 나눈다. 2026-11-21에 계획 6 Task 4에서 `pdf`만 내부 네트워크 `pdf`(web과 pdf만 붙음)로 나눴다. 나머지 서비스는 여전히 기본 네트워크 하나다.
 - [x] 큰 값: 지문 요청은 건수(500)로만 나누고 크기로 나누지 않는다. 20MiB에 가까운 키 파일은 OpenBao의 요청 한도를 넘을 수 있고, 그때 실패 사유가 "secret store could not be reached"로 나온다. 빈 키 파일(빈 HMAC 입력)도 확인하지 않았다. 2026-11-20에 계획 5 Task 4에서 지문 요청을 값의 바이트 합 8MiB로도 나누게 했다. 요청 한도는 32MiB이고 20MiB 값 하나(본문 약 26.7MiB)는 혼자 한 요청으로 통과하며, 빈 입력도 HMAC을 돌려주는 것을 `openbao-test`에서 확인했다(`docs/decisions/0035-externalized-values-in-openbao.md`).
