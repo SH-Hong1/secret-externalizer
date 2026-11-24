@@ -10,6 +10,7 @@ import (
 
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 )
@@ -75,7 +76,7 @@ func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans 
 		page := newScanPage(sc)
 		page.User, page.ProjectName = u, p.Name
 		if sc.Status == scan.StatusQueued {
-			if page.NoWorker, err = noWorker(r.Context(), scans); err != nil {
+			if page.NoWorker, err = noWorker(r.Context(), scans, job.KindScan); err != nil {
 				rd.fail(w, r, logger, http.StatusInternalServerError, err)
 				return
 			}
@@ -131,10 +132,10 @@ func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans 
 	})
 }
 
-// noWorker reports whether no worker is serving the queue, which is when a
-// queued request is waiting for nothing.
-func noWorker(ctx context.Context, scans ScanStore) (bool, error) {
-	alive, err := scans.WorkerAlive(ctx, workerSeenWithin)
+// noWorker reports whether no worker is serving the jobs of kind k, which is
+// when a queued request of that kind is waiting for nothing.
+func noWorker(ctx context.Context, scans ScanStore, k job.Kind) (bool, error) {
+	alive, err := scans.WorkerAlive(ctx, k, workerSeenWithin)
 	if err != nil {
 		return false, fmt.Errorf("checking for a worker: %w", err)
 	}

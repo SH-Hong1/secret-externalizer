@@ -14,6 +14,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
 	"github.com/SH-Hong1/secret-externalizer/internal/triage"
@@ -1217,5 +1218,48 @@ func TestApplyRunPage_NoWorkerNotice(t *testing.T) {
 				t.Errorf("GET %s of a %s run with noWorker = %v has %q = %v, want %v", runPagePath, tt.name, tt.noWorker, notice, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestApplyPage_NoWorkerNoticeWhileChecking(t *testing.T) {
+	const notice = "worker가 응답하지 않습니다"
+	for _, tt := range []struct {
+		name     string
+		state    apply.State
+		noWorker bool
+		onlyKind job.Kind
+		want     bool
+	}{
+		{"checking, workers alive", apply.StateChecking, false, "", false},
+		{"checking, only scan workers", apply.StateChecking, false, job.KindScan, true},
+		{"checking, no worker", apply.StateChecking, true, "", true},
+		{"ready, no worker", apply.StateReady, true, "", false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			e := applyEnv(t)
+			e.applies.put(summary(run(tt.state)))
+			e.scans.noWorker, e.scans.onlyKind = tt.noWorker, tt.onlyKind
+			res := e.do(t, http.MethodGet, applyPagePath, nil, e.user(t))
+			if res.status != http.StatusOK {
+				t.Fatalf("GET %s status = %d, want 200", applyPagePath, res.status)
+			}
+			if got := strings.Contains(res.body, notice); got != tt.want {
+				t.Errorf("GET %s (%s) has %q = %v, want %v", applyPagePath, tt.name, notice, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestApplyRunPage_NoWorkerNotice_OnlyScanWorkers(t *testing.T) {
+	const notice = "worker가 응답하지 않습니다"
+	e := applyEnv(t)
+	e.putRun(*confirmed(apply.StateQueued), nil, nil, 0)
+	e.scans.onlyKind = job.KindScan
+	res := e.do(t, http.MethodGet, runPagePath, nil, e.user(t))
+	if res.status != http.StatusOK {
+		t.Fatalf("GET %s status = %d, want 200", runPagePath, res.status)
+	}
+	if !strings.Contains(res.body, notice) {
+		t.Errorf("GET %s of a queued run with only scan workers alive has no %q", runPagePath, notice)
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 )
 
@@ -34,6 +35,8 @@ type applyWriter struct {
 	rd       *renderer
 	projects ProjectStore
 	store    ApplyStore
+	// scans tells whether a worker serves the check a page waits for.
+	scans ScanStore
 }
 
 // handleApplyPage shows what an apply of the project would do and where its
@@ -250,6 +253,9 @@ func (aw applyWriter) build(ctx context.Context, pid project.ID) (applyPage, int
 	switch c.State {
 	case apply.StateChecking:
 		page.View, page.CanCheck = applyViewChecking, false
+		if page.NoWorker, err = noWorker(ctx, aw.scans, job.KindApplyCheck); err != nil {
+			return applyPage{}, http.StatusInternalServerError, err
+		}
 	case apply.StateQueued, apply.StateRunning:
 		page.View, page.CanCheck = applyViewApplying, false
 	case apply.StateReady, apply.StateBlocked:

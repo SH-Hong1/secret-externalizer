@@ -21,6 +21,7 @@ import (
 
 	"github.com/SH-Hong1/secret-externalizer/internal/bao"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
+	"github.com/SH-Hong1/secret-externalizer/internal/job"
 )
 
 // testDatabaseURL is an obviously fake database URL.
@@ -79,6 +80,7 @@ func TestLoadConfig(t *testing.T) {
 	}
 	want := config{
 		dsn:            db.DSN(testDatabaseURL),
+		jobs:           jobsAll,
 		root:           env["WORKSPACE_ROOT"],
 		poll:           2 * time.Second,
 		lease:          2 * time.Minute,
@@ -207,6 +209,92 @@ func TestLoadConfig_ApplyRoot(t *testing.T) {
 				t.Errorf("loadConfig() with APPLY_WORKSPACE_ROOT=%q apply root = %q, want %q", tt.root, got.applyRoot, tt.want)
 			}
 		})
+	}
+}
+
+func TestLoadConfig_Jobs(t *testing.T) {
+	scannerVars := []string{"WORKSPACE_ROOT", "BETTERLEAKS_BIN", "OPENGREP_BIN", "RULES_DIR", "SCAN_TEMP_DIR"}
+	tests := []struct {
+		name string
+		jobs string
+		// applyRoot sets APPLY_WORKSPACE_ROOT, and noScanners removes
+		// the settings only scans use.
+		applyRoot  bool
+		noScanners bool
+		want       jobs
+		wantErr    []string
+	}{
+		{name: "not set", want: jobsAll},
+		{name: "all", jobs: "all", applyRoot: true, want: jobsAll},
+		{name: "scan", jobs: "scan", want: jobsScan},
+		{name: "scan with an apply root", jobs: "scan", applyRoot: true, wantErr: []string{"APPLY_WORKSPACE_ROOT", "WORKER_JOBS"}},
+		{name: "apply without scanner settings", jobs: "apply", applyRoot: true, noScanners: true, want: jobsApply},
+		{name: "apply without an apply root", jobs: "apply", noScanners: true, wantErr: []string{"APPLY_WORKSPACE_ROOT"}},
+		{name: "scan without scanner settings", jobs: "scan", noScanners: true, wantErr: scannerVars},
+		{name: "unknown", jobs: "everything", wantErr: []string{"WORKER_JOBS", "everything"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := validEnv(t)
+			if tt.jobs != "" {
+				env["WORKER_JOBS"] = tt.jobs
+			}
+			if tt.applyRoot {
+				env["APPLY_WORKSPACE_ROOT"] = t.TempDir()
+			}
+			if tt.noScanners {
+				for _, v := range scannerVars {
+					delete(env, v)
+				}
+			}
+			got, err := loadConfig(getenvFrom(env))
+			if len(tt.wantErr) > 0 {
+				for _, w := range tt.wantErr {
+					if err == nil || !strings.Contains(err.Error(), w) {
+						t.Errorf("loadConfig() with WORKER_JOBS=%q error = %v, want an error naming %s", tt.jobs, err, w)
+					}
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("loadConfig() with WORKER_JOBS=%q error = %v", tt.jobs, err)
+			}
+			if got.jobs != tt.want {
+				t.Errorf("loadConfig() with WORKER_JOBS=%q jobs = %q, want %q", tt.jobs, got.jobs, tt.want)
+			}
+		})
+	}
+}
+
+func TestJobs_Kinds(t *testing.T) {
+	tests := []struct {
+		jobs jobs
+		want []job.Kind
+	}{
+		{jobsAll, []job.Kind{job.KindScan, job.KindApplyCheck, job.KindApply}},
+		{jobsScan, []job.Kind{job.KindScan}},
+		{jobsApply, []job.Kind{job.KindApplyCheck, job.KindApply}},
+	}
+	for _, tt := range tests {
+		if diff := cmp.Diff(tt.want, tt.jobs.kinds()); diff != "" {
+			t.Errorf("jobs(%q).kinds() mismatch (-want +got):\n%s", tt.jobs, diff)
+		}
+	}
+}
+
+func TestConfig_ShowsJobs(t *testing.T) {
+	env := validEnv(t)
+	env["WORKER_JOBS"] = "scan"
+	cfg, err := loadConfig(getenvFrom(env))
+	if err != nil {
+		t.Fatalf("loadConfig() error = %v", err)
+	}
+	var buf bytes.Buffer
+	slog.New(slog.NewJSONHandler(&buf, nil)).Info("config", "config", cfg)
+	for _, out := range []string{buf.String(), cfg.String()} {
+		if !strings.Contains(out, "jobs") || !strings.Contains(out, "scan") {
+			t.Errorf("config output %q, want jobs with scan", out)
+		}
 	}
 }
 

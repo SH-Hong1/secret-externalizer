@@ -369,14 +369,14 @@ func (w *logWatch) count(msg string) int {
 	return strings.Count(w.buf.String(), `"msg":"`+msg+`"`)
 }
 
-// wait returns once n log lines have msg as their message. It fails the
-// test when ctx ends or the worker returns first.
-func (w *logWatch) wait(ctx context.Context, t *testing.T, done <-chan error, msg string, n int) {
+// wait returns once a log line has msg as its message. It fails the test
+// when ctx ends or the worker returns first.
+func (w *logWatch) wait(ctx context.Context, t *testing.T, done <-chan error, msg string) {
 	t.Helper()
-	for w.count(msg) < n {
+	for w.count(msg) == 0 {
 		select {
 		case <-ctx.Done():
-			t.Fatalf("no %d %q log lines when the deadline passed; log:\n%s", n, msg, w.String())
+			t.Fatalf("no %q log line when the deadline passed; log:\n%s", msg, w.String())
 		case err := <-done:
 			t.Fatalf("runWith() returned %v before logging %q; log:\n%s", err, msg, w.String())
 		case <-w.wrote:
@@ -469,7 +469,7 @@ func TestRun_HandlesApplyJobs(t *testing.T) {
 				done <- runWith(runCtx, []string{"worker"}, getenvFrom(env), io.Discard, logs, tune, deps)
 			}()
 
-			logs.wait(ctx, t, done, "scan finished", 1)
+			logs.wait(ctx, t, done, "scan finished")
 			scanned, err := store.Scan(ctx, scanID)
 			if err != nil {
 				t.Fatalf("Scan(%d) error = %v", scanID, err)
@@ -493,7 +493,7 @@ func TestRun_HandlesApplyJobs(t *testing.T) {
 				t.Fatalf("RequestApplyCheck(%d) error = %v", projectID, err)
 			}
 
-			logs.wait(ctx, t, done, "apply check finished", 1)
+			logs.wait(ctx, t, done, "apply check finished")
 			run, err := store.ApplyRun(ctx, id)
 			if err != nil {
 				t.Fatalf("ApplyRun(%d) error = %v", id, err)
@@ -510,6 +510,131 @@ func TestRun_HandlesApplyJobs(t *testing.T) {
 				t.Errorf("runWith() after cancel = %v, want nil", err)
 			}
 		})
+	}
+}
+
+// TestRun_JobsSplit runs a scan-only worker and then an apply-only worker
+// on one queue. The apply-only worker runs the apply check and leaves alone
+// a scan that was queued before it, and starts without any scanner
+// setting.
+func TestRun_JobsSplit(t *testing.T) {
+	databaseURL := testSchemaURL(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+
+	root := t.TempDir()
+	for _, name := range []string{"shop", "other"} {
+		p := filepath.Join(root, name, "conf", "app.properties")
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatalf("MkdirAll error = %v", err)
+		}
+		if err := os.WriteFile(p, []byte("password="+fakeValue+"\n"), 0o600); err != nil {
+			t.Fatalf("WriteFile error = %v", err)
+		}
+	}
+	worktreetest.Init(t, filepath.Join(root, "shop"))
+
+	store, err := db.Open(ctx, db.DSN(databaseURL))
+	if err != nil {
+		t.Fatalf("db.Open() error = %v", err)
+	}
+	defer store.Close()
+	if err := store.Migrate(ctx); err != nil {
+		t.Fatalf("Migrate() error = %v", err)
+	}
+	actor := audit.Actor{Subject: "worker-test"}
+	shop, err := store.CreateProject(ctx, project.Project{Name: "shop", Path: "shop", CreatedBy: "worker-test"})
+	if err != nil {
+		t.Fatalf("CreateProject(shop) error = %v", err)
+	}
+	other, err := store.CreateProject(ctx, project.Project{Name: "other", Path: "other", CreatedBy: "worker-test"})
+	if err != nil {
+		t.Fatalf("CreateProject(other) error = %v", err)
+	}
+	if _, err := store.RequestScan(ctx, shop, actor); err != nil {
+		t.Fatalf("RequestScan(shop) error = %v", err)
+	}
+
+	tune := func(c *config) {
+		c.poll = 20 * time.Millisecond
+		c.heartbeat = 20 * time.Millisecond
+		c.gitBin = gitPath(t)
+	}
+	secrets := &fakeSecrets{pending: map[string][]byte{}}
+	deps := func(config) (workerDeps, error) { //nolint:unparam // the signature is the one runWith takes
+		return fakeDeps(secrets), nil
+	}
+	start := func(env map[string]string) (logs *logWatch, done chan error, stop func()) {
+		logs = newLogWatch()
+		runCtx, stop := context.WithCancel(ctx)
+		done = make(chan error, 1)
+		go func() {
+			done <- runWith(runCtx, []string{"worker"}, getenvFrom(env), io.Discard, logs, tune, deps)
+		}()
+		return logs, done, stop
+	}
+
+	scanEnv := validEnv(t)
+	scanEnv["DATABASE_URL"] = databaseURL
+	scanEnv["WORKSPACE_ROOT"] = root
+	scanEnv["WORKER_JOBS"] = "scan"
+	logs, done, stop := start(scanEnv)
+	logs.wait(ctx, t, done, "scan finished")
+	stop()
+	if err := <-done; err != nil {
+		t.Fatalf("runWith(WORKER_JOBS=scan) after cancel = %v, want nil", err)
+	}
+
+	waiting, err := store.RequestScan(ctx, other, actor)
+	if err != nil {
+		t.Fatalf("RequestScan(other) error = %v", err)
+	}
+	checkID, err := store.RequestApplyCheck(ctx, shop, actor)
+	if err != nil {
+		t.Fatalf("RequestApplyCheck(shop) error = %v", err)
+	}
+
+	applyEnv := map[string]string{
+		"DATABASE_URL":         databaseURL,
+		"BAO_ADDR":             scanEnv["BAO_ADDR"],
+		"BAO_ROLE_ID":          scanEnv["BAO_ROLE_ID"],
+		"BAO_SECRET_ID_FILE":   scanEnv["BAO_SECRET_ID_FILE"],
+		"APPLY_WORKSPACE_ROOT": root,
+		"WORKER_JOBS":          "apply",
+	}
+	logs, done, stop = start(applyEnv)
+	logs.wait(ctx, t, done, "apply check finished")
+	stop()
+	if err := <-done; err != nil {
+		t.Fatalf("runWith(WORKER_JOBS=apply) after cancel = %v, want nil", err)
+	}
+
+	run, err := store.ApplyRun(ctx, checkID)
+	if err != nil {
+		t.Fatalf("ApplyRun(%d) error = %v", checkID, err)
+	}
+	if run.State == apply.StateChecking {
+		t.Errorf("ApplyRun(%d) state = %q after the apply-only worker, want the check done", checkID, run.State)
+	}
+	sc, err := store.Scan(ctx, waiting)
+	if err != nil {
+		t.Fatalf("Scan(%d) error = %v", waiting, err)
+	}
+	if sc.Status != scan.StatusQueued {
+		t.Errorf("Scan(%d) status = %q after the apply-only worker, want queued", waiting, sc.Status)
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
+	if err != nil {
+		t.Fatalf("pgxpool.New() error = %v", err)
+	}
+	defer pool.Close()
+	var state string
+	var attempts int
+	if err := pool.QueryRow(ctx, `SELECT state, attempts FROM job WHERE scan_id = $1`, int64(waiting)).Scan(&state, &attempts); err != nil {
+		t.Fatalf("reading the job of scan %d error = %v", waiting, err)
+	}
+	if state != "queued" || attempts != 0 {
+		t.Errorf("job of scan %d = state %q, %d attempts after the apply-only worker; want queued and never claimed", waiting, state, attempts)
 	}
 }
 

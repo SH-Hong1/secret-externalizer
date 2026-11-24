@@ -16,6 +16,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/dashboard"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/job"
 	"github.com/SH-Hong1/secret-externalizer/internal/pdf"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/report"
@@ -259,6 +260,9 @@ type fakeScans struct {
 	aliveErr   error
 	// noWorker makes WorkerAlive report that no worker is serving the queue.
 	noWorker bool
+	// onlyKind, when set, makes WorkerAlive report that workers serve only
+	// jobs of that kind.
+	onlyKind job.Kind
 
 	mu     sync.Mutex
 	scans  map[scan.ID]scan.Scan
@@ -286,8 +290,8 @@ func (f *fakeScans) RequestScan(_ context.Context, projectID project.ID, by audi
 	return f.next, nil
 }
 
-func (f *fakeScans) WorkerAlive(_ context.Context, _ time.Duration) (bool, error) {
-	return !f.noWorker, f.aliveErr
+func (f *fakeScans) WorkerAlive(_ context.Context, k job.Kind, _ time.Duration) (bool, error) {
+	return !f.noWorker && (f.onlyKind == "" || f.onlyKind == k), f.aliveErr
 }
 
 func (f *fakeScans) Scan(_ context.Context, id scan.ID) (scan.Scan, error) {
@@ -413,7 +417,7 @@ func (b *blockingStore) CategoryCounts(ctx context.Context, _ scan.ID) ([]scan.C
 	return nil, b.wait(ctx)
 }
 
-func (b *blockingStore) WorkerAlive(ctx context.Context, _ time.Duration) (bool, error) {
+func (b *blockingStore) WorkerAlive(ctx context.Context, _ job.Kind, _ time.Duration) (bool, error) {
 	return true, b.wait(ctx)
 }
 

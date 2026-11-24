@@ -30,10 +30,12 @@ const (
 // when it failed before anyone confirmed it. Digest is set only when the
 // page offers the apply form.
 type applyPage struct {
-	User         auth.User
-	Project      project.Project
-	View         string
-	Error        string
+	User    auth.User
+	Project project.Project
+	View    string
+	Error   string
+	// NoWorker says that no worker serves the check the page waits for.
+	NoWorker     bool
 	ScanID       int64
 	ScanFinished string
 	ScanActive   bool

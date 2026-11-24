@@ -427,6 +427,52 @@ func TestClaimJob_Kinds(t *testing.T) {
 		}
 	})
 
+	t.Run("only the kinds asked for", func(t *testing.T) {
+		s := newMigratedStore(t)
+		ctx := t.Context()
+		scanID := requestScan(t, s)
+		applyID := newApplyRun(t, s, "apply", "queued", job.KindApply)
+
+		got, err := s.ClaimJob(ctx, "applier", time.Minute, job.KindApplyCheck, job.KindApply)
+		if err != nil {
+			t.Fatalf("ClaimJob(apply-check, apply) error = %v", err)
+		}
+		if got.Kind != job.KindApply || got.ApplyID != applyID {
+			t.Errorf("ClaimJob(apply-check, apply) = %+v, want the apply job of run %d", got, applyID)
+		}
+		if _, err := s.ClaimJob(ctx, "applier", time.Minute, job.KindApplyCheck, job.KindApply); !errors.Is(err, job.ErrNoJob) {
+			t.Errorf("ClaimJob(apply-check, apply) with only a scan queued error = %v, want ErrNoJob", err)
+		}
+		got, err = s.ClaimJob(ctx, "scanner", time.Minute, job.KindScan)
+		if err != nil {
+			t.Fatalf("ClaimJob(scan) error = %v", err)
+		}
+		if got.Kind != job.KindScan || got.ScanID != int64(scanID) {
+			t.Errorf("ClaimJob(scan) = %+v, want the job of scan %d", got, scanID)
+		}
+	})
+
+	t.Run("a claim of other kinds gives up an exhausted job", func(t *testing.T) {
+		s := newMigratedStore(t)
+		ctx := t.Context()
+		applyID := newApplyRun(t, s, "shop", "queued", job.KindApply)
+		for i := 1; i <= 3; i++ {
+			if _, err := s.ClaimJob(ctx, "applier", 0, job.KindApply); err != nil {
+				t.Fatalf("ClaimJob(apply) call %d error = %v", i, err)
+			}
+		}
+		if _, err := s.ClaimJob(ctx, "scanner", time.Minute, job.KindScan); !errors.Is(err, job.ErrNoJob) {
+			t.Fatalf("ClaimJob(scan) error = %v, want ErrNoJob", err)
+		}
+		run, err := s.ApplyRunState(ctx, applyID)
+		if err != nil {
+			t.Fatalf("ApplyRunState(%d) error = %v", applyID, err)
+		}
+		if run.State != "failed" {
+			t.Errorf("ApplyRunState(%d) after a scan-only claim = %q, want failed", applyID, run.State)
+		}
+	})
+
 	for _, c := range []struct {
 		kind   job.Kind
 		state  string
