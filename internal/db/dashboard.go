@@ -106,31 +106,57 @@ func readProjectStates(ctx context.Context, tx pgx.Tx) ([]dashboard.ProjectState
 		return nil, fmt.Errorf("listing the projects of the dashboard: %w", err)
 	}
 
-	for n := range states {
-		st, i := &states[n], scans[n]
+	var last, counted []scan.ID
+	for _, i := range scans {
 		if i.last != 0 {
-			sc, err := scanScan(tx.QueryRow(ctx, "SELECT "+scanColumns+" FROM scan WHERE id = $1", i.last))
-			if err != nil {
-				return nil, fmt.Errorf("reading scan %d: %w", i.last, err)
-			}
-			st.Last = sc
+			last = append(last, i.last)
 		}
-		if i.basis == 0 {
-			continue
+		if i.basis != 0 {
+			counted = append(counted, i.basis)
 		}
-		var err error
-		st.Basis, st.Previous = i.basis, i.previous
-		if st.Totals, err = readTotals(ctx, tx, st.Project.ID, i.basis); err != nil {
-			return nil, err
-		}
-		if i.previous == 0 {
-			continue
-		}
-		if st.PreviousTotals, err = readTotals(ctx, tx, st.Project.ID, i.previous); err != nil {
-			return nil, err
+		if i.previous != 0 {
+			counted = append(counted, i.previous)
 		}
 	}
+	lastScans, err := readScans(ctx, tx, last)
+	if err != nil {
+		return nil, err
+	}
+	totals, err := readTotals(ctx, tx, counted...)
+	if err != nil {
+		return nil, err
+	}
+	for n := range states {
+		st, i := &states[n], scans[n]
+		st.Last = lastScans[i.last]
+		st.Basis, st.Previous = i.basis, i.previous
+		st.Totals, st.PreviousTotals = totals[i.basis], totals[i.previous]
+	}
 	return states, nil
+}
+
+// readScans returns the scans with the given IDs by ID.
+func readScans(ctx context.Context, tx pgx.Tx, ids []scan.ID) (map[scan.ID]scan.Scan, error) {
+	scans := make(map[scan.ID]scan.Scan, len(ids))
+	if len(ids) == 0 {
+		return scans, nil
+	}
+	rows, err := tx.Query(ctx, "SELECT "+scanColumns+" FROM scan WHERE id = ANY($1)", ids)
+	if err != nil {
+		return nil, fmt.Errorf("reading the scans %v: %w", ids, err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		sc, err := scanScan(rows)
+		if err != nil {
+			return nil, fmt.Errorf("reading the scans %v: %w", ids, err)
+		}
+		scans[sc.ID] = sc
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("reading the scans %v: %w", ids, err)
+	}
+	return scans, nil
 }
 
 // readPoints returns the points of the trend of f, baselines first and then

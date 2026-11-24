@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -36,6 +37,11 @@ var reportBase = time.Date(2026, 11, 20, 9, 0, 0, 0, time.UTC)
 func minute(n int) *time.Time {
 	t := reportBase.Add(time.Duration(n) * time.Minute)
 	return &t
+}
+
+// linesOf returns the lines of the three lists of what the scan found.
+func linesOf(d report.Data) []report.Line {
+	return slices.Concat(d.Structure.Rows, d.Remaining.Rows, d.FalsePositives.Rows)
 }
 
 func readReport(t *testing.T, s *db.Store, id scan.ID) report.Data {
@@ -164,7 +170,7 @@ func TestReport_NotSucceeded(t *testing.T) {
 				t.Errorf("Report(%s scan) = project %d, scan %d %s, latest %d; want project %d, scan %d, latest %d",
 					tc.status, d.Project.ID, d.Scan.ID, d.Scan.Status, d.Latest, pid, id, ok)
 			}
-			if d.Previous != 0 || d.Totals != (report.Totals{}) || len(d.Lines) != 0 || len(d.Changes) != 0 ||
+			if d.Previous != 0 || d.Totals != (report.Totals{}) || len(linesOf(d)) != 0 || len(d.Externalized.Rows) != 0 ||
 				len(d.Redactions) != 0 || len(d.Events) != 0 || d.EventTotal != 0 {
 				t.Errorf("Report(%s scan) = %+v, want only the project, the scan and the latest scan", tc.status, d)
 			}
@@ -210,7 +216,7 @@ func TestReport_Totals(t *testing.T) {
 		t.Errorf("Report(first) latest, previous, previous totals = %d, %d, %+v, want %d, 0, zero",
 			d.Latest, d.Previous, d.PreviousTotals, second)
 	}
-	for _, l := range d.Lines {
+	for _, l := range linesOf(d) {
 		want := report.Applied("")
 		if l.Verdict == triage.VerdictExternalize || l.Verdict == triage.VerdictRedact {
 			want = report.AppliedAfter
@@ -259,7 +265,7 @@ func TestReport_TotalsMatchLines(t *testing.T) {
 
 	for _, id := range []scan.ID{first, second, third} {
 		d := readReport(t, s, id)
-		got := lineTotals(d.Lines)
+		got := lineTotals(linesOf(d))
 		got.Externalized, got.Redacted = d.Totals.Externalized, d.Totals.Redacted
 		if diff := cmp.Diff(d.Totals, got); diff != "" {
 			t.Errorf("Report(%d) lines added up by verdict differ from Totals (-totals +lines):\n%s", id, diff)
@@ -298,19 +304,19 @@ func TestReport_CustomerDataGrouped(t *testing.T) {
 		Category: finding.CategoryCustomerData, Kind: finding.KindPhone, Verdict: triage.VerdictRedact,
 		Note: "remove from logs", File: "logs/app.log", FirstLine: 1, Files: 1, Bundles: 37, Locations: 37,
 	}}
-	if diff := cmp.Diff(want, d.Lines, cmp.FilterPath(func(p cmp.Path) bool {
+	if diff := cmp.Diff(want, d.Remaining.Rows, cmp.FilterPath(func(p cmp.Path) bool {
 		return p.Last().String() == ".DecidedAt"
 	}, cmp.Ignore())); diff != "" {
-		t.Errorf("Report(%d).Lines for 37 phone numbers with one decision (-want +got):\n%s", sid, diff)
+		t.Errorf("Report(%d).Remaining.Rows for 37 phone numbers with one decision (-want +got):\n%s", sid, diff)
 	}
-	if len(d.Lines) == 1 && d.Lines[0].DecidedAt.IsZero() {
-		t.Errorf("Report(%d).Lines[0].DecidedAt is zero, want the time of the decision", sid)
+	if len(d.Remaining.Rows) == 1 && d.Remaining.Rows[0].DecidedAt.IsZero() {
+		t.Errorf("Report(%d).Remaining.Rows[0].DecidedAt is zero, want the time of the decision", sid)
 	}
 
 	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictRedact, Note: "a different note"}, ids[5])
 	d = readReport(t, s, sid)
 	got := map[string]int{}
-	for _, l := range d.Lines {
+	for _, l := range linesOf(d) {
 		if l.Bundle != 0 {
 			t.Errorf("Report(%d) customer-data line %+v has bundle %d, want 0", sid, l, l.Bundle)
 		}
@@ -361,7 +367,7 @@ func TestReport_AppliedAsOf(t *testing.T) {
 
 	d := readReport(t, s, second)
 	applies := map[triage.BundleID]report.Applied{}
-	for _, l := range d.Lines {
+	for _, l := range linesOf(d) {
 		applies[l.Bundle] = l.Applied
 	}
 	want := map[triage.BundleID]report.Applied{
@@ -372,10 +378,13 @@ func TestReport_AppliedAsOf(t *testing.T) {
 	if diff := cmp.Diff(want, applies); diff != "" {
 		t.Errorf("Report(second) Applied by bundle (-want +got):\n%s", diff)
 	}
-	applied.Status, closedItem.Status = apply.StatusApplied, apply.StatusApplied
-	wantChanges := []report.Change{{Run: run, Item: applied}, {Run: closed, Item: closedItem}}
-	if diff := cmp.Diff(wantChanges, d.Changes); diff != "" {
-		t.Errorf("Report(second).Changes (-want +got):\n%s", diff)
+	wantEntries := report.List[report.Entry]{Total: 1, Rows: []report.Entry{{
+		Bundle: pwBundle, Name: "db.main.password", Category: finding.CategoryStorage, Kind: finding.KindPassword,
+		StorePath: applied.StorePath, PlaceTotal: 2, Reappeared: true,
+		Places: []report.Place{{File: "conf/a.yml", Line: 3, Run: run}, {File: "conf/a.yml", Line: 3, Run: closed}},
+	}}}
+	if diff := cmp.Diff(wantEntries, d.Externalized); diff != "" {
+		t.Errorf("Report(second).Externalized (-want +got):\n%s", diff)
 	}
 	if d.Totals.Externalized != (report.Count{Bundles: 1, Locations: 2}) {
 		t.Errorf("Report(second).Totals.Externalized = %+v, want 1 bundle in 2 places", d.Totals.Externalized)
@@ -418,11 +427,13 @@ func TestReport_ItemOfMissingBundle(t *testing.T) {
 	}
 
 	d := readReport(t, s, second)
-	if diff := cmp.Diff([]report.Change{{Run: run, Item: it}}, d.Changes); diff != "" {
-		t.Errorf("Report(%d).Changes after the bundle was deleted (-want +got):\n%s", second, diff)
-	}
-	if len(d.Changes) == 1 && (d.Changes[0].Item.Name == "" || d.Changes[0].Item.StorePath == "") {
-		t.Errorf("Report(%d).Changes[0] = %+v, want its name and store path", second, d.Changes[0])
+	want := report.List[report.Entry]{Total: 1, Rows: []report.Entry{{
+		Bundle: pw, Name: "db.main.password", Category: finding.CategoryStorage, Kind: finding.KindPassword,
+		StorePath: bao.StorePath(int64(pid), "ext.db.main.password"), PlaceTotal: 1,
+		Places: []report.Place{{File: "conf/a.yml", Line: 3, Run: run}},
+	}}}
+	if diff := cmp.Diff(want, d.Externalized); diff != "" {
+		t.Errorf("Report(%d).Externalized after the bundle was deleted (-want +got):\n%s", second, diff)
 	}
 	var verdict *report.Event
 	for i := range d.Events {
@@ -464,7 +475,7 @@ func TestReport_HoldsNoDerivedValue(t *testing.T) {
 	second := saveAt(t, s, pid, minute(20), secret, phone)
 
 	d := readReport(t, s, second)
-	if len(d.Lines) == 0 || len(d.Changes) == 0 || len(d.Redactions) == 0 || len(d.Events) == 0 {
+	if len(linesOf(d)) == 0 || len(d.Externalized.Rows) == 0 || len(d.Redactions) == 0 || len(d.Events) == 0 {
 		t.Fatalf("Report(%d) = %+v, want every part filled", second, d)
 	}
 	encoded, err := json.Marshal(d)
@@ -555,9 +566,13 @@ func TestReport_OtherProject(t *testing.T) {
 		t.Errorf("Report(%d) changed when another project got scans, applies and events (-before +after):\n%s",
 			second, diff)
 	}
-	if len(got.Changes) != 3 || len(got.Redactions) != 1 || len(got.Lines) != 3 || got.EventTotal != 5 {
-		t.Errorf("Report(%d) = %d changes, %d redactions, %d lines, %d event lines, want 3, 1, 3, 5",
-			second, len(got.Changes), len(got.Redactions), len(got.Lines), got.EventTotal)
+	places := 0
+	for _, e := range got.Externalized.Rows {
+		places += e.PlaceTotal
+	}
+	if got.Externalized.Total != 2 || places != 3 || len(got.Redactions) != 1 || len(linesOf(got)) != 3 || got.EventTotal != 5 {
+		t.Errorf("Report(%d) = %d entries in %d places, %d redactions, %d lines, %d event lines, want 2, 3, 1, 3, 5",
+			second, got.Externalized.Total, places, len(got.Redactions), len(linesOf(got)), got.EventTotal)
 	}
 }
 
@@ -577,7 +592,7 @@ func TestReport_FrontendAndShell(t *testing.T) {
 		Frontend, Shell, Customer bool
 	}
 	got := map[string]flags{}
-	for _, l := range d.Lines {
+	for _, l := range linesOf(d) {
 		got[l.File] = flags{l.Files, l.Frontend, l.Shell, l.Category == finding.CategoryCustomerData}
 	}
 	want := map[string]flags{
@@ -588,5 +603,226 @@ func TestReport_FrontendAndShell(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Report(%d) lines by first file (-want +got):\n%s", sid, diff)
+	}
+}
+
+// filesOf returns the first files of lines in their order.
+func filesOf(lines []report.Line) []string {
+	var files []string
+	for _, l := range lines {
+		files = append(files, l.File)
+	}
+	return files
+}
+
+func TestReport_Sections(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	pw := func(n int, file string) finding.Finding {
+		return fnd(fmt.Sprintf("%064x", 0x5ec000+n), file, finding.CategoryStorage, finding.KindPassword, n)
+	}
+	var (
+		upperJSP    = pw(1, "web/A.JSP")
+		js          = pw(2, "web/app.js")
+		jsx         = pw(3, "web/app.jsx")
+		jspDir      = pw(4, "old.jsp/readme")
+		htm         = pw(5, "web/index.htm")
+		fpJSP       = pw(6, "web/fp.jsp")
+		structure   = pw(7, "conf/structure.yml")
+		later       = pw(8, "conf/later.yml")
+		named       = pw(9, "conf/named.yml")
+		fpPlain     = pw(10, "conf/fp.yml")
+		upper       = pw(11, "Zeta.yml")
+		mixedPlain  = pw(12, "conf/mixed.yml")
+		mixedJSPF   = pw(12, "web/mixed.jspf")
+		jspPhone    = fnd(fpC, "web/list.jsp", finding.CategoryCustomerData, finding.KindPhone, 7)
+		heldPhone   = fnd(fpD, "logs/held.log", finding.CategoryCustomerData, finding.KindPhone, 2)
+		fpPhone     = fnd(fpH, "logs/fp.log", finding.CategoryCustomerData, finding.KindPhone, 4)
+		allFindings = []finding.Finding{
+			upperJSP, js, jsx, jspDir, htm, fpJSP, structure, later, named, fpPlain, upper, mixedPlain, mixedJSPF,
+			jspPhone, heldPhone, fpPhone,
+		}
+	)
+	sid := saveAt(t, s, pid, minute(0), allFindings...)
+	b := func(f finding.Finding) triage.BundleID { return bundleOf(t, s, pid, f.Fingerprint, f.File) }
+	// A frontend finding starts in a bundle of its own; moving it puts a
+	// frontend member into the bundle of the plain file.
+	if _, err := s.MoveFinding(t.Context(), pid, findingID(t, s, pid, mixedJSPF.Fingerprint, mixedJSPF.File),
+		b(mixedPlain), tester); err != nil {
+		t.Fatalf("MoveFinding(%s) error = %v", mixedJSPF.File, err)
+	}
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive}, b(fpJSP), b(fpPlain), b(fpPhone))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldStructure}, b(structure), b(heldPhone))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldLater}, b(later))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}, b(named))
+
+	d := readReport(t, s, sid)
+	for _, tc := range []struct {
+		name string
+		got  report.List[report.Line]
+		want []string
+	}{
+		// Files sort by byte value, so an upper-case name comes first.
+		{"Structure", d.Structure, []string{
+			"conf/mixed.yml", "conf/structure.yml", "logs/held.log", "web/A.JSP", "web/app.js", "web/index.htm",
+		}},
+		{"Remaining", d.Remaining, []string{
+			"Zeta.yml", "conf/later.yml", "conf/named.yml", "old.jsp/readme", "web/app.jsx", "web/list.jsp",
+		}},
+		{"FalsePositives", d.FalsePositives, []string{"conf/fp.yml", "logs/fp.log", "web/fp.jsp"}},
+	} {
+		if diff := cmp.Diff(tc.want, filesOf(tc.got.Rows)); diff != "" {
+			t.Errorf("Report(%d).%s first files (-want +got):\n%s", sid, tc.name, diff)
+		}
+		if tc.got.Total != len(tc.want) {
+			t.Errorf("Report(%d).%s.Total = %d, want %d", sid, tc.name, tc.got.Total, len(tc.want))
+		}
+	}
+	for _, l := range linesOf(d) {
+		if want := l.Bundle != 0 && (triage.Frontend(l.File) || l.File == "conf/mixed.yml"); l.Frontend != want {
+			t.Errorf("Report(%d) line of %s Frontend = %t, want %t", sid, l.File, l.Frontend, want)
+		}
+	}
+}
+
+func TestReport_SectionsCut(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	const more = 5
+	var found []finding.Finding
+	for i := range report.MaxRows + more {
+		// Stored in the reverse of the order the report lists them in.
+		file := fmt.Sprintf("conf/f%04d.yml", report.MaxRows+more-i)
+		found = append(found, fnd(fmt.Sprintf("%064x", 0xc07000+i), file, finding.CategoryStorage, finding.KindPassword, 1))
+	}
+	jsp := fnd(fpA, "web/login.jsp", finding.CategoryStorage, finding.KindPassword, 3)
+	sid := saveAt(t, s, pid, minute(0), append(found, jsp, totalsPhone)...)
+
+	d := readReport(t, s, sid)
+	if len(d.Remaining.Rows) != report.MaxRows || d.Remaining.Total != report.MaxRows+more+1 {
+		t.Fatalf("Report(%d).Remaining = %d rows of %d, want %d of %d", sid, len(d.Remaining.Rows), d.Remaining.Total,
+			report.MaxRows, report.MaxRows+more+1)
+	}
+	if first, last := d.Remaining.Rows[0].File, d.Remaining.Rows[report.MaxRows-1].File; first != "conf/f0001.yml" ||
+		last != fmt.Sprintf("conf/f%04d.yml", report.MaxRows) {
+		t.Errorf("Report(%d).Remaining rows run from %s to %s, want the first %d files in order", sid, first, last, report.MaxRows)
+	}
+	if len(d.Structure.Rows) != 1 || d.Structure.Total != 1 || d.FalsePositives.Total != 0 {
+		t.Errorf("Report(%d) Structure = %d rows of %d, FalsePositives.Total = %d, want 1 of 1 and 0",
+			sid, len(d.Structure.Rows), d.Structure.Total, d.FalsePositives.Total)
+	}
+	if got := d.Totals.Found.Bundles; got != report.MaxRows+more+2 {
+		t.Errorf("Report(%d).Totals.Found.Bundles = %d, want %d", sid, got, report.MaxRows+more+2)
+	}
+}
+
+func TestReport_Externalized(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	gone := fnd(fpH, "conf/gone.yml", finding.CategoryPartnerSession, finding.KindToken, 9)
+	later := totalsHold
+	first := saveAt(t, s, pid, minute(0), totalsPwA, gone, later)
+	run := runAt(t, s, pid, first, apply.StateSucceeded, minute(10), minute(11))
+	place := func(f finding.Finding, name, file string, line int, mod func(*apply.Item)) apply.Item {
+		it := itemOf(t, s, pid, f, "db.main.password", apply.StatusApplied)
+		it.Name, it.File, it.Line, it.StartCol = name, file, line, line+100
+		if mod != nil {
+			mod(&it)
+		}
+		return it
+	}
+	storePath := bao.StorePath(int64(pid), "ext.db.main.password")
+	insertItems(t, s, run,
+		place(totalsPwA, "ext.db.main.password", "b.xml", 31, nil),
+		place(totalsPwA, "EXT_DB_MAIN_PASSWORD", "deploy.sh", 3, nil),
+		place(totalsPwA, "ext.db.main.password", "a.yml", 14, nil),
+		place(totalsPwA, "ext.db.main.password", "k/key.pem", 0, func(i *apply.Item) { i.Action = apply.ActionRemoveFile }),
+		place(totalsPwA, "ext.db.main.password", "Conn.java", 8, func(i *apply.Item) { i.CodeChange = true }),
+		place(gone, "ext.api.main.token", "conf/gone.yml", 9, nil),
+		place(later, "ext.db.other.password", "conf/d.yml", 6, nil))
+	second := saveAt(t, s, pid, minute(20), totalsPwA, later)
+	// The value the scan found again was applied once more after the scan.
+	after := runAt(t, s, pid, second, apply.StateSucceeded, minute(30), minute(31))
+	insertItems(t, s, after, place(later, "ext.db.other.password", "conf/d.yml", 6, nil))
+
+	pw, token, other := bundleOf(t, s, pid, fpA, "conf/a.yml"), bundleOf(t, s, pid, fpH, "conf/gone.yml"),
+		bundleOf(t, s, pid, fpG, "conf/d.yml")
+	want := report.List[report.Entry]{Total: 4, Rows: []report.Entry{
+		// Names sort by byte value, so the upper-case name comes first.
+		{
+			Bundle: pw, Name: "EXT_DB_MAIN_PASSWORD", Category: finding.CategoryStorage, Kind: finding.KindPassword,
+			StorePath: storePath, PlaceTotal: 1, Reappeared: true,
+			Places: []report.Place{{File: "deploy.sh", Line: 3, Run: run}},
+		},
+		{
+			Bundle: token, Name: "ext.api.main.token", Category: finding.CategoryPartnerSession, Kind: finding.KindToken,
+			StorePath: storePath, PlaceTotal: 1,
+			Places: []report.Place{{File: "conf/gone.yml", Line: 9, Run: run}},
+		},
+		{
+			Bundle: pw, Name: "ext.db.main.password", Category: finding.CategoryStorage, Kind: finding.KindPassword,
+			StorePath: storePath, PlaceTotal: 4, Reappeared: true, CodeChange: true,
+			Places: []report.Place{
+				{File: "Conn.java", Line: 8, Run: run},
+				{File: "a.yml", Line: 14, Run: run},
+				{File: "b.xml", Line: 31, Run: run},
+				{File: "k/key.pem", Removed: true, Run: run},
+			},
+		},
+		{
+			Bundle: other, Name: "ext.db.other.password", Category: finding.CategoryStorage, Kind: finding.KindPassword,
+			StorePath: storePath, PlaceTotal: 1,
+			Places: []report.Place{{File: "conf/d.yml", Line: 6, Run: run}},
+		},
+	}}
+	if diff := cmp.Diff(want, readReport(t, s, second).Externalized); diff != "" {
+		t.Errorf("Report(%d).Externalized (-want +got):\n%s", second, diff)
+	}
+}
+
+func TestReport_ExternalizedCut(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	first := saveAt(t, s, pid, minute(0), totalsPwA)
+	run := runAt(t, s, pid, first, apply.StateSucceeded, minute(10), minute(11))
+	const moreEntries, morePlaces = 2, 3
+	var items []apply.Item
+	for i := range report.MaxRows + moreEntries {
+		it := itemOf(t, s, pid, totalsPwA, "db.main.password", apply.StatusApplied)
+		// Stored in the reverse of the order the report lists them in.
+		it.Name, it.StartCol = fmt.Sprintf("ext.db.n%04d.password", report.MaxRows+moreEntries-i), i+1
+		items = append(items, it)
+	}
+	for i := range report.MaxPlaces + morePlaces {
+		it := itemOf(t, s, pid, totalsPwA, "db.main.password", apply.StatusApplied)
+		it.Name, it.File, it.StartCol = "ext.db.n0001.password", fmt.Sprintf("conf/f%04d.yml", report.MaxPlaces+morePlaces-i), 1000+i
+		it.CodeChange = i == 0
+		items = append(items, it)
+	}
+	insertItems(t, s, run, items...)
+	second := saveAt(t, s, pid, minute(20), totalsHost)
+
+	got := readReport(t, s, second).Externalized
+	if len(got.Rows) != report.MaxRows || got.Total != report.MaxRows+moreEntries {
+		t.Fatalf("Report(%d).Externalized = %d rows of %d, want %d of %d", second, len(got.Rows), got.Total,
+			report.MaxRows, report.MaxRows+moreEntries)
+	}
+	if first, last := got.Rows[0].Name, got.Rows[report.MaxRows-1].Name; first != "ext.db.n0001.password" ||
+		last != fmt.Sprintf("ext.db.n%04d.password", report.MaxRows) {
+		t.Errorf("Report(%d).Externalized rows run from %s to %s, want the first %d names in order", second, first, last, report.MaxRows)
+	}
+	// The entry holds the place of the first loop too, in conf/a.yml.
+	e := got.Rows[0]
+	if len(e.Places) != report.MaxPlaces || e.PlaceTotal != report.MaxPlaces+morePlaces+1 {
+		t.Fatalf("Report(%d) first entry = %d places of %d, want %d of %d", second, len(e.Places), e.PlaceTotal,
+			report.MaxPlaces, report.MaxPlaces+morePlaces+1)
+	}
+	if first, last := e.Places[0].File, e.Places[report.MaxPlaces-1].File; first != "conf/a.yml" ||
+		last != fmt.Sprintf("conf/f%04d.yml", report.MaxPlaces-1) {
+		t.Errorf("Report(%d) first entry places run from %s to %s, want the first %d files in order", second, first, last, report.MaxPlaces)
+	}
+	// The place in code is one the entry does not list.
+	if !e.CodeChange {
+		t.Errorf("Report(%d) first entry CodeChange = false, want true for a place in code past the cut", second)
 	}
 }

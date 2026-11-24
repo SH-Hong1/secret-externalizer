@@ -69,12 +69,6 @@ type Line struct {
 	Applied   Applied
 }
 
-// Change is one applied replace or remove-file item.
-type Change struct {
-	Run  apply.ID
-	Item apply.Item
-}
-
 // Redaction is the redacted customer data of one kind in one file.
 type Redaction struct {
 	Kind      finding.Kind
@@ -98,10 +92,19 @@ type Event struct {
 	File     string
 }
 
-// Data is what the database tells about one scan. Redactions holds one row
-// per kind, file and tracked state, so a file can appear twice for a kind. Latest is the project's
-// newest succeeded scan and Previous the succeeded scan before Scan, zero
-// when there is none. Events holds the newest MaxRows of EventTotal lines.
+// Data is what the database tells about one scan. A line the scan found is
+// in one of three lists: FalsePositives when its verdict is false-positive;
+// otherwise Structure when it is a secret bundle with a member in a
+// triage.Frontend file or is on hold for a structure change; otherwise
+// Remaining. Each list is ordered by file, first line and bundle, and holds
+// its first MaxRows rows next to the number of all of them. Externalized is
+// the applied replace and remove-file items of the runs before the scan,
+// one entry per bundle and name, ordered by name and bundle, cut the same
+// way; the places of an entry are ordered by file and line. Redactions
+// holds one row per kind, file and tracked state, so a file can appear twice
+// for a kind. Latest is the project's newest succeeded scan and Previous the
+// succeeded scan before Scan, zero when there is none. Events holds the
+// newest MaxRows of EventTotal lines.
 type Data struct {
 	Project        project.Project
 	Scan           scan.Scan
@@ -109,8 +112,10 @@ type Data struct {
 	Previous       scan.ID
 	Totals         Totals
 	PreviousTotals Totals
-	Lines          []Line
-	Changes        []Change
+	Structure      List[Line]
+	Remaining      List[Line]
+	FalsePositives List[Line]
+	Externalized   List[Entry]
 	Redactions     []Redaction
 	Events         []Event
 	EventTotal     int
@@ -134,7 +139,8 @@ type Place struct {
 	Run     apply.ID
 }
 
-// Entry is one externalized name as the source carries it.
+// Entry is one externalized name as the source carries it. Category, Kind
+// and StorePath are those of its first place.
 type Entry struct {
 	Bundle     triage.BundleID
 	Name       string // as written: ext.db.main.password or EXT_DB_MAIN_PASSWORD
@@ -196,7 +202,8 @@ func compareKind(a, b finding.Kind) int {
 	return cmp.Or(cmp.Compare(kindRank(a), kindRank(b)), cmp.Compare(a, b))
 }
 
-// Build shapes d into the report made at now. It keeps no slice or map of d.
+// Build shapes d into the report made at now. It keeps no slice or map of d
+// and shows no more than the caps, whatever d holds.
 func Build(d Data, now time.Time) Report {
 	r := Report{
 		Project:     cloneProject(d.Project),
@@ -210,22 +217,13 @@ func Build(d Data, now time.Time) Report {
 		r.Delta = subtract(d.Totals, d.PreviousTotals)
 	}
 
-	var structure, remaining, falsePositives []Line
-	for _, l := range d.Lines {
-		switch {
-		case l.Verdict == triage.VerdictFalsePositive:
-			falsePositives = append(falsePositives, l)
-		case l.Frontend || (l.Verdict == triage.VerdictHold && l.Reason == triage.HoldStructure):
-			structure = append(structure, l)
-		default:
-			remaining = append(remaining, l)
-		}
+	r.Structure = capList(d.Structure)
+	r.Remaining = capList(d.Remaining)
+	r.FalsePositives = capList(d.FalsePositives)
+	r.Externalized = capList(d.Externalized)
+	for i, e := range r.Externalized.Rows {
+		r.Externalized.Rows[i].Places = slices.Clone(e.Places[:min(len(e.Places), MaxPlaces)])
 	}
-	r.Structure = lineList(structure)
-	r.Remaining = lineList(remaining)
-	r.FalsePositives = lineList(falsePositives)
-
-	r.Externalized = externalized(d.Changes, d.Lines)
 	r.RedactedKinds, r.Redacted = redacted(d.Redactions)
 
 	events := make([]Event, len(d.Events))
@@ -272,68 +270,9 @@ func capRows[T any](rows []T) []T {
 	return slices.Clone(rows[:min(len(rows), MaxRows)])
 }
 
-func lineList(lines []Line) List[Line] {
-	slices.SortStableFunc(lines, func(a, b Line) int {
-		return cmp.Or(
-			cmp.Compare(a.File, b.File),
-			cmp.Compare(a.FirstLine, b.FirstLine),
-			cmp.Compare(a.Bundle, b.Bundle),
-		)
-	})
-	return List[Line]{Rows: capRows(lines), Total: len(lines)}
-}
-
-func externalized(changes []Change, lines []Line) List[Entry] {
-	type key struct {
-		bundle triage.BundleID
-		name   string
-	}
-	reappeared := make(map[triage.BundleID]bool)
-	for _, l := range lines {
-		if l.Bundle != 0 && l.Applied == AppliedBefore {
-			reappeared[l.Bundle] = true
-		}
-	}
-
-	byKey := make(map[key]*Entry)
-	places := make(map[key][]Place)
-	for _, c := range changes {
-		k := key{c.Item.BundleID, c.Item.Name}
-		e, ok := byKey[k]
-		if !ok {
-			e = &Entry{
-				Bundle:     c.Item.BundleID,
-				Name:       c.Item.Name,
-				Category:   c.Item.Category,
-				Kind:       c.Item.Kind,
-				StorePath:  c.Item.StorePath,
-				Reappeared: reappeared[c.Item.BundleID],
-			}
-			byKey[k] = e
-		}
-		e.CodeChange = e.CodeChange || c.Item.CodeChange
-		places[k] = append(places[k], Place{
-			File:    c.Item.File,
-			Line:    c.Item.Line,
-			Removed: c.Item.Action == apply.ActionRemoveFile,
-			Run:     c.Run,
-		})
-	}
-
-	entries := make([]Entry, 0, len(byKey))
-	for k, e := range byKey {
-		p := places[k]
-		slices.SortStableFunc(p, func(a, b Place) int {
-			return cmp.Or(cmp.Compare(a.File, b.File), cmp.Compare(a.Line, b.Line))
-		})
-		e.PlaceTotal = len(p)
-		e.Places = slices.Clone(p[:min(len(p), MaxPlaces)])
-		entries = append(entries, *e)
-	}
-	slices.SortFunc(entries, func(a, b Entry) int {
-		return cmp.Or(cmp.Compare(a.Name, b.Name), cmp.Compare(a.Bundle, b.Bundle))
-	})
-	return List[Entry]{Rows: capRows(entries), Total: len(entries)}
+// capList returns l with a copy of its rows cut to MaxRows.
+func capList[T any](l List[T]) List[T] {
+	return List[T]{Rows: capRows(l.Rows), Total: l.Total}
 }
 
 func redacted(redactions []Redaction) ([]KindCount, List[Redaction]) {

@@ -9,7 +9,6 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/report"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
@@ -38,14 +37,18 @@ const reportItems = `
 		CROSS JOIN (SELECT requested_at, apply_id FROM scan WHERE id = $2) sc
 	WHERE r.project_id = $1 AND i.status = 'applied' AND ` + runBefore
 
+// frontendFile is true for the path file_path when triage.Frontend is.
+const frontendFile = `lower(file_path COLLATE "C") LIKE ANY ('{%.jsp,%.jspf,%.js,%.html,%.htm}')`
+
 // reportFound starts a query with common table expressions for project $1
-// and scan $2, of which member and found are for the query to read. member is one row per finding the scan
-// found. found is one row per bundle with such a member, as scanBundles
-// has it: category and kind are those of the member with the lowest ID,
-// file and first_line the first file and the first line in it, files the
-// files of its members and locations the number of locations; before and
-// after say whether an applied item of the bundle is in a run before the
-// scan, or in a run after it. It reads no preview.
+// and scan $2, of which member and found are for the query to read. member
+// is one row per finding the scan found. found is one row per bundle with
+// such a member, as scanBundles has it: category and kind are those of the
+// member with the lowest ID, file and first_line the first file and the
+// first line in it, files the file of each member, frontend whether one of
+// them is a triage.Frontend file, and locations the number of locations;
+// before and after say whether an applied item of the bundle is in a run
+// before the scan, or in a run after it. It reads no preview.
 const reportFound = `
 	WITH sc AS (
 		SELECT requested_at, apply_id FROM scan WHERE id = $2
@@ -60,17 +63,24 @@ const reportFound = `
 		FROM apply_item i JOIN apply_run r ON r.id = i.apply_id CROSS JOIN sc
 		WHERE r.project_id = $1 AND i.status = 'applied'
 		GROUP BY i.bundle_id
+	), lowest AS (
+		SELECT DISTINCT ON (bundle_id) bundle_id, category, kind FROM member ORDER BY bundle_id, id
+	), head AS (
+		SELECT DISTINCT ON (bundle_id) bundle_id, file_path AS file, first_line
+		FROM member ORDER BY bundle_id, file_path, first_line
+	), summed AS (
+		SELECT bundle_id, array_agg(file_path) AS files,
+			bool_or(` + frontendFile + `) AS frontend,
+			sum(locations)::int AS locations
+		FROM member GROUP BY bundle_id
 	), grouped AS (
 		SELECT b.id, b.verdict, b.hold_reason, b.note, b.name, b.decided_at,
-			(array_agg(m.category ORDER BY m.id))[1] AS category,
-			(array_agg(m.kind ORDER BY m.id))[1] AS kind,
-			(array_agg(m.file_path ORDER BY m.file_path, m.first_line))[1] AS file,
-			(array_agg(m.first_line ORDER BY m.file_path, m.first_line))[1] AS first_line,
-			array_agg(DISTINCT m.file_path) AS files,
-			sum(m.locations)::int AS locations
-		FROM bundle b JOIN member m ON m.bundle_id = b.id
+			lo.category, lo.kind, h.file, h.first_line, su.files, su.frontend, su.locations
+		FROM bundle b
+		JOIN summed su ON su.bundle_id = b.id
+		JOIN lowest lo ON lo.bundle_id = b.id
+		JOIN head h ON h.bundle_id = b.id
 		WHERE b.project_id = $1
-		GROUP BY b.id
 	), found AS (
 		SELECT g.*, coalesce(a.before, false) AS before, coalesce(a.after, false) AS after
 		FROM grouped g LEFT JOIN run_mark a ON a.bundle_id = g.id
@@ -117,24 +127,19 @@ func (s *Store) Report(ctx context.Context, id scan.ID) (report.Data, error) {
 
 // readReport fills everything of d but the project, the scans and Latest.
 func readReport(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID, d *report.Data) error {
-	var err error
-	if d.Totals, err = readTotals(ctx, tx, projectID, id); err != nil {
-		return err
-	}
+	ids := []scan.ID{id}
 	if d.Previous != 0 {
-		if d.PreviousTotals, err = readTotals(ctx, tx, projectID, d.Previous); err != nil {
-			return err
-		}
+		ids = append(ids, d.Previous)
 	}
-	if d.Lines, err = readSecretLines(ctx, tx, projectID, id); err != nil {
-		return err
-	}
-	customer, err := readCustomerLines(ctx, tx, projectID, id)
+	totals, err := readTotals(ctx, tx, ids...)
 	if err != nil {
 		return err
 	}
-	d.Lines = append(d.Lines, customer...)
-	if d.Changes, err = readChanges(ctx, tx, projectID, id); err != nil {
+	d.Totals, d.PreviousTotals = totals[id], totals[d.Previous]
+	if err := readLines(ctx, tx, projectID, id, d); err != nil {
+		return err
+	}
+	if d.Externalized, err = readExternalized(ctx, tx, projectID, id); err != nil {
 		return err
 	}
 	if d.Redactions, err = readRedactions(ctx, tx, projectID, id); err != nil {
@@ -144,41 +149,78 @@ func readReport(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID
 	return err
 }
 
-// readTotals returns the numbers of scan id of the project.
-func readTotals(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID) (report.Totals, error) {
-	var t report.Totals
-	err := tx.QueryRow(ctx, reportFound+`, done AS (
-			SELECT i.bundle_id, i.action `+reportItems+`
+// readTotals returns the numbers of each of the scans ids, which may be of
+// different projects. A scan with no row in the database has no entry.
+func readTotals(ctx context.Context, tx pgx.Tx, ids ...scan.ID) (map[scan.ID]report.Totals, error) {
+	rows, err := tx.Query(ctx, `
+		WITH sc AS (
+			SELECT id, project_id, requested_at, apply_id FROM scan WHERE id = ANY($1)
+		), member AS (
+			SELECT sc.id AS scan_id, f.bundle_id, count(*) AS locations
+			FROM sc
+			JOIN location l ON l.scan_id = sc.id
+			JOIN finding f ON f.id = l.finding_id AND f.project_id = sc.project_id
+			GROUP BY sc.id, f.bundle_id
+		), found AS (
+			SELECT m.scan_id,
+				count(*)::int AS found, sum(m.locations)::int AS found_at,
+				count(*) FILTER (WHERE b.verdict = 'false-positive')::int AS fp,
+				coalesce(sum(m.locations) FILTER (WHERE b.verdict = 'false-positive'), 0)::int AS fp_at,
+				count(*) FILTER (WHERE b.verdict = 'hold')::int AS hold,
+				coalesce(sum(m.locations) FILTER (WHERE b.verdict = 'hold'), 0)::int AS hold_at,
+				count(*) FILTER (WHERE b.verdict = '')::int AS undecided,
+				coalesce(sum(m.locations) FILTER (WHERE b.verdict = ''), 0)::int AS undecided_at,
+				count(*) FILTER (WHERE b.verdict IN ('externalize', 'redact'))::int AS pending,
+				coalesce(sum(m.locations) FILTER (WHERE b.verdict IN ('externalize', 'redact')), 0)::int AS pending_at
+			FROM member m
+			JOIN sc ON sc.id = m.scan_id
+			JOIN bundle b ON b.id = m.bundle_id AND b.project_id = sc.project_id
+			GROUP BY m.scan_id
+		), done AS (
+			SELECT sc.id AS scan_id,
+				count(DISTINCT i.bundle_id) FILTER (WHERE i.action IN ('replace', 'remove-file'))::int AS ext,
+				count(*) FILTER (WHERE i.action IN ('replace', 'remove-file'))::int AS ext_at,
+				count(DISTINCT i.bundle_id) FILTER (WHERE i.action = 'redact')::int AS red,
+				count(*) FILTER (WHERE i.action = 'redact')::int AS red_at
+			FROM sc
+			JOIN apply_run r ON r.project_id = sc.project_id
+			JOIN apply_item i ON i.apply_id = r.id
+			WHERE i.status = 'applied' AND `+runBefore+`
+			GROUP BY sc.id
 		)
-		SELECT f.*, d.* FROM (
-			SELECT count(*)::int, coalesce(sum(locations), 0)::int,
-				count(*) FILTER (WHERE verdict = 'false-positive')::int,
-				coalesce(sum(locations) FILTER (WHERE verdict = 'false-positive'), 0)::int,
-				count(*) FILTER (WHERE verdict = 'hold')::int,
-				coalesce(sum(locations) FILTER (WHERE verdict = 'hold'), 0)::int,
-				count(*) FILTER (WHERE verdict = '')::int,
-				coalesce(sum(locations) FILTER (WHERE verdict = ''), 0)::int,
-				count(*) FILTER (WHERE verdict IN ('externalize', 'redact'))::int,
-				coalesce(sum(locations) FILTER (WHERE verdict IN ('externalize', 'redact')), 0)::int
-			FROM found
-		) f CROSS JOIN (
-			SELECT count(DISTINCT bundle_id) FILTER (WHERE action IN ('replace', 'remove-file'))::int,
-				count(*) FILTER (WHERE action IN ('replace', 'remove-file'))::int,
-				count(DISTINCT bundle_id) FILTER (WHERE action = 'redact')::int,
-				count(*) FILTER (WHERE action = 'redact')::int
-			FROM done
-		) d`, projectID, id).Scan(
+		SELECT sc.id,
+			coalesce(f.found, 0), coalesce(f.found_at, 0), coalesce(f.fp, 0), coalesce(f.fp_at, 0),
+			coalesce(f.hold, 0), coalesce(f.hold_at, 0), coalesce(f.undecided, 0), coalesce(f.undecided_at, 0),
+			coalesce(f.pending, 0), coalesce(f.pending_at, 0),
+			coalesce(d.ext, 0), coalesce(d.ext_at, 0), coalesce(d.red, 0), coalesce(d.red_at, 0)
+		FROM sc
+		LEFT JOIN found f ON f.scan_id = sc.id
+		LEFT JOIN done d ON d.scan_id = sc.id`, ids)
+	if err != nil {
+		return nil, fmt.Errorf("counting the scans %v: %w", ids, err)
+	}
+	var (
+		id scan.ID
+		t  report.Totals
+	)
+	totals := make(map[scan.ID]report.Totals, len(ids))
+	_, err = pgx.ForEachRow(rows, []any{
+		&id,
 		&t.Found.Bundles, &t.Found.Locations,
 		&t.FalsePositive.Bundles, &t.FalsePositive.Locations,
 		&t.Hold.Bundles, &t.Hold.Locations,
 		&t.Undecided.Bundles, &t.Undecided.Locations,
 		&t.Pending.Bundles, &t.Pending.Locations,
 		&t.Externalized.Bundles, &t.Externalized.Locations,
-		&t.Redacted.Bundles, &t.Redacted.Locations)
+		&t.Redacted.Bundles, &t.Redacted.Locations,
+	}, func() error {
+		totals[id] = t
+		return nil
+	})
 	if err != nil {
-		return report.Totals{}, fmt.Errorf("counting the report of scan %d: %w", id, err)
+		return nil, fmt.Errorf("counting the scans %v: %w", ids, err)
 	}
-	return t, nil
+	return totals, nil
 }
 
 // appliedOf returns how an apply changed the places of a line: after wins
@@ -193,108 +235,166 @@ func appliedOf(before, after bool) report.Applied {
 	return ""
 }
 
-// readSecretLines returns one line per secret bundle that scan id found.
-// Frontend and Shell follow triage.Frontend and triage.ShellFile over the
-// files of the bundle's members.
-func readSecretLines(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID) ([]report.Line, error) {
-	rows, err := tx.Query(ctx, reportFound+`
-		SELECT id, category, kind, name, verdict, hold_reason, note, decided_at, file, first_line, files, locations,
-			before, after
-		FROM found WHERE category <> 'customer-data'
-		ORDER BY file, first_line, id`, projectID, id)
-	if err != nil {
-		return nil, fmt.Errorf("listing the secrets of scan %d: %w", id, err)
-	}
-	lines, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (report.Line, error) {
-		var (
-			l             report.Line
-			name          *string
-			decidedAt     *time.Time
-			files         []string
-			before, after bool
-		)
-		if err := row.Scan(&l.Bundle, &l.Category, &l.Kind, &name, &l.Verdict, &l.Reason, &l.Note, &decidedAt,
-			&l.File, &l.FirstLine, &files, &l.Locations, &before, &after); err != nil {
-			return report.Line{}, err
-		}
-		if name != nil {
-			l.Name = triage.Name(*name)
-		}
-		l.DecidedAt = timeOf(decidedAt)
-		l.Files, l.Bundles = len(files), 1
-		l.Frontend = slices.ContainsFunc(files, triage.Frontend)
-		l.Shell = len(files) > 0 && !slices.ContainsFunc(files, func(f string) bool { return !triage.ShellFile(f) })
-		l.Applied = appliedOf(before, after)
-		return l, nil
-	})
-	if err != nil {
-		return nil, fmt.Errorf("listing the secrets of scan %d: %w", id, err)
-	}
-	return lines, nil
-}
+// The lists of what a scan found, as readLines numbers them.
+const (
+	sectionStructure = iota + 1
+	sectionRemaining
+	sectionFalsePositives
+)
 
-// readCustomerLines returns one line per file, kind, verdict, hold reason
-// and note of the customer data that scan id found. Its file is the first
-// file of each bundle, as in the triage list; Files counts the files of
-// the members.
-func readCustomerLines(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID) ([]report.Line, error) {
-	rows, err := tx.Query(ctx, reportFound+`
-		SELECT f.kind, f.verdict, f.hold_reason, f.note, max(f.decided_at), f.file, min(f.first_line),
-			count(DISTINCT m.file_path)::int, count(DISTINCT f.id)::int, sum(m.locations)::int,
-			bool_or(f.before), bool_or(f.after)
+// reportLines lists what scan $2 of project $1 found: the first $6 lines
+// of each list with the number of all its lines. $3, $4 and $5 are the
+// numbers of the lists.
+const reportLines = reportFound + `, line AS (
+		SELECT id AS bundle, category, kind, name, verdict, hold_reason, note, decided_at, file, first_line,
+			files, 1 AS bundles, locations, before, after, frontend
+		FROM found WHERE category <> 'customer-data'
+		UNION ALL
+		SELECT 0, f.category, f.kind, NULL, f.verdict, f.hold_reason, f.note, max(f.decided_at), f.file,
+			min(f.first_line), array_agg(DISTINCT m.file_path), count(DISTINCT f.id)::int, sum(m.locations)::int,
+			bool_or(f.before), bool_or(f.after), false
 		FROM found f JOIN member m ON m.bundle_id = f.id
 		WHERE f.category = 'customer-data'
-		GROUP BY f.file, f.kind, f.verdict, f.hold_reason, f.note
-		ORDER BY f.file, f.kind, f.verdict, f.hold_reason, f.note`, projectID, id)
+		GROUP BY f.category, f.file, f.kind, f.verdict, f.hold_reason, f.note
+	), sectioned AS (
+		SELECT *, CASE
+				WHEN verdict = 'false-positive' THEN $5::int
+				WHEN frontend OR (verdict = 'hold' AND hold_reason = 'structure-change') THEN $3::int
+				ELSE $4::int
+			END AS section
+		FROM line
+	), ranked AS (
+		SELECT *,
+			row_number() OVER (
+				PARTITION BY section
+				ORDER BY file COLLATE "C", first_line, bundle, kind, verdict, hold_reason, note
+			) AS n,
+			count(*) OVER (PARTITION BY section)::int AS total
+		FROM sectioned
+	)
+	SELECT section, total, bundle, category, kind, name, verdict, hold_reason, note, decided_at, file, first_line,
+		files, bundles, locations, before, after, frontend
+	FROM ranked WHERE n <= $6
+	ORDER BY section, n`
+
+// readLines fills the three lists of what scan id found, as report.Data
+// describes them. A line is a secret bundle, or the customer data of one
+// first file, kind, verdict, hold reason and note, whose Files counts the
+// files of its members. Shell follows triage.ShellFile over the files of a
+// secret bundle's members.
+func readLines(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID, d *report.Data) error {
+	rows, err := tx.Query(ctx, reportLines,
+		projectID, id, sectionStructure, sectionRemaining, sectionFalsePositives, report.MaxRows)
 	if err != nil {
-		return nil, fmt.Errorf("listing the customer data of scan %d: %w", id, err)
+		return fmt.Errorf("listing what scan %d found: %w", id, err)
 	}
-	lines, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (report.Line, error) {
-		var (
-			l             = report.Line{Category: finding.CategoryCustomerData}
-			decidedAt     *time.Time
-			before, after bool
-		)
-		if err := row.Scan(&l.Kind, &l.Verdict, &l.Reason, &l.Note, &decidedAt, &l.File, &l.FirstLine,
-			&l.Files, &l.Bundles, &l.Locations, &before, &after); err != nil {
-			return report.Line{}, err
+	var (
+		section, total int
+		l              report.Line
+		name           *string
+		decidedAt      *time.Time
+		files          []string
+		before, after  bool
+	)
+	_, err = pgx.ForEachRow(rows, []any{
+		&section, &total, &l.Bundle, &l.Category, &l.Kind, &name, &l.Verdict, &l.Reason, &l.Note, &decidedAt,
+		&l.File, &l.FirstLine, &files, &l.Bundles, &l.Locations, &before, &after, &l.Frontend,
+	}, func() error {
+		line := l
+		if name != nil {
+			line.Name = triage.Name(*name)
 		}
-		l.DecidedAt = timeOf(decidedAt)
-		l.Applied = appliedOf(before, after)
-		return l, nil
+		line.DecidedAt = timeOf(decidedAt)
+		slices.Sort(files)
+		line.Files = len(slices.Compact(files))
+		line.Shell = line.Bundle != 0 && len(files) > 0 &&
+			!slices.ContainsFunc(files, func(f string) bool { return !triage.ShellFile(f) })
+		line.Applied = appliedOf(before, after)
+		list := &d.Remaining
+		switch section {
+		case sectionStructure:
+			list = &d.Structure
+		case sectionFalsePositives:
+			list = &d.FalsePositives
+		}
+		list.Rows, list.Total = append(list.Rows, line), total
+		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing the customer data of scan %d: %w", id, err)
+		return fmt.Errorf("listing what scan %d found: %w", id, err)
 	}
-	return lines, nil
+	return nil
 }
 
-// readChanges returns the applied replace and remove-file items of the
-// project's runs before scan id, from the items' own columns, ordered by
-// name, file and line.
-func readChanges(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID) ([]report.Change, error) {
+// readExternalized returns the applied replace and remove-file items of the
+// project's runs before scan id as entries, from the items' own columns:
+// the first report.MaxRows entries, each with its first report.MaxPlaces
+// places, and the number of all entries. An entry reappeared when the scan
+// found its bundle as a secret and no run after the scan applied an item of
+// the bundle.
+func readExternalized(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID) (report.List[report.Entry], error) {
 	rows, err := tx.Query(ctx, `
-		SELECT r.id, i.bundle_id, i.finding_id, i.file_path, i.start_line, i.start_col, i.line, i.action,
-			i.category, i.kind, i.name, i.store_path, i.store_version, i.tracked, i.code_change, i.status, i.reason
-		`+reportItems+` AND i.action IN ('replace', 'remove-file')
-		ORDER BY i.name, i.file_path, i.line, i.id`, projectID, id)
-	if err != nil {
-		return nil, fmt.Errorf("listing the changes before scan %d: %w", id, err)
-	}
-	changes, err := pgx.CollectRows(rows, func(row pgx.CollectableRow) (report.Change, error) {
-		var (
-			c  report.Change
-			it = &c.Item
+		WITH sc AS (
+			SELECT requested_at, apply_id FROM scan WHERE id = $2
+		), item AS (
+			SELECT r.id AS run, i.id, i.bundle_id, i.name, i.file_path, i.line, i.action, i.category, i.kind,
+				i.store_path, i.code_change
+			`+reportItems+` AND i.action IN ('replace', 'remove-file')
+		), entry AS (
+			SELECT bundle_id, name, count(*)::int AS places, bool_or(code_change) AS any_code_change,
+				row_number() OVER (ORDER BY name COLLATE "C", bundle_id) AS entry,
+				count(*) OVER ()::int AS entries
+			FROM item GROUP BY bundle_id, name
+		), shown AS (
+			SELECT * FROM (
+				SELECT e.entry, e.entries, e.places, e.any_code_change, i.*,
+					row_number() OVER (PARTITION BY e.entry ORDER BY i.file_path COLLATE "C", i.line, i.id) AS place
+				FROM entry e JOIN item i ON i.bundle_id = e.bundle_id AND i.name = e.name
+				WHERE e.entry <= $3
+			) placed WHERE place <= $4
+		), again AS (
+			SELECT DISTINCT ON (f.bundle_id) f.bundle_id, f.category <> 'customer-data' AS secret
+			FROM finding f
+			WHERE f.project_id = $1 AND f.bundle_id IN (SELECT bundle_id FROM shown)
+				AND EXISTS (SELECT 1 FROM location l WHERE l.finding_id = f.id AND l.scan_id = $2)
+			ORDER BY f.bundle_id, f.id
+		), later AS (
+			SELECT DISTINCT i.bundle_id
+			FROM apply_item i JOIN apply_run r ON r.id = i.apply_id CROSS JOIN sc
+			WHERE r.project_id = $1 AND i.status = 'applied' AND `+runAfter+`
+				AND i.bundle_id IN (SELECT bundle_id FROM shown)
 		)
-		err := row.Scan(&c.Run, &it.BundleID, &it.FindingID, &it.File, &it.StartLine, &it.StartCol, &it.Line,
-			&it.Action, &it.Category, &it.Kind, &it.Name, &it.StorePath, &it.StoreVersion, &it.Tracked,
-			&it.CodeChange, &it.Status, &it.Reason)
-		return c, err
+		SELECT s.place, s.bundle_id, s.name, s.category, s.kind, s.store_path, s.places, s.any_code_change,
+			coalesce(a.secret, false) AND l.bundle_id IS NULL, s.file_path, s.line, s.action = 'remove-file', s.run,
+			s.entries
+		FROM shown s
+		LEFT JOIN again a ON a.bundle_id = s.bundle_id
+		LEFT JOIN later l ON l.bundle_id = s.bundle_id
+		ORDER BY s.entry, s.place`, projectID, id, report.MaxRows, report.MaxPlaces)
+	if err != nil {
+		return report.List[report.Entry]{}, fmt.Errorf("listing the changes before scan %d: %w", id, err)
+	}
+	var (
+		list  report.List[report.Entry]
+		place int
+		e     report.Entry
+		p     report.Place
+	)
+	_, err = pgx.ForEachRow(rows, []any{
+		&place, &e.Bundle, &e.Name, &e.Category, &e.Kind, &e.StorePath, &e.PlaceTotal, &e.CodeChange,
+		&e.Reappeared, &p.File, &p.Line, &p.Removed, &p.Run, &list.Total,
+	}, func() error {
+		if place == 1 {
+			list.Rows = append(list.Rows, e)
+		}
+		last := &list.Rows[len(list.Rows)-1]
+		last.Places = append(last.Places, p)
+		return nil
 	})
 	if err != nil {
-		return nil, fmt.Errorf("listing the changes before scan %d: %w", id, err)
+		return report.List[report.Entry]{}, fmt.Errorf("listing the changes before scan %d: %w", id, err)
 	}
-	return changes, nil
+	return list, nil
 }
 
 // readRedactions returns the applied redact items of the project's runs
