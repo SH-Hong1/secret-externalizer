@@ -1,9 +1,9 @@
 # Go rules for secret-externalizer
 
 These rules apply to every change in this repository. They are checked by
-`make check`, by the hooks in `.claude/hooks/`, and by review. Where two
-well-known guides disagree, the rule written here is the one this project
-follows.
+`make check`, which the git hooks in `.githooks/` run before a commit, and
+by review. Where two well-known guides disagree, the rule written here is
+the one this project follows.
 
 The design lives in `docs/superpowers/specs/`. Decisions and their reasons
 live in `docs/decisions/`. Changes are listed in `CHANGELOG.md`.
@@ -278,8 +278,8 @@ Sources: Effective Go; Go Code Review Comments; Practical Go.
 - Format with `make fmt`, which runs gofumpt and goimports. Do not format by
   hand and do not argue with the formatter.
 - `make check` runs the linters, `go vet`, the tests with the race detector,
-  the hook script tests, the scanner fetch-script test
-  (`make scanners-test`), and the deploy script tests
+  the git hook, commit message, and linter rule tests, the scanner
+  fetch-script test (`make scanners-test`), and the deploy script tests
   (`make deploy-scripts-test`). It must pass before a task is finished.
 - Fix a lint finding. Do not suppress it. Where suppression really is correct,
   write `//nolint:<linter> // <reason>` on that line.

@@ -1,0 +1,30 @@
+#!/bin/sh
+# Formats the staged Go files, then runs make check. It does nothing when the
+# commit touches nothing those checks look at.
+set -eu
+
+cd "$(git rev-parse --show-toplevel)"
+
+staged=$(git diff --cached --name-only --diff-filter=ACMR)
+checked=$(printf '%s\n' "$staged" |
+	grep -E '(\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^Makefile$|^rules/|^internal/web/(templates|assets|static)/|(^|/)testdata/|^\.githooks/|^scripts/|^deploy/.*\.sh$|^deploy/worker/scanners\.lock$)' || true)
+[ -n "$checked" ] || exit 0
+
+gofiles=$(printf '%s\n' "$staged" | grep -E '\.go$' | grep -Ev '(^|/)testdata/' || true)
+if [ -n "$gofiles" ]; then
+	make -s "$(pwd)/bin/golangci-lint"
+	# Formatting rewrites the file and stages it again, which would also
+	# stage changes that were deliberately left out of this commit.
+	for f in $gofiles; do
+		if ! git diff --quiet -- "$f"; then
+			printf 'pre-commit: %s has changes that are not staged; stage or stash them first\n' "$f" >&2
+			exit 1
+		fi
+	done
+	# shellcheck disable=SC2086 # Go file paths have no spaces.
+	bin/golangci-lint fmt $gofiles
+	# shellcheck disable=SC2086
+	git add -- $gofiles
+fi
+
+make -s check

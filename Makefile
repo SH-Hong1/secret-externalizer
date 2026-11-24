@@ -62,7 +62,12 @@ fetch = curl --fail --silent --show-error --location --proto '=https' --proto-re
 BETTERLEAKS_BIN ?= $(BIN)/betterleaks
 OPENGREP_BIN ?= $(BIN)/opengrep
 
-.PHONY: tools tailwind css css-check htmx fonts scanners fmt lint vet test test-integration hooks scanners-test openbao-unseal-key openbao-host-files deploy-scripts-test check
+.PHONY: setup tools tailwind css css-check htmx fonts scanners fmt lint vet test test-integration hooks scanners-test openbao-unseal-key openbao-host-files deploy-scripts-test check
+
+# setup prepares a fresh clone: it installs the tools and turns the git
+# hooks in .githooks on.
+setup: tools
+	git config core.hooksPath .githooks
 
 tools: tailwind
 	GOBIN=$(BIN) go install mvdan.cc/gofumpt@$(GOFUMPT_VERSION)
@@ -149,8 +154,10 @@ test-integration:
 	TEST_VALKEY_ADDR="$(TEST_VALKEY_ADDR)" TEST_VALKEY_PASSWORD="$(TEST_VALKEY_PASSWORD)" TEST_DATABASE_URL="$(TEST_DATABASE_URL)" TEST_BAO_ADDR="$(TEST_BAO_ADDR)" TEST_PDF_URL="$(TEST_PDF_URL)" \
 	BETTERLEAKS_BIN="$(BETTERLEAKS_BIN)" OPENGREP_BIN="$(OPENGREP_BIN)" go test -race -count=1 ./...
 
+# hooks tests the git hooks, the commit message check, and the linter rules.
 hooks: $(BIN)/gofumpt $(BIN)/golangci-lint
-	bash .claude/hooks/hooks_test.sh
+	sh scripts/hooks_test.sh
+	bash scripts/lint-rules_test.sh
 
 scanners-test:
 	sh deploy/worker/fetch-scanners_test.sh
