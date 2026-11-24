@@ -134,7 +134,7 @@ jobs:
         if: steps.change.outputs.reviewable == 'true'
         env:
           VERDICT: ${{ steps.review.outputs.structured_output }}
-          OVERRIDE: ${{ contains(github.event.pull_request.labels.*.name, 'review: override') }}
+          OVERRIDE: "${{ contains(github.event.pull_request.labels.*.name, 'review: override') }}"
         run: |
           printf '%s' "$VERDICT" > "$RUNNER_TEMP/verdict.json"
           status=0
