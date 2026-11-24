@@ -66,7 +66,7 @@ func triageEnv(t *testing.T) *testEnv {
 			{FindingID: 1001, File: "src/main/resources/application-prod.yml", HasOriginal: true, Locations: []finding.Location{{
 				StartLine: 14, EndLine: 14, ContextFirstLine: 12,
 				Context:    []string{"  datasource:", "    username: ****", "    password: Sh0p****", "    url: jdbc:mysql://****:****/shop"},
-				Detections: []finding.Detection{{Tool: "betterleaks", Rule: "generic-password"}, {Tool: "opengrep", Rule: "yaml-password"}},
+				Detections: []finding.Detection{{Tool: "betterleaks", Rule: "generic-password", Encoding: finding.EncodingBase64}, {Tool: "opengrep", Rule: "yaml-password"}},
 			}}},
 			{FindingID: 1002, File: "src/main/webapp/WEB-INF/spring/root-context.xml", HasOriginal: true, Locations: []finding.Location{{
 				StartLine: 31, EndLine: 31, ContextFirstLine: 30,
@@ -172,7 +172,7 @@ func TestTriagePage(t *testing.T) {
 		"비밀번호", "Sh0p****", "미판정",
 		"같은 값이 나온 위치 2곳",
 		"src/main/resources/application-prod.yml:14", "src/main/webapp/WEB-INF/spring/root-context.xml:31",
-		"betterleaks generic-password", "opengrep yaml-password", "opengrep spring-xml-password",
+		"betterleaks generic-password (base64 디코딩)", "opengrep yaml-password<", "opengrep spring-xml-password<",
 		`<mark class="code-line code-line-hit"><span class="sr-only">탐지된 줄 </span><span class="line-no">14</span>    password: Sh0p****</mark>`,
 		`<span class="line-no">13</span>    username: ****`,
 		`<form method="post" action="/projects/1/bundles/101/verdict"`,

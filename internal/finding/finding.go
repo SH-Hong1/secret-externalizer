@@ -85,9 +85,33 @@ func (k Kind) CustomerData() bool {
 	return false
 }
 
-// Detection names the tool and the rule that reported a location.
+// Encoding names the encoding a scanner decoded to find a value: the value
+// at the location is the encoded text, and the secret is in its decoded form.
+type Encoding string
+
+// The encodings a scanner decodes.
+const (
+	EncodingBase64  Encoding = "base64"
+	EncodingHex     Encoding = "hex"
+	EncodingPercent Encoding = "percent"
+)
+
+// ParseEncoding returns the encoding named s. It fails with ErrUnknown for
+// anything else.
+func ParseEncoding(s string) (Encoding, error) {
+	switch e := Encoding(s); e {
+	case EncodingBase64, EncodingHex, EncodingPercent:
+		return e, nil
+	}
+	return "", fmt.Errorf("encoding %q: %w", s, ErrUnknown)
+}
+
+// Detection names the tool and the rule that reported a location, and the
+// encoding the tool decoded to find the value there, which is empty when the
+// value was found as it is written.
 type Detection struct {
 	Tool, Rule string
+	Encoding   Encoding
 }
 
 // Span is a range of bytes in a file's Text. End is not part of the range.

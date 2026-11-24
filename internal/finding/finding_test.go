@@ -136,3 +136,17 @@ func TestKind_CustomerData(t *testing.T) {
 		}
 	}
 }
+
+func TestParseEncoding(t *testing.T) {
+	for _, s := range []string{"base64", "hex", "percent"} {
+		got, err := finding.ParseEncoding(s)
+		if err != nil || string(got) != s {
+			t.Errorf("ParseEncoding(%q) = %q, %v, want %q, nil", s, got, err, s)
+		}
+	}
+	for _, s := range []string{"", "Base64", "unicode", "hex "} {
+		if got, err := finding.ParseEncoding(s); err == nil {
+			t.Errorf("ParseEncoding(%q) = %q, nil, want an error", s, got)
+		}
+	}
+}

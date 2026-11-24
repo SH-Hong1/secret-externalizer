@@ -64,7 +64,7 @@ func secretAt(fp string, line int) finding.Finding {
 			Context:          []string{"# db", "jdbc.password=****", ""},
 			ContextFirstLine: line - 1,
 			FileHash:         fileHash,
-			Detections:       []finding.Detection{{Tool: "betterleaks", Rule: "generic-password"}, {Tool: "opengrep", Rule: "properties-password"}},
+			Detections:       []finding.Detection{{Tool: "betterleaks", Rule: "generic-password", Encoding: finding.EncodingBase64}, {Tool: "opengrep", Rule: "properties-password"}},
 		}},
 	}
 }

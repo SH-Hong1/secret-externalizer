@@ -80,7 +80,7 @@ func merge(placed []*placedFile, fingerprints map[string]string, elsewhere value
 			}
 			ml.keyAt = min(ml.keyAt, at)
 			ml.detected = append(ml.detected, classified{
-				Detection: finding.Detection{Tool: s.raw.Tool, Rule: s.raw.Rule},
+				Detection: finding.Detection{Tool: s.raw.Tool, Rule: s.raw.Rule, Encoding: s.raw.Encoding},
 				category:  s.raw.Category, kind: s.raw.Kind,
 			})
 		}
@@ -227,6 +227,7 @@ func compareDetection(a, b classified) int {
 	return cmp.Or(
 		cmp.Compare(a.Tool, b.Tool),
 		cmp.Compare(a.Rule, b.Rule),
+		cmp.Compare(a.Encoding, b.Encoding),
 		cmp.Compare(categoryRank(a.category), categoryRank(b.category)),
 		cmp.Compare(a.kind, b.kind),
 	)

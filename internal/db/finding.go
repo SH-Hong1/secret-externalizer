@@ -15,8 +15,9 @@ import (
 
 // detection is how a finding.Detection is kept in location.detections.
 type detection struct {
-	Tool string `json:"tool"`
-	Rule string `json:"rule"`
+	Tool     string           `json:"tool"`
+	Rule     string           `json:"rule"`
+	Encoding finding.Encoding `json:"encoding,omitempty"`
 }
 
 // SaveResult records a finished scan in one transaction: it checks that the

@@ -115,7 +115,7 @@
 <div class="code-head">
 <span class="code-file">{{$l.Where}}</span>
 <span class="grow"></span>
-{{range $l.Detections}}<span class="code-rule">{{.Tool}} {{.Rule}}</span>
+{{range $l.Detections}}<span class="code-rule">{{.Tool}} {{.Rule}}{{with .Encoding}} ({{.}} 디코딩){{end}}</span>
 {{end}}{{if eq $i 0}}{{if $m.Split}}<form class="move-form" method="post" action="{{$m.MoveAction}}">
 <input type="hidden" name="to" value="new">
 <input type="hidden" name="from" value="{{$.From}}">
@@ -176,7 +176,7 @@
 <dt>파일</dt><dd class="mono detail-file">{{.File}}</dd>
 <dt>이 파일의 건수</dt><dd>{{.Count}}건</dd>
 <dt>줄 번호</dt><dd class="mono detail-lines">{{.Lines}}{{if .MoreLines}} <span class="muted detail-more">처음 {{.Shown}}개 줄만 보입니다</span>{{end}}</dd>
-{{if .Detections}}<dt>탐지</dt><dd class="mono detail-rules">{{range $i, $d := .Detections}}{{if $i}}, {{end}}{{$d.Tool}} {{$d.Rule}}{{end}}</dd>
+{{if .Detections}}<dt>탐지</dt><dd class="mono detail-rules">{{range $i, $d := .Detections}}{{if $i}}, {{end}}{{$d.Tool}} {{$d.Rule}}{{with $d.Encoding}} ({{.}} 디코딩){{end}}{{end}}</dd>
 {{end}}</dl>
 <p class="notice-soft text-2">고객정보는 값과 주변 줄을 저장하지 않습니다. 내용은 편집기에서 이 파일의 줄 번호로 확인해 주세요.</p>
 <form method="post" action="{{.Form.Action}}" class="verdict-form">

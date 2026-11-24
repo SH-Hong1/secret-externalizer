@@ -414,3 +414,75 @@ func TestScan_RealBetterleaks(t *testing.T) {
 		t.Errorf("Scan() mismatch (-want +got):\n%s", diff)
 	}
 }
+
+// decodedValue is a value as betterleaks reports it after decoding.
+const decodedValue = "dev-only-fake-value"
+
+// A value betterleaks decoded is reported at the start of the encoded text,
+// with the decoded value: the scan places it by decoding that text.
+func TestParse_Betterleaks_Decoded(t *testing.T) {
+	tests := []struct {
+		name string
+		tags []string
+		want scan.Raw
+	}{
+		{
+			"Base64",
+			[]string{"decoded:base64", "decode-depth:1"},
+			scan.Raw{Category: finding.CategoryOther, Kind: finding.KindOther, Encoding: finding.EncodingBase64, Depth: 1},
+		},
+		{
+			"NestedHexWithRuleTags",
+			[]string{"category:storage-credential", "kind:password", "decoded:hex", "decode-depth:2"},
+			scan.Raw{Category: finding.CategoryStorage, Kind: finding.KindPassword, Encoding: finding.EncodingHex, Depth: 2},
+		},
+		{
+			"NoDepth",
+			[]string{"decoded:percent"},
+			scan.Raw{Category: finding.CategoryOther, Kind: finding.KindOther, Encoding: finding.EncodingPercent, Depth: 1},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// The decoded match holds the secret after "pw=", which
+			// would place it at column 17 if the match were read as text of
+			// the file.
+			got := parseOne(t, leak{
+				RuleID: "fake-rule", StartLine: 2, StartColumn: 14,
+				Match: "pw=" + decodedValue, Secret: decodedValue, File: "/scan/a.properties", Tags: tt.tags,
+			})
+			want := tt.want
+			want.Tool, want.Rule, want.File = "betterleaks", "fake-rule", "a.properties"
+			want.Offset, want.EndOffset, want.Line, want.ByteCol = -1, -1, 2, 14
+			want.Value = scan.Value(decodedValue)
+			if diff := cmp.Diff(want, got, bytesComparer); diff != "" {
+				t.Errorf("Parse(%v) mismatch (-want +got):\n%s", tt.tags, diff)
+			}
+		})
+	}
+}
+
+func TestParse_Betterleaks_DecodedDropped(t *testing.T) {
+	tests := []struct {
+		name string
+		tags []string
+	}{
+		{"UnknownEncoding", []string{"decoded:rot13", "decode-depth:1"}},
+		{"BadDepth", []string{"decoded:base64", "decode-depth:x"}},
+		{"ZeroDepth", []string{"decoded:base64", "decode-depth:0"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, counts, err := betterleaks.Parse(report(t, leak{
+				RuleID: "fake-rule", StartLine: 2, StartColumn: 14,
+				Match: "pw=" + decodedValue, Secret: decodedValue, File: "/scan/a.properties", Tags: tt.tags,
+			}), "/scan")
+			if err != nil {
+				t.Fatalf("Parse(%v) error = %v", tt.tags, err)
+			}
+			if len(got) != 0 || counts.Dropped != 1 || !cmp.Equal(counts.DroppedFiles, []string{"a.properties"}) {
+				t.Errorf("Parse(%v) = %d results, %+v, want none and a.properties dropped", tt.tags, len(got), counts)
+			}
+		})
+	}
+}
