@@ -207,6 +207,14 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 		escapedValue = "dev-only-fake-esc=aped-password"
 	)
 	write(t, f.dir, escapedFile, "escaped.datasource.password="+escapedText+"\n")
+	// A value the file holds only in base64: the encoded text is the
+	// finding, and the apply moves that text to OpenBao.
+	const (
+		encodedFile  = "src/main/resources/encoded.properties"
+		encodedValue = "dev-only-fake-encoded-pw-8"
+	)
+	encodedText := base64.StdEncoding.EncodeToString([]byte(`password = "` + encodedValue + `"`))
+	write(t, f.dir, encodedFile, "legacy.blob="+encodedText+"\n")
 	f.commit()
 
 	rules, err := filepath.Abs(filepath.Join("..", "..", "rules"))
@@ -296,6 +304,15 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 	}
 	if len(first) == 0 {
 		t.Fatalf("FindingsByScan(%d) is empty, want the findings of the example", scanID)
+	}
+	encodedPlace := place{fingerprint: "", file: encodedFile, key: "legacy.blob"}
+	for p, fd := range first {
+		if p.file == encodedFile && p.key == "legacy.blob" && fd.Locations[0].Detections[0].Encoding == finding.EncodingBase64 {
+			encodedPlace = p
+		}
+	}
+	if encodedPlace.fingerprint == "" {
+		t.Errorf("the first scan has no finding of the base64 text in %s", encodedFile)
 	}
 	bundles := map[triage.BundleID]triage.Bundle{}
 	for _, id := range bundleIDs(t, admin, schema, projectID) {
@@ -466,6 +483,9 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 			}
 		}
 	}
+	if !changed[encodedPlace] || bytes.Contains(after[encodedFile], []byte(encodedText)) {
+		t.Errorf("the apply left the base64 text in %s, want it externalized", encodedFile)
+	}
 	m, err := manifest.Parse(read(t, f.dir, manifest.FileName))
 	if err != nil {
 		t.Fatalf("manifest.Parse() error = %v", err)
@@ -520,6 +540,9 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 			if strings.Contains(text, string(v)) {
 				t.Errorf("the %s holds an externalized secret (%d bytes)", where, len(v))
 			}
+		}
+		if strings.Contains(text, encodedText) || strings.Contains(text, encodedValue) {
+			t.Errorf("the %s holds the base64 text or the value it encodes", where)
 		}
 	}
 

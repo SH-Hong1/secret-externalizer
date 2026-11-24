@@ -149,9 +149,9 @@ func TestHandle_RealScannersContextMasksEveryValue(t *testing.T) {
 }
 
 // TestHandle_RealScannersEncodedValue checks a value betterleaks finds only
-// after decoding base64: its decoded form appears nowhere in the file, so it
-// cannot be located, and the encoded text must not be stored in a
-// neighbour's surrounding lines.
+// after decoding base64: the encoded text is a finding of its own, at the
+// place betterleaks reports, and it and the decoded value are masked in the
+// surrounding lines.
 func TestHandle_RealScannersEncodedValue(t *testing.T) {
 	blBin := realBin(t, "BETTERLEAKS_BIN", "betterleaks")
 	ogBin := realBin(t, "OPENGREP_BIN", "opengrep")
@@ -175,13 +175,30 @@ func TestHandle_RealScannersEncodedValue(t *testing.T) {
 		t.Fatalf("Handle() error = %v", err)
 	}
 	got := e.result(t)
-	if got.Dropped != 2 || len(got.Findings) == 0 {
-		t.Fatalf("Handle() = %+v, want the passwords found and both decoded values dropped", got)
+	if got.Dropped != 0 {
+		t.Fatalf("Handle() = %+v, want nothing dropped", got)
+	}
+	for file, b := range map[string]string{"conf/app.properties": blob, "conf/mixed.properties": mixedBlob} {
+		var enc *finding.Finding
+		for i, f := range got.Findings {
+			if f.File == file && f.Fingerprint == fingerprintOf(b) {
+				enc = &got.Findings[i]
+			}
+		}
+		if enc == nil {
+			t.Errorf("Handle() findings = %+v, want the encoded text in %s", got.Findings, file)
+			continue
+		}
+		l := enc.Locations[0]
+		wantDet := []finding.Detection{{Tool: "betterleaks", Rule: "generic-password", Encoding: finding.EncodingBase64}}
+		if enc.Key != "blob" || l.StartLine != 2 || l.StartCol != 6 || l.EndCol != 5+len(b) || !cmp.Equal(l.Detections, wantDet) {
+			t.Errorf("Handle() encoded finding in %s = %+v, want key blob at line 2, columns 6 to %d, decoded from base64", file, enc, 5+len(b))
+		}
 	}
 	for _, f := range got.Findings {
 		for _, l := range f.Locations {
-			if l.Context != nil {
-				t.Errorf("%s location = %+v, want no surrounding lines in a file with a value that cannot be located", f.Kind, l)
+			if len(l.Context) == 0 || l.Context[1] != "blob=****" {
+				t.Errorf("%s location in %s = %+v, want surrounding lines with the encoded text masked", f.Kind, f.File, l)
 			}
 		}
 	}

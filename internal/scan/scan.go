@@ -140,6 +140,12 @@ func (Value) MarshalJSON() ([]byte, error) { return []byte(`"` + redacted + `"`)
 // and a column sets Offset and EndOffset to -1, Line and ByteCol to the
 // 1-based line and 1-based byte column where the value starts, and Value to
 // the value. A result for a whole file has Offset 0 and EndOffset -1.
+//
+// A scanner that decoded text to find the value sets Encoding to the
+// encoding it decoded, Depth to the number of times it decoded (one or
+// more), Line and ByteCol to where the encoded text starts, and Value to the
+// decoded value. The scan decodes the text there to place the result, and
+// the encoded text is then the value of the finding.
 type Raw struct {
 	Tool, Rule        string
 	Category          finding.Category
@@ -148,6 +154,8 @@ type Raw struct {
 	Offset, EndOffset int
 	Line, ByteCol     int
 	Value             Value
+	Encoding          finding.Encoding
+	Depth             int
 }
 
 // Counts tells what a scanner run reported besides its results. Dropped is

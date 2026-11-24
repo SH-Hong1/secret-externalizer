@@ -46,8 +46,8 @@ type placedFile struct {
 	// finding in the file: the file is text and a scanner reported the whole
 	// file as a key, so every line of it is part of a value, or a result in
 	// the file could not be placed, so the place of its value is not known
-	// (betterleaks reports a value it decoded from base64, for example,
-	// which the text holds only in encoded form), or a scanner dropped a
+	// (betterleaks reports a value it decoded, for example, and the text
+	// there does not decode to it), or a scanner dropped a
 	// result in the file or a result whose file it could not name, or the
 	// file may hold customer data that no rule reported: it is on a
 	// customer data path (finding.CustomerDataPath), or a rule reported
@@ -135,6 +135,11 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 			continue
 		}
 		span, ok := place(pf.file, bom, raw)
+		if raw.Encoding != "" && raw.Category == finding.CategoryCustomerData {
+			// Customer data is never stored and its preview reads the shape
+			// of the value, which encoded text does not have.
+			ok = false
+		}
 		if !ok {
 			// Where the value is, or in what form, cannot be told, so no
 			// line of the file is known to be free of it. The masks are a
@@ -167,7 +172,7 @@ func splitConnections(placed []*placedFile) []*placedFile {
 		for _, s := range pf.spots {
 			var parts []connstr.Part
 			known := false
-			if s.raw.Kind == finding.KindURL && !s.raw.wholeFile() {
+			if s.raw.Kind == finding.KindURL && !s.raw.wholeFile() && s.raw.Encoding == "" {
 				parts, known = connstr.Split(s.value)
 			}
 			if !known {
@@ -210,9 +215,26 @@ func isPlaceholderSpot(s spot) bool {
 // place returns the range of raw's value in f.Text. bom is the length of
 // the byte order mark the file had on disk, which the scanner counted. ok is
 // false when the range is outside the text, does not fall on character
-// boundaries, is empty, or does not hold the value the scanner reported.
+// boundaries, is empty, or does not hold the value the scanner reported. For
+// a value the scanner found by decoding, the range is the encoded text that
+// encodedSpan finds where the scanner reported it.
 func place(f textfile.File, bom int, raw Raw) (_ finding.Span, ok bool) {
 	var start, end int
+	if raw.Encoding != "" {
+		col := raw.ByteCol
+		if raw.Line == 1 {
+			col -= bom
+		}
+		off, err := f.Offset(raw.Line, col)
+		if err != nil {
+			return finding.Span{}, false
+		}
+		span, ok := encodedSpan(f.Text, off, raw)
+		if !ok || !utf8.RuneStart(f.Text[span.Start]) || (span.End < len(f.Text) && !utf8.RuneStart(f.Text[span.End])) {
+			return finding.Span{}, false
+		}
+		return span, true
+	}
 	if raw.Offset >= 0 {
 		start, end = raw.Offset-bom, raw.EndOffset-bom
 	} else {

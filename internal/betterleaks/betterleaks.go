@@ -10,6 +10,7 @@ import (
 	"io"
 	"log/slog"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
@@ -142,8 +143,11 @@ func (l leak) LogValue() slog.Value {
 
 // Parse reads a betterleaks JSON report of a scan of dir. Each result is
 // placed at the first place its value appears in the matched text. A result
-// whose value is not in the matched text, or whose file is not inside dir,
-// is dropped and counted, and the file of a dropped result that is inside
+// that betterleaks found by decoding text has a decoded match, so it keeps
+// the line and column betterleaks gave, which are where the encoded text
+// starts, and carries the encoding and the depth for the scan to place it. A
+// result whose value is not in the matched text, whose decoding is unknown,
+// or whose file is not inside dir, is dropped and counted, and the file of a dropped result that is inside
 // dir is listed in Counts.DroppedFiles.
 //
 // Parse fails with scan.ErrScannerFailed when the report is not valid JSON
@@ -169,7 +173,13 @@ func Parse(out []byte, dir string) ([]scan.Raw, scan.Counts, error) {
 			counts.Dropped++
 			continue
 		}
-		line, col, ok := locate(l)
+		encoding, depth, decoded, ok := decoding(l.Tags)
+		line, col := l.StartLine, l.StartColumn
+		if decoded {
+			ok = ok && line >= 1 && col >= 1 && l.Secret != ""
+		} else {
+			line, col, ok = locate(l)
+		}
 		if !ok {
 			counts.Dropped++
 			counts.DroppedFiles = append(counts.DroppedFiles, file)
@@ -178,9 +188,41 @@ func Parse(out []byte, dir string) ([]scan.Raw, scan.Counts, error) {
 		raws = append(raws, scan.Raw{
 			Tool: name, Rule: l.RuleID, Category: category, Kind: kind, File: file,
 			Offset: -1, EndOffset: -1, Line: line, ByteCol: col, Value: scan.Value(l.Secret),
+			Encoding: encoding, Depth: depth,
 		})
 	}
 	return raws, counts, nil
+}
+
+// decoding reads the tags betterleaks adds to a result it found in decoded
+// text, "decoded:<encoding>" and "decode-depth:<n>". decoded is false when
+// there is no decoded tag. ok is false when the encoding is not one the scan
+// can decode or the depth is not a positive number. A missing depth is one.
+func decoding(tags []string) (_ finding.Encoding, depth int, decoded, ok bool) {
+	var name, depthTag string
+	for _, t := range tags {
+		if v, found := strings.CutPrefix(t, "decoded:"); found {
+			name, decoded = v, true
+		}
+		if v, found := strings.CutPrefix(t, "decode-depth:"); found {
+			depthTag = v
+		}
+	}
+	if !decoded {
+		return "", 0, false, true
+	}
+	encoding, err := finding.ParseEncoding(name)
+	if err != nil {
+		return "", 0, true, false
+	}
+	depth = 1
+	if depthTag != "" {
+		depth, err = strconv.Atoi(depthTag)
+		if err != nil || depth < 1 {
+			return "", 0, true, false
+		}
+	}
+	return encoding, depth, true, true
 }
 
 // locate returns the 1-based line and byte column of the first appearance
