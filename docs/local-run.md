@@ -184,7 +184,7 @@ worker는 스캔에서 찾은 값의 지문을 OpenBao transit으로 계산하�
 
 - 호스트 파일과 볼륨의 키가 다르면 아무것도 바꾸지 않고 멈춘다. `openbao-data`를 연 키를 호스트 파일 자리에 두고 다시 실행한다.
 - `openbao-data` 볼륨은 있는데 어디에도 키가 없으면 새 키를 만들지 않고 멈춘다. 새 키로는 그 저장소를 열 수 없다.
-- 적용은 외부화한 값을 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 쓴다. 이미 값이 있으면 저장된 바이트를 다시 읽어 지문을 비교하고, 다를 때만 check-and-set으로 새 버전을 쓴다. 이전 값은 이전 버전에 남는다. applier 정책은 이 경로를 쓰고 읽을 수만 있고 지우거나 메타데이터를 볼 수 없다. KV v2 마운트는 경로마다 버전을 100개 남긴다. 값 하나는 16MiB까지 저장하고, 그보다 큰 값(큰 키 파일)은 `too-large`로 건너뛰어 소스에 남는다. OpenBao는 요청 하나를 32MiB까지 받는다(`docs/adr/0035-externalized-values-in-openbao.md`).
+- 적용은 외부화한 값을 `secret/data/projects/<프로젝트 ID>/ext.<이름>`에 쓴다. 이미 값이 있으면 저장된 바이트를 다시 읽어 지문을 비교하고, 다를 때만 check-and-set으로 새 버전을 쓴다. 이전 값은 이전 버전에 남는다. applier 정책은 이 경로를 쓰고 읽을 수만 있고 지우거나 메타데이터를 볼 수 없다. KV v2 마운트는 경로마다 버전을 100개 남긴다. 같은 이름에 다른 값을 101번째로 쓰면 그 경로의 가장 오래된 버전이 사라지고, 그 버전을 적은 적용 기록(`apply_item.store_version`)은 더 이상 읽을 수 있는 값을 가리키지 않는다. 버전은 값이 바뀔 때만 늘므로, 같은 값을 다시 적용하는 것은 세지 않는다. 이 한도는 self-init이 첫 기동 때 `secret/config`에 한 번 쓰고, 어느 역할의 정책에도 `secret/config`가 없으므로 띄운 뒤에는 도구로 바꿀 수 없다. 더 남기려면 첫 기동 전에 `deploy/openbao/config.hcl`의 `kv-max-versions` 요청을 고친다. 값 하나는 16MiB까지 저장하고, 그보다 큰 값(큰 키 파일)은 `too-large`로 건너뛰어 소스에 남는다. OpenBao는 요청 하나를 32MiB까지 받는다(`docs/adr/0035-externalized-values-in-openbao.md`).
 
 ### 역할을 나누기 전에 만든 저장소
 
