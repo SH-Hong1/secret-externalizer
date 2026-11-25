@@ -193,7 +193,7 @@ func TestHandleDashboard_NoScans(t *testing.T) {
 	res := e.getDashboard(t, "/dashboard")
 	wantIn(t, "GET /dashboard with no scan", res.body,
 		"성공한 스캔이 없습니다. 프로젝트를 스캔하면 숫자가 보입니다.", "스캔한 적 없음", "billing")
-	wantNotIn(t, "GET /dashboard with no scan", res.body, "<svg", "지난 스캔 대비")
+	wantNotIn(t, "GET /dashboard with no scan", res.body, "<svg", "지난 스캔 대비", "분류별 남은 항목", "오탐이 많은 규칙")
 
 	e = newTestEnv(t)
 	d := dashboardData()
@@ -203,7 +203,8 @@ func TestHandleDashboard_NoScans(t *testing.T) {
 	d.PointTotal = 0
 	e.dashboards.data = d
 	res = e.getDashboard(t, "/dashboard?period=7d")
-	wantIn(t, "GET /dashboard?period=7d with no scan in the period", res.body, "지난 스캔 대비 -4", "이 기간에 끝난 스캔이 없습니다.")
+	wantIn(t, "GET /dashboard?period=7d with no scan in the period", res.body,
+		"지난 스캔 대비 -4", "이 기간에 끝난 스캔이 없습니다.", "분류별 남은 항목", "오탐이 많은 규칙")
 	wantNotIn(t, "GET /dashboard?period=7d with no scan in the period", res.body, "<svg")
 }
 
