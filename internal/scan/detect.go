@@ -9,7 +9,7 @@ import (
 
 // counter is a Scanner that also reports how many results it dropped.
 type counter interface {
-	ScanWithCounts(ctx context.Context, dir string) ([]Raw, Counts, error)
+	ScanWithCounts(ctx context.Context, dir string, excludes []string) ([]Raw, Counts, error)
 }
 
 // wholeFile reports whether r covers a whole file, as a key file result
@@ -56,10 +56,10 @@ type detection struct {
 }
 
 // detect runs every scanner over the project folder dir and, when there are
-// EUC-KR files, over the folder of copies. A file in the folder of copies
-// has the same relative path as its original. A scanner that fails is a
-// *toolError.
-func (r *Runner) detect(ctx context.Context, dir, copies string, files fileList) (detection, error) {
+// EUC-KR files, over the folder of copies, without the project-relative
+// paths in excludes. A file in the folder of copies has the same relative
+// path as its original. A scanner that fails is a *toolError.
+func (r *Runner) detect(ctx context.Context, dir, copies string, excludes []string, files fileList) (detection, error) {
 	d := detection{
 		versions: make(map[string]string, len(r.scanners)),
 		dropped:  drops{files: map[string]bool{}},
@@ -77,7 +77,7 @@ func (r *Runner) detect(ctx context.Context, dir, copies string, files fileList)
 			folders = append(folders, copies)
 		}
 		for i, folder := range folders {
-			raws, counts, err := scanFolder(ctx, s, folder)
+			raws, counts, err := scanFolder(ctx, s, folder, excludes)
 			if err != nil {
 				return detection{}, &toolError{tool: s.Name(), err: err}
 			}
@@ -91,12 +91,13 @@ func (r *Runner) detect(ctx context.Context, dir, copies string, files fileList)
 	return d, nil
 }
 
-// scanFolder runs s over dir, with counts when s reports them.
-func scanFolder(ctx context.Context, s Scanner, dir string) ([]Raw, Counts, error) {
+// scanFolder runs s over dir without excludes, with counts when s reports
+// them.
+func scanFolder(ctx context.Context, s Scanner, dir string, excludes []string) ([]Raw, Counts, error) {
 	if c, ok := s.(counter); ok {
-		return c.ScanWithCounts(ctx, dir)
+		return c.ScanWithCounts(ctx, dir, excludes)
 	}
-	raws, err := s.Scan(ctx, dir)
+	raws, err := s.Scan(ctx, dir, excludes)
 	return raws, Counts{}, err
 }
 

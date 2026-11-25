@@ -38,6 +38,8 @@ func TestKeyfile_Table(t *testing.T) {
 		"src/Embedded.java":     "class Embedded {\n  String k = \"-----BEGIN PRIVATE KEY-----\";\n}\n",
 		"src/Late.txt":          strings.Repeat("x", 4096) + "\n" + fakeKey,
 		"target/id_rsa":         "dev-only-fake-key",
+		"skipped/id_rsa":        "dev-only-fake-key",
+		"conf/old.jks":          "dev-only-fake-store",
 		"empty.pem":             "",
 	}
 	dir := t.TempDir()
@@ -54,7 +56,8 @@ func TestKeyfile_Table(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := keyfile.New().Scan(t.Context(), dir)
+	// skipped and conf/old.jks are project excludes.
+	got, err := keyfile.New().Scan(t.Context(), dir, []string{"skipped", "conf/old.jks"})
 	if err != nil {
 		t.Fatalf("Scan() error = %v", err)
 	}
@@ -91,7 +94,7 @@ func TestKeyfile_Unreadable(t *testing.T) {
 	if err := os.WriteFile(p, []byte(fakeKey), 0o000); err != nil {
 		t.Fatal(err)
 	}
-	got, err := keyfile.New().Scan(t.Context(), dir)
+	got, err := keyfile.New().Scan(t.Context(), dir, nil)
 	if err != nil || len(got) != 0 {
 		t.Errorf("Scan(unreadable file) = %+v, %v, want nothing and no error", got, err)
 	}
@@ -104,7 +107,7 @@ func TestKeyfile_Cancelled(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	if _, err := keyfile.New().Scan(ctx, dir); !errors.Is(err, context.Canceled) {
+	if _, err := keyfile.New().Scan(ctx, dir, nil); !errors.Is(err, context.Canceled) {
 		t.Errorf("Scan(cancelled ctx) error = %v, want context.Canceled", err)
 	}
 }

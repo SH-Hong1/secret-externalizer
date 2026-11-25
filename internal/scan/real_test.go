@@ -67,7 +67,7 @@ func TestHandle_RealScanners(t *testing.T) {
 	})
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 	bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
-	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env)
+	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), env)
 
 	if err := e.handle(t.Context(), bl, og); err != nil {
 		t.Fatalf("Handle() error = %v", err)
@@ -120,7 +120,7 @@ func TestHandle_RealScannersContextMasksEveryValue(t *testing.T) {
 	}
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 	bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
-	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env)
+	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), env)
 
 	if err := e.handle(t.Context(), bl, og); err != nil {
 		t.Fatalf("Handle() error = %v", err)
@@ -169,7 +169,7 @@ func TestHandle_RealScannersEncodedValue(t *testing.T) {
 	})
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 	bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
-	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env)
+	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), env)
 
 	if err := e.handle(t.Context(), bl, og); err != nil {
 		t.Fatalf("Handle() error = %v", err)
@@ -229,7 +229,7 @@ func TestHandle_RealScannersSplitURL(t *testing.T) {
 	})
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 	bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
-	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env)
+	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), env)
 
 	if err := e.handle(t.Context(), bl, og); err != nil {
 		t.Fatalf("Handle() error = %v", err)
@@ -271,7 +271,7 @@ func TestHandle_RealScannersKeysOfOneFile(t *testing.T) {
 	}
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 	bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
-	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env)
+	og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), env)
 
 	if err := e.handle(t.Context(), bl, og); err != nil {
 		t.Fatalf("Handle() error = %v", err)

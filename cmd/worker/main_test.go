@@ -107,7 +107,7 @@ func (fakeScanner) Name() string { return "fake" }
 
 func (fakeScanner) Version(context.Context) (string, error) { return "fake-1", nil }
 
-func (fakeScanner) Scan(_ context.Context, dir string) ([]scan.Raw, error) {
+func (fakeScanner) Scan(_ context.Context, dir string, _ []string) ([]scan.Raw, error) {
 	var raws []scan.Raw
 	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
 		if err != nil || !d.Type().IsRegular() {

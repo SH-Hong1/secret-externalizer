@@ -204,7 +204,7 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 	}
 	res.Files, res.Skipped = len(files.files)+files.unstorable, files.skipped
 
-	d, err := r.detect(ctx, dir, copies, files)
+	d, err := r.detect(ctx, dir, copies, p.Excludes, files)
 	if err != nil {
 		return err
 	}

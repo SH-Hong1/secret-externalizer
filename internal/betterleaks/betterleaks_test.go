@@ -288,7 +288,7 @@ func testEnv(t *testing.T) scanexec.Env {
 func TestScan_NonZeroExit(t *testing.T) {
 	bin := fakeScanner(t, `echo '[{"Secret": "dev-only-fake-leak"}]'; echo dev-only-fake-leak >&2; exit 1`)
 	s := betterleaks.New(bin, "/rules/betterleaks.toml", testEnv(t))
-	_, err := s.Scan(t.Context(), t.TempDir())
+	_, err := s.Scan(t.Context(), t.TempDir(), nil)
 	if !errors.Is(err, scan.ErrScannerFailed) {
 		t.Fatalf("Scan() error = %v, want ErrScannerFailed", err)
 	}
@@ -308,7 +308,7 @@ func TestScan_Betterleaks_ExitCode3(t *testing.T) {
 	})
 	bin := fakeScanner(t, "cat <<'EOF'\n"+string(out)+"\nEOF\nexit 3")
 	s := betterleaks.New(bin, "/rules/betterleaks.toml", testEnv(t))
-	got, err := s.Scan(t.Context(), dir)
+	got, err := s.Scan(t.Context(), dir, nil)
 	if err != nil {
 		t.Fatalf("Scan() with exit code 3 error = %v, want nil", err)
 	}
@@ -325,7 +325,7 @@ func TestScan_Args(t *testing.T) {
 		t.Fatal(err)
 	}
 	s := betterleaks.New(bin, "/rules/betterleaks.toml", env)
-	got, counts, err := s.ScanWithCounts(t.Context(), dir)
+	got, counts, err := s.ScanWithCounts(t.Context(), dir, nil)
 	if err != nil || len(got) != 0 || !cmp.Equal(counts, scan.Counts{}) {
 		t.Fatalf("ScanWithCounts() = %v, %+v, %v, want no results and no error", got, counts, err)
 	}
@@ -354,7 +354,7 @@ func TestScan_Args(t *testing.T) {
 func TestScan_RelativeDir(t *testing.T) {
 	bin := fakeScanner(t, `echo '[]'`)
 	s := betterleaks.New(bin, "/rules/betterleaks.toml", testEnv(t))
-	if _, err := s.Scan(t.Context(), "relative/dir"); err == nil {
+	if _, err := s.Scan(t.Context(), "relative/dir", nil); err == nil {
 		t.Errorf("Scan(relative/dir) error = nil, want an error")
 	}
 }
@@ -401,7 +401,7 @@ func TestScan_RealBetterleaks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, err := betterleaks.New(bin, config, testEnv(t)).Scan(t.Context(), dir)
+	got, err := betterleaks.New(bin, config, testEnv(t)).Scan(t.Context(), dir, nil)
 	if err != nil {
 		t.Fatalf("Scan() error = %v", err)
 	}

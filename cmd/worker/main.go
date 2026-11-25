@@ -85,10 +85,7 @@ func newDeps(cfg config) (workerDeps, error) {
 	env := scanexec.Env{Path: scannerPath, Home: scanHome(cfg), TmpDir: scanTmp(cfg)}
 	deps.scanners = []scan.Scanner{
 		betterleaks.New(cfg.betterleaksBin, filepath.Join(cfg.rulesDir, "betterleaks.toml"), env),
-		// The wrapper always excludes .git, target, build, and
-		// node_modules. Project excludes are applied by the runner,
-		// which leaves out results for files it did not list.
-		opengrep.New(cfg.opengrepBin, filepath.Join(cfg.rulesDir, "opengrep"), nil, env),
+		opengrep.New(cfg.opengrepBin, filepath.Join(cfg.rulesDir, "opengrep"), env),
 		keyfile.New(),
 	}
 	return deps, nil

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
@@ -20,15 +19,13 @@ const name = "opengrep"
 // Scanner runs opengrep. Build it with New.
 type Scanner struct {
 	bin, rulesDir string
-	excludes      []string
 	env           scanexec.Env
 }
 
 // New returns a Scanner that runs the opengrep executable bin with the rules
-// in rulesDir and the environment env. excludes are project-relative paths
-// with forward slashes, each a file or a directory that is not scanned.
-func New(bin, rulesDir string, excludes []string, env scanexec.Env) *Scanner {
-	return &Scanner{bin: bin, rulesDir: rulesDir, excludes: slices.Clone(excludes), env: env}
+// in rulesDir and the environment env.
+func New(bin, rulesDir string, env scanexec.Env) *Scanner {
+	return &Scanner{bin: bin, rulesDir: rulesDir, env: env}
 }
 
 // Name returns "opengrep".
@@ -40,25 +37,27 @@ func (s *Scanner) Version(ctx context.Context) (string, error) {
 }
 
 // Scan scans dir, an absolute path, and returns what opengrep found.
-func (s *Scanner) Scan(ctx context.Context, dir string) ([]scan.Raw, error) {
-	raws, _, err := s.ScanWithCounts(ctx, dir)
+// excludes are paths relative to dir with forward slashes, each a file or a
+// folder that opengrep does not read.
+func (s *Scanner) Scan(ctx context.Context, dir string, excludes []string) ([]scan.Raw, error) {
+	raws, _, err := s.ScanWithCounts(ctx, dir, excludes)
 	return raws, err
 }
 
 // ScanWithCounts is Scan that also returns how many results were dropped and
 // how many errors opengrep reported for files it could analyse only in part.
-func (s *Scanner) ScanWithCounts(ctx context.Context, dir string) ([]scan.Raw, scan.Counts, error) {
+func (s *Scanner) ScanWithCounts(ctx context.Context, dir string, excludes []string) ([]scan.Raw, scan.Counts, error) {
 	if !filepath.IsAbs(dir) {
 		return nil, scan.Counts{}, fmt.Errorf("scanning %s: the folder is not an absolute path", name)
 	}
-	out, err := scanexec.Run(ctx, scanexec.Command{Tool: name, Bin: s.bin, Args: s.args(dir), Dir: dir, Env: s.env})
+	out, err := scanexec.Run(ctx, scanexec.Command{Tool: name, Bin: s.bin, Args: s.args(dir, excludes), Dir: dir, Env: s.env})
 	if err != nil {
 		return nil, scan.Counts{}, fmt.Errorf("scanning: %w", err)
 	}
 	return Parse(out, dir)
 }
 
-// args returns the arguments for a scan of dir.
+// args returns the arguments for a scan of dir without excludes.
 //
 // dir is made the project root, so opengrep treats it as a folder without
 // version control and anchors exclude patterns there. opengrep runs in dir
@@ -67,7 +66,7 @@ func (s *Scanner) ScanWithCounts(ctx context.Context, dir string) ([]scan.Raw, s
 // .semgrepignore files, and nosemgrep comments are not honoured, so a
 // scanned project cannot hide a file or a line from the scan. Rule IDs are
 // kept as written in the rule files.
-func (s *Scanner) args(dir string) []string {
+func (s *Scanner) args(dir string, excludes []string) []string {
 	args := []string{
 		"scan",
 		"--config=" + s.rulesDir,
@@ -86,7 +85,7 @@ func (s *Scanner) args(dir string) []string {
 	for _, e := range []string{".git/", "target/", "build/", "node_modules/"} {
 		args = append(args, "--exclude="+e)
 	}
-	for _, e := range s.excludes {
+	for _, e := range excludes {
 		args = append(args, "--exclude=/"+escapePattern(e))
 	}
 	return append(args, "--", ".")

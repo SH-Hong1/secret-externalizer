@@ -136,7 +136,7 @@ func scanExample(t *testing.T, project, parent string) []result {
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 
 	var raws []scan.Raw
-	bl, counts, err := betterleaks.New(blBin, repoPath(t, "rules/betterleaks.toml"), env).ScanWithCounts(t.Context(), dir)
+	bl, counts, err := betterleaks.New(blBin, repoPath(t, "rules/betterleaks.toml"), env).ScanWithCounts(t.Context(), dir, nil)
 	if err != nil {
 		t.Fatalf("betterleaks ScanWithCounts(%s) error = %v", project, err)
 	}
@@ -144,7 +144,7 @@ func scanExample(t *testing.T, project, parent string) []result {
 		t.Errorf("betterleaks ScanWithCounts(%s) counts = %+v, want zero", project, counts)
 	}
 	raws = append(raws, bl...)
-	og, counts, err := opengrep.New(ogBin, repoPath(t, "rules/opengrep"), nil, env).ScanWithCounts(t.Context(), dir)
+	og, counts, err := opengrep.New(ogBin, repoPath(t, "rules/opengrep"), env).ScanWithCounts(t.Context(), dir, nil)
 	if err != nil {
 		t.Fatalf("opengrep ScanWithCounts(%s) error = %v", project, err)
 	}
@@ -152,7 +152,7 @@ func scanExample(t *testing.T, project, parent string) []result {
 		t.Errorf("opengrep ScanWithCounts(%s) counts = %+v, want zero", project, counts)
 	}
 	raws = append(raws, og...)
-	kf, err := keyfile.New().Scan(t.Context(), dir)
+	kf, err := keyfile.New().Scan(t.Context(), dir, nil)
 	if err != nil {
 		t.Fatalf("keyfile Scan(%s) error = %v", project, err)
 	}

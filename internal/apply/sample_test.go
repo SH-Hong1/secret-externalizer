@@ -81,7 +81,7 @@ func TestIntegration_PublicSample(t *testing.T) {
 	env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
 	scanner := scan.NewRunner(logger, store, worker, worker, []scan.Scanner{
 		betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env),
-		opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env),
+		opengrep.New(ogBin, filepath.Join(rules, "opengrep"), env),
 		keyfile.New(),
 	}, scan.Options{WorkerID: realWorker, Root: workspace, RulesVersion: rulesVersion, TempDir: t.TempDir(), Git: git})
 	applier := apply.NewRunner(logger, store, vault, apply.Options{WorkerID: realWorker, Root: workspace, Git: git})

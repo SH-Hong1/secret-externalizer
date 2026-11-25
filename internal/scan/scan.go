@@ -181,7 +181,10 @@ type Scanner interface {
 	// Version returns the version of the tool.
 	Version(ctx context.Context) (string, error)
 	// Scan scans the folder dir, an absolute path, and returns what it found.
-	Scan(ctx context.Context, dir string) ([]Raw, error)
+	// excludes are paths relative to dir with forward slashes, each a file
+	// or a folder that is not scanned. A tool that cannot leave them out
+	// scans them; the runner drops results for files it did not list.
+	Scan(ctx context.Context, dir string, excludes []string) ([]Raw, error)
 }
 
 // RelPath returns the path p, which a scanner reported for a file it found
