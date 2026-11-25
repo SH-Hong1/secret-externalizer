@@ -176,7 +176,7 @@ func runScan(t *testing.T, store *db.Store, scanner *scan.Runner, id scan.ID, lo
 		t.Fatalf("Scan(%d) error = %v", id, err)
 	}
 	if got.Status != scan.StatusSucceeded {
-		t.Fatalf("Scan(%d) = status %q, failure %q; want succeeded; log:\n%s", id, got.Status, got.FailureReason, logs.String())
+		t.Fatalf("Scan(%d) = status %q, failure %q; want succeeded; log:\n%s", id, got.Status, got.FailureReason, workerLog(logs))
 	}
 }
 
@@ -352,7 +352,7 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 	}
 	if checked.State != apply.StateReady {
 		t.Fatalf("ApplyRun(%d) after the check = state %q, blockers %v, failure %q; want ready; log:\n%s",
-			id, checked.State, checked.Blockers, checked.FailureReason, f.logs.String())
+			id, checked.State, checked.Blockers, checked.FailureReason, workerLog(&f.logs))
 	}
 	if diff := cmp.Diff(before, projectFiles(t, f.dir)); diff != "" {
 		t.Errorf("the scan and the check changed the project (-before +after):\n%s", diff)
@@ -369,7 +369,7 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 	}
 	if done.State != apply.StateSucceeded || done.RescanID == 0 {
 		t.Fatalf("ApplyRun(%d) after the apply = state %q, failure %q, confirming scan %d; want succeeded with a confirming scan; log:\n%s",
-			id, done.State, done.FailureReason, done.RescanID, f.logs.String())
+			id, done.State, done.FailureReason, done.RescanID, workerLog(&f.logs))
 	}
 	items, err := store.ApplyItems(ctx, id)
 	if err != nil {

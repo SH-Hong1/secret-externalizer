@@ -472,7 +472,7 @@ func testApplyLegacyShop(t *testing.T, consent bool) {
 	}
 	if checked.State != apply.StateReady || !slices.Equal(checked.IrreversibleFiles, []string{untrackLog}) {
 		t.Fatalf("ApplyRun(%d) after the check = state %q, blockers %v, irreversible %v, failure %q; want ready with %s irreversible; log:\n%s",
-			id, checked.State, checked.Blockers, checked.IrreversibleFiles, checked.FailureReason, untrackLog, f.logs.String())
+			id, checked.State, checked.Blockers, checked.IrreversibleFiles, checked.FailureReason, untrackLog, workerLog(&f.logs))
 	}
 	for file, b := range before {
 		if !bytes.Equal(b, read(t, f.dir, file)) {
@@ -496,7 +496,7 @@ func testApplyLegacyShop(t *testing.T, consent bool) {
 		t.Fatalf("ApplyRun(%d) error = %v", id, err)
 	}
 	if done.State != apply.StateSucceeded {
-		t.Fatalf("ApplyRun(%d) after the apply = state %q, failure %q; want succeeded; log:\n%s", id, done.State, done.FailureReason, f.logs.String())
+		t.Fatalf("ApplyRun(%d) after the apply = state %q, failure %q; want succeeded; log:\n%s", id, done.State, done.FailureReason, workerLog(&f.logs))
 	}
 
 	// The items of the run.

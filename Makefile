@@ -165,7 +165,8 @@ sample:
 # sample-check scans, applies, and scans again the first public sample with
 # the real scanners, postgres, and OpenBao; see TestIntegration_PublicSample
 # in internal/apply. UPDATE_GOLDEN=1 rewrites the list of what the scan
-# finds.
+# finds. SHOW_WORKER_LOG=1 in the environment shows the whole worker log in
+# a failure message instead of its digest.
 sample-check:
 	@test -n "$(TEST_DATABASE_URL)" || { echo "set TEST_DATABASE_URL and TEST_BAO_ADDR as for make test-integration" >&2; exit 1; }
 	@test -n "$(TEST_BAO_ADDR)" || { echo "set TEST_DATABASE_URL and TEST_BAO_ADDR as for make test-integration" >&2; exit 1; }
