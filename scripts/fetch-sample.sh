@@ -31,11 +31,20 @@ grep -v -e '^#' -e '^[[:space:]]*$' "$lock" | while read -r name url commit extr
 	rm -r -f -- "$dest"
 	mkdir -p "$dest"
 	git -C "$dest" init -q
-	if ! git -C "$dest" fetch -q --depth 1 "$url" "$commit" 2>/dev/null; then
-		rm -r -f -- "$dest"
-		printf 'fetch-sample: %s: commit %s not found at %s\n' "$name" "$commit" "$url" >&2
+	# git's error goes to a file beside the copy so that it can be shown only
+	# when the fetch fails. A failed fetch means a missing commit only if the
+	# repository answers; otherwise the repository or the network is at fault.
+	if ! git -C "$dest" fetch -q --depth 1 "$url" "$commit" 2>"$dest.err"; then
+		if git ls-remote -q "$url" >/dev/null 2>&1; then
+			printf 'fetch-sample: %s: commit %s not found at %s\n' "$name" "$commit" "$url" >&2
+		else
+			printf 'fetch-sample: %s: cannot reach %s:\n' "$name" "$url" >&2
+			sed 's/^/	/' "$dest.err" >&2
+		fi
+		rm -r -f -- "$dest" "$dest.err"
 		exit 1
 	fi
+	rm -f -- "$dest.err"
 	git -C "$dest" -c advice.detachedHead=false checkout -q --detach FETCH_HEAD
 	got=$(git -C "$dest" rev-parse HEAD)
 	if [ "$got" != "$commit" ]; then
