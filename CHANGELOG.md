@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 편집기 swap 파일 `.githooks/.pre-commit.swp`를 저장소에서 지우고, `.gitignore`가 `*.swp`, `*.swo`, `*~`를 무시한다
 - 실제 스캐너를 쓰는 `internal/apply` 테스트(공개 예제 검증 포함)가 스캔, 점검, 적용에 실패하면 worker 로그 전체 대신 레코드마다 level, 메시지, 속성 이름만 보이고, 메시지와 속성 이름도 프로그램 소스에 문자열 리터럴로 적힌 것일 때만 보인다. 값을 로그에 남기는 회귀와 실패가 겹쳐도 CI 로그에 값이 찍히지 않는다. 로컬에서 전체 로그가 필요하면 `SHOW_WORKER_LOG=1`을 준다(`docs/adr/0079-test-failures-show-a-log-digest.md`)
 - `pre-commit`이 파일을 지우기만 한 커밋도 검사 대상으로 보고 `make check`를 실행한다. 또 `make check`는 작업 트리를 읽으므로, Go 파일뿐 아니라 템플릿, testdata, 스크립트 등 검사 대상 파일 하나라도 스테이징되지 않은 변경이 있으면(지운 것으로 스테이징했는데 디스크에 남은 파일 포함) 커밋을 거부한다
 - `.properties` 파일에서 키 끝이 `user`, `username`, `userid`인 값은 공백 없는 한 낱말일 때만 계정으로 보고한다. 메시지 파일의 `confirm.required.user=User is required.`나 `\uXXXX`로 쓴 안내 문장처럼 공백이 든 문장은 더 이상 계정 항목이 아니다. 공개 예제 검증(`make sample-check`)은 예제 사본의 `context-datasource.xml`에 누가 봐도 가짜인 접속 정보 bean 하나를 넣어 적용과 확인 스캔이 실제로 바꿀 자리를 갖게 하고, 원본은 그것을 읽을 수 있는 web 역할로 읽는다(`docs/adr/0078-public-sample-seeded-data-source.md`)

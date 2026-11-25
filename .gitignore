@@ -4,3 +4,8 @@ bin/
 
 # The diff the CI rules review reads.
 /.review/
+
+# Editor swap and backup files.
+*.swp
+*.swo
+*~
