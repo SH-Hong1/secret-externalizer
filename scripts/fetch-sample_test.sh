@@ -74,6 +74,19 @@ elif ! grep -q "commit $missing not found" "$work/err"; then
 	fail "missing commit: message $(cat "$work/err")"
 fi
 
+# A repository that cannot be reached is not reported as a missing commit,
+# and git's own error is shown. The cache is empty so that nothing is reused.
+printf 'sample file://%s/nowhere %s\n' "$work" "$first" >"$work/lock"
+if sh "$fetch" "$work/lock" "$work/empty-cache" >/dev/null 2>"$work/err"; then
+	fail "unreachable repository: succeeded"
+elif grep -q "not found" "$work/err"; then
+	fail "unreachable repository: reported as a missing commit: $(cat "$work/err")"
+elif ! grep -q "cannot reach file://$work/nowhere" "$work/err"; then
+	fail "unreachable repository: message $(cat "$work/err")"
+elif [ "$(wc -l <"$work/err")" -lt 2 ]; then
+	fail "unreachable repository: git's error is not shown: $(cat "$work/err")"
+fi
+
 # A line without three fields.
 printf 'sample file://%s\n' "$src" >"$work/lock"
 if sh "$fetch" "$work/lock" "$cache" >/dev/null 2>"$work/err"; then
