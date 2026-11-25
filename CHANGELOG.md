@@ -6,6 +6,7 @@
 
 ### 변경
 
+- worker의 OpenBao 요청 한 번의 제한 시간이 10초에서 2분이 되고, 요청을 다 보낸 뒤 답을 기다리는 시간은 따로 30초로 묶는다. 공식 클라이언트가 요청마다 두던 60초 한도는 끄고, 작업의 시간 한도가 재시도를 합친 전체를 묶는다. 전에는 느린 호스트에서 큰 키 파일(16MiB까지)의 지문 요청, 저장, 다시 읽기가 10초를 넘어 `store-failed`가 되었다. web은 지금처럼 10초다(`docs/adr/0094-openbao-request-limits-allow-large-values.md`)
 - compose의 pdf와 `pdf-test` 컨테이너에 `memswap_limit: 1g`를 두어 스왑을 쓰지 않는다. 전에는 스왑이 있는 호스트에서 메모리 한도(1GiB)를 넘은 뒤에도 스왑을 1GiB까지 더 썼다. 띄운 스택은 `docker compose up -d pdf`로 바꾼다(`docs/adr/0092-pdf-container-has-no-swap.md`)
 - 스캔이 프로젝트의 제외 경로를 betterleaks에도 넘겨, betterleaks가 제외한 폴더와 파일을 읽지 않는다. 제외 경로가 있는 스캔마다 원래 규칙 파일을 `[extend]`로 잇고 `[[allowlists]] paths`를 더한 규칙 파일을 `<SCAN_TEMP_DIR>/tmp`에 만들어 넘기고, 스캔이 끝나면 지운다. 전에는 betterleaks가 제외한 폴더도 읽고 결과만 버렸다(`docs/adr/0091-betterleaks-excludes-through-a-scan-rule-file.md`)
 - 판정 화면의 상태 탭과 머리말, 스캔·프로젝트 화면의 "판정하기 · 미판정 N" 버튼과 판정 타일, 프로젝트 목록의 미판정·전체가 묶음 수가 아니라 판정 목록의 줄 수를 보인다. 고객정보는 파일, 종류, 판정마다 한 줄이므로, 한 줄이 탭에서 2 이상으로 세지지 않는다. 대시보드와 리포트는 묶음 수 그대로다(`docs/adr/0090-triage-counts-are-list-lines.md`)

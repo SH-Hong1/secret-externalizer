@@ -553,6 +553,17 @@ func TestNew_RequiresTimeout(t *testing.T) {
 	}
 }
 
+func TestNew_LeavesTheLimitToTheHTTPClient(t *testing.T) {
+	creds := bao.Credentials{RoleID: testRoleID, SecretID: testSecretID}
+	c, err := bao.New("http://127.0.0.1:1", creds, &http.Client{Timeout: 2 * time.Minute})
+	if err != nil {
+		t.Fatalf("New() error = %v", err)
+	}
+	if got := bao.RequestLimit(c); got != 0 {
+		t.Errorf("New() with a 2m HTTP client: official client limit = %v, want 0 (none of its own)", got)
+	}
+}
+
 func TestNew_RequiresCredentials(t *testing.T) {
 	hc := &http.Client{Timeout: time.Second}
 	for _, creds := range []bao.Credentials{{RoleID: testRoleID}, {SecretID: testSecretID}} {

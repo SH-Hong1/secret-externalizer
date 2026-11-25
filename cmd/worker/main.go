@@ -66,11 +66,22 @@ type workerDeps struct {
 // scannerPath is the PATH the scanners run with.
 const scannerPath = "/usr/local/bin:/usr/bin:/bin"
 
+// The limits on one attempt of a request to OpenBao. The largest request
+// carries the base64 of a value of apply.DefaultMaxStoredBytes, about
+// 21.4 MiB, and reading it back is as large, so baoTimeout allows a link of
+// about 180 KiB/s. baoAnswerLimit still fails a request to a server that
+// takes it and never answers, and leaves time for OpenBao to write a large
+// value to its storage before it answers.
+const (
+	baoTimeout     = 2 * time.Minute
+	baoAnswerLimit = 30 * time.Second
+)
+
 // newDeps returns the OpenBao client, as the fingerprinter, the originals
 // store and the vault, and, when the worker scans, the three scanners that
 // cfg describes. The client does not contact OpenBao until it is first used.
 func newDeps(cfg config) (workerDeps, error) {
-	hc, err := bao.NewHTTPClient(cfg.baoCA, 10*time.Second)
+	hc, err := bao.NewHTTPClient(cfg.baoCA, baoTimeout, baoAnswerLimit)
 	if err != nil {
 		return workerDeps{}, fmt.Errorf("preparing openbao TLS: %w", err)
 	}
