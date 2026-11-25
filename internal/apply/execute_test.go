@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -2163,5 +2164,73 @@ func TestApply_RecordAfterChangeHasItsOwnLimit(t *testing.T) {
 
 	if left < 5*time.Second {
 		t.Errorf("EndFile had %v left after the change, want the whole 5s limit", left)
+	}
+}
+
+// linkedTemp is a project folder whose new files keep their temporary file
+// as a second link, as when removing it after the link fails, and which
+// cannot remove a temporary file.
+type linkedTemp struct {
+	apply.ProjectDir
+	dir string
+}
+
+func (d linkedTemp) Create(rel string, content []byte, tmp string) error {
+	if err := d.ProjectDir.Create(rel, content, tmp); err != nil {
+		return err
+	}
+	if err := os.Link(filepath.Join(d.dir, rel), filepath.Join(d.dir, tmp)); err != nil {
+		return err
+	}
+	return fmt.Errorf("fake removal of the temporary file: %w", rewrite.ErrAfterCommit)
+}
+
+func (linkedTemp) RemoveTemp(string) error { return errRefused }
+
+// TestApply_ManifestLinkedToLeftTemp checks that a manifest left with a
+// second link to its temporary file, which a run could not remove, is
+// written by the next run: the next start removes the temporary file named
+// by the open record, so the manifest has one link again.
+func TestApply_ManifestLinkedToLeftTemp(t *testing.T) {
+	f := newShop(t, inRepository)
+	f.secret("db.yaml.password", ymlValue, ymlFile)
+	f.wrap = func(d apply.ProjectDir) apply.ProjectDir { return linkedTemp{d, f.dir} }
+	if err := f.apply(t.Context()); err != nil {
+		t.Fatalf("Apply() error = %v, want nil", err)
+	}
+	if f.store.failed == nil {
+		t.Fatalf("Apply() with the temporary file left = succeeded, want the run failed")
+	}
+	info, err := os.Stat(filepath.Join(f.dir, manifest.FileName))
+	if err != nil {
+		t.Fatalf("Stat(manifest) error = %v", err)
+	}
+	if st, ok := info.Sys().(*syscall.Stat_t); !ok || st.Nlink != 2 {
+		t.Fatalf("manifest after the first run has %v links, want 2", info.Sys())
+	}
+
+	f.wrap = nil
+	f.store.failed = nil
+	f.store.state[testRun] = apply.StateFailed
+	f.secret("db.xml.password", xmlValue, xmlFile)
+	f.run = 2
+	f.mustCheck()
+	f.mustApply()
+
+	var names []string
+	for _, e := range f.readManifest().Entries {
+		names = append(names, e.Name)
+	}
+	if diff := cmp.Diff([]string{"ext.db.xml.password", "ext.db.yaml.password"}, names); diff != "" {
+		t.Errorf("manifest names after the second run (-want +got):\n%s", diff)
+	}
+	entries, err := os.ReadDir(f.dir)
+	if err != nil {
+		t.Fatalf("ReadDir error = %v", err)
+	}
+	for _, e := range entries {
+		if strings.Contains(e.Name(), ".se-apply-") {
+			t.Errorf("temporary file %s left in the project folder", e.Name())
+		}
 	}
 }
