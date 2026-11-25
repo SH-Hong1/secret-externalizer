@@ -10,6 +10,8 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
+	"github.com/SH-Hong1/secret-externalizer/internal/scan"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 var (
@@ -61,13 +63,48 @@ func (s *Store) Project(ctx context.Context, id project.ID) (project.Project, er
 }
 
 // ProjectSummaries returns every project ordered by name, each with its
-// newest scan and the bundle counts of its newest succeeded scan. A bundle
-// counts when that scan found one of its members, as in Entries.
+// newest scan and, for its newest succeeded scan, the lines of the triage
+// list without a verdict and in all, counted as VerdictCounts counts them.
 func (s *Store) ProjectSummaries(ctx context.Context) ([]project.Summary, error) {
-	rows, err := s.pool.Query(ctx, `
+	var out []project.Summary
+	err := s.readOnly(ctx, func(tx pgx.Tx) error {
+		var (
+			okScans []scan.ID
+			err     error
+		)
+		out, okScans, err = readSummaries(ctx, tx)
+		if err != nil {
+			return err
+		}
+		for i := range out {
+			if !out[i].HasResult {
+				continue
+			}
+			counts := map[triage.Verdict]int{}
+			if err := readCounts(ctx, tx, out[i].Project.ID, okScans[i], counts); err != nil {
+				return err
+			}
+			for v, n := range counts {
+				out[i].Total += n
+				if v == "" {
+					out[i].Undecided = n
+				}
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// readSummaries returns every project ordered by name with its newest scan,
+// and the ID of each one's newest succeeded scan, zero when there is none.
+func readSummaries(ctx context.Context, tx pgx.Tx) ([]project.Summary, []scan.ID, error) {
+	rows, err := tx.Query(ctx, `
 		SELECT p.id, p.name, p.path, p.excludes, p.created_by, p.created_at,
-			last.id, last.status, last.requested_at, ok.id IS NOT NULL,
-			coalesce(c.undecided, 0)::int, coalesce(c.total, 0)::int
+			last.id, last.status, last.requested_at, ok.id
 		FROM project p
 		LEFT JOIN LATERAL (
 			SELECT id, status, requested_at FROM scan WHERE project_id = p.id ORDER BY id DESC LIMIT 1
@@ -75,19 +112,15 @@ func (s *Store) ProjectSummaries(ctx context.Context) ([]project.Summary, error)
 		LEFT JOIN LATERAL (
 			SELECT id FROM scan WHERE project_id = p.id AND status = 'succeeded' ORDER BY id DESC LIMIT 1
 		) ok ON true
-		LEFT JOIN LATERAL (
-			SELECT count(*) FILTER (WHERE b.verdict = '') AS undecided, count(*) AS total
-			FROM bundle b
-			WHERE b.project_id = p.id AND EXISTS (
-				SELECT 1 FROM finding f JOIN location l ON l.finding_id = f.id
-				WHERE f.bundle_id = b.id AND l.scan_id = ok.id)
-		) c ON true
 		ORDER BY p.name`)
 	if err != nil {
-		return nil, fmt.Errorf("listing project summaries: %w", err)
+		return nil, nil, fmt.Errorf("listing project summaries: %w", err)
 	}
 	defer rows.Close()
-	var out []project.Summary
+	var (
+		out     []project.Summary
+		okScans []scan.ID
+	)
 	for rows.Next() {
 		var (
 			sum    project.Summary
@@ -95,20 +128,26 @@ func (s *Store) ProjectSummaries(ctx context.Context) ([]project.Summary, error)
 			lastID *int64
 			status *string
 			at     *time.Time
+			okID   *int64
 		)
 		if err := rows.Scan(&p.ID, &p.Name, &p.Path, &p.Excludes, &p.CreatedBy, &p.CreatedAt,
-			&lastID, &status, &at, &sum.HasResult, &sum.Undecided, &sum.Total); err != nil {
-			return nil, fmt.Errorf("reading project summary row: %w", err)
+			&lastID, &status, &at, &okID); err != nil {
+			return nil, nil, fmt.Errorf("reading project summary row: %w", err)
 		}
 		if lastID != nil {
 			sum.LastScanID, sum.LastScanStatus, sum.LastScanAt = *lastID, *status, *at
 		}
+		var ok scan.ID
+		if okID != nil {
+			sum.HasResult, ok = true, scan.ID(*okID)
+		}
 		out = append(out, sum)
+		okScans = append(okScans, ok)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("listing project summaries: %w", err)
+		return nil, nil, fmt.Errorf("listing project summaries: %w", err)
 	}
-	return out, nil
+	return out, okScans, nil
 }
 
 func scanProject(row pgx.Row) (project.Project, error) {

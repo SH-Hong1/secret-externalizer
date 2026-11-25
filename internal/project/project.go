@@ -31,8 +31,10 @@ type Project struct {
 // Summary is a project with the state of its scans. LastScanID,
 // LastScanStatus and LastScanAt describe the newest scan in any state; they
 // are zero when the project was never scanned. HasResult is true when a
-// scan has succeeded, and Undecided and Total then count the bundles the
-// newest succeeded scan found that have no verdict, and all of them.
+// scan has succeeded, and Undecided and Total then count the lines of the
+// triage list of the newest succeeded scan that have no verdict, and all of
+// them: a secret bundle is one line, and the customer data of one file,
+// kind and verdict is one line.
 // LastScanStatus holds a scan status by its stored name, because the scan
 // package depends on this one.
 type Summary struct {

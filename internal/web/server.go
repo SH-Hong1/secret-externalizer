@@ -78,7 +78,7 @@ type ScanStore interface {
 // LatestScan returns the project's newest succeeded scan, or an error matching
 // db.ErrNotFound. Entries returns one page of the triage list of a scan; a
 // page past the last gives the last. VerdictCounts returns the number of
-// bundles of each verdict that a scan found. Bundle returns a bundle with the
+// lines of each verdict in the triage list of a scan. Bundle returns a bundle with the
 // members the scan found, or an error matching db.ErrNotFound. CustomerGroup returns
 // the customer data a key names, with no bundles when it names nothing.
 // SameValueBundles returns the other bundles of a bundle's value that the scan

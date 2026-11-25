@@ -171,7 +171,7 @@ func fillAppliedPage(ctx context.Context, store TriageStore, data *triagePage, q
 }
 
 // setScanHead fills the head of the triage screen: the scan and the
-// numbers of bundles.
+// numbers of lines of its triage list.
 func setScanHead(data *triagePage, sc scan.Scan, counts map[triage.Verdict]int) {
 	data.ScanID, data.ScanAt, data.Commit = sc.ID, formatTime(sc.RequestedAt), shortCommit(sc.CommitHash)
 	for v, n := range counts {
