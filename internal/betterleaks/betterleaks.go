@@ -9,7 +9,10 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
+	"path"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -45,22 +48,34 @@ func (s *Scanner) Version(ctx context.Context) (string, error) {
 }
 
 // Scan scans dir, an absolute path, and returns what betterleaks found.
-// betterleaks has no option to leave paths out, so excludes are scanned too
-// and the caller drops their results.
+// excludes are paths relative to dir with forward slashes, each a file or a
+// folder that betterleaks does not read.
 func (s *Scanner) Scan(ctx context.Context, dir string, excludes []string) ([]scan.Raw, error) {
 	raws, _, err := s.ScanWithCounts(ctx, dir, excludes)
 	return raws, err
 }
 
 // ScanWithCounts is Scan that also returns how many results were dropped.
-func (s *Scanner) ScanWithCounts(ctx context.Context, dir string, _ []string) ([]scan.Raw, scan.Counts, error) {
+func (s *Scanner) ScanWithCounts(ctx context.Context, dir string, excludes []string) (_ []scan.Raw, _ scan.Counts, err error) {
 	if !filepath.IsAbs(dir) {
 		return nil, scan.Counts{}, fmt.Errorf("scanning %s: the folder is not an absolute path", name)
+	}
+	config := s.config
+	if len(excludes) > 0 {
+		config, err = s.writeConfig(excludes)
+		if err != nil {
+			return nil, scan.Counts{}, err
+		}
+		defer func() {
+			if rmErr := os.Remove(config); rmErr != nil && err == nil {
+				err = fmt.Errorf("removing the %s rule file for the scan: %w", name, rmErr)
+			}
+		}()
 	}
 	out, err := scanexec.Run(ctx, scanexec.Command{
 		Tool:    name,
 		Bin:     s.bin,
-		Args:    s.args(),
+		Args:    args(config),
 		Dir:     dir,
 		Env:     s.env,
 		OKCodes: []int{0, exitLeaks},
@@ -71,7 +86,66 @@ func (s *Scanner) ScanWithCounts(ctx context.Context, dir string, _ []string) ([
 	return Parse(out, dir)
 }
 
-// args returns the arguments for a scan of the working directory. Comments
+// writeConfig writes a rule file to the scanners' temporary folder that
+// extends the configured rule file with a global allowlist of the excludes,
+// and returns its path. betterleaks has no option to leave paths out, and it
+// does not descend into a folder that this allowlist names. Each exclude
+// becomes a regular expression that matches that path and everything under
+// it, and nothing else; betterleaks matches it against paths relative to the
+// scanned folder.
+func (s *Scanner) writeConfig(excludes []string) (_ string, err error) {
+	base, err := filepath.Abs(s.config)
+	if err != nil {
+		return "", fmt.Errorf("finding the %s rule file: %w", name, err)
+	}
+	var b strings.Builder
+	b.WriteString("[extend]\npath = " + tomlString(base) + "\n\n[[allowlists]]\ndescription = \"project excludes\"\npaths = [\n")
+	for _, e := range excludes {
+		b.WriteString("  " + tomlString("^"+regexp.QuoteMeta(path.Clean(e))+"(?:/|$)") + ",\n")
+	}
+	b.WriteString("]\n")
+
+	f, err := os.CreateTemp(s.env.TmpDir, "betterleaks-*.toml")
+	if err != nil {
+		return "", fmt.Errorf("creating the %s rule file for the scan: %w", name, err)
+	}
+	defer func() {
+		if err != nil {
+			_ = os.Remove(f.Name()) // the write error is the one to report
+		}
+	}()
+	if _, err := f.WriteString(b.String()); err != nil {
+		_ = f.Close() // the write error is the one to report
+		return "", fmt.Errorf("writing the %s rule file for the scan: %w", name, err)
+	}
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("writing the %s rule file for the scan: %w", name, err)
+	}
+	return f.Name(), nil
+}
+
+// tomlString returns s as a TOML basic string: quotes, backslashes, and
+// control characters are escaped.
+func tomlString(s string) string {
+	var b strings.Builder
+	b.WriteByte('"')
+	for _, r := range s {
+		switch {
+		case r == '"' || r == '\\':
+			b.WriteByte('\\')
+			b.WriteRune(r)
+		case r < 0x20 || r == 0x7f:
+			fmt.Fprintf(&b, "\\u%04X", r)
+		default:
+			b.WriteRune(r)
+		}
+	}
+	b.WriteByte('"')
+	return b.String()
+}
+
+// args returns the arguments for a scan of the working directory with the
+// rule file config. Comments
 // that allow a line (gitleaks:allow) are ignored, so a scanned project cannot
 // hide a value from the scan.
 //
@@ -79,11 +153,11 @@ func (s *Scanner) ScanWithCounts(ctx context.Context, dir string, _ []string) ([
 // it matches rules' path patterns against, and reports, are relative to that
 // folder: a folder above it named, say, data does not make every file a data
 // file.
-func (s *Scanner) args() []string {
+func args(config string) []string {
 	return []string{
 		"dir",
 		"--no-banner",
-		"--config=" + s.config,
+		"--config=" + config,
 		"--report-format=json",
 		"--report-path=-",
 		fmt.Sprintf("--exit-code=%d", exitLeaks),
