@@ -6,6 +6,7 @@
 
 ### 변경
 
+- XML 태그의 `name="…"` 속성은 값이 그 태그의 `value` 속성이나 요소의 글일 때만 설정 키가 된다. 값이 다른 속성에 있으면 그 속성 이름이 키다. 전에는 `<bean id="ds" name="alias" p:password="…"/>`의 키가 `ds.alias`였고, 한 줄에 쓴 Tomcat의 `<Resource name="jdbc/live" password="…"/>`는 키가 비어 있었다. 이제 둘은 `ds.password`, `password`다. 키가 바뀐 자리는 다음 스캔에서 새 항목이 되어 판정을 이어받지 않는다(`docs/adr/0096-xml-name-attribute-keys-only-its-value.md`)
 - 적용이 파일을 바꾸기 전후의 기록(`BeginFile`, `EndFile`)에서 데이터베이스가 일시적인 오류(연결 끊김, 서버 재시작, 직렬화 실패, 교착)를 내면 트랜잭션을 세 번까지 다시 시도한다. 전에는 한 번의 오류로 실행이 실패해 사람이 적용을 다시 요청해야 했다(`docs/adr/0095-file-records-retry-transient-database-errors.md`)
 - worker의 OpenBao 요청 한 번의 제한 시간이 10초에서 2분이 되고, 요청을 다 보낸 뒤 답을 기다리는 시간은 따로 30초로 묶는다. 공식 클라이언트가 요청마다 두던 60초 한도는 끄고, 작업의 시간 한도가 재시도를 합친 전체를 묶는다. 전에는 느린 호스트에서 큰 키 파일(16MiB까지)의 지문 요청, 저장, 다시 읽기가 10초를 넘어 `store-failed`가 되었다. web은 지금처럼 10초다(`docs/adr/0094-openbao-request-limits-allow-large-values.md`)
 - compose의 pdf와 `pdf-test` 컨테이너에 `memswap_limit: 1g`를 두어 스왑을 쓰지 않는다. 전에는 스왑이 있는 호스트에서 메모리 한도(1GiB)를 넘은 뒤에도 스왑을 1GiB까지 더 썼다. 띄운 스택은 `docker compose up -d pdf`로 바꾼다(`docs/adr/0092-pdf-container-has-no-swap.md`)
