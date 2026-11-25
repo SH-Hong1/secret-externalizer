@@ -2028,8 +2028,8 @@ func TestApply_ManifestTargetLeftReadable(t *testing.T) {
 	if diff := cmp.Diff(want, f.items()); diff != "" {
 		t.Errorf("Apply() outcomes mismatch (-want +got):\n%s", diff)
 	}
-	if f.vault.value("ext.manifest.store.password") != nil {
-		t.Errorf("Apply() stored a value it left in the manifest")
+	if v := f.vault.value("ext.manifest.store.password"); v != nil {
+		t.Errorf("after Apply(), vault path ext.manifest.store.password holds %d bytes, want nothing stored for a value left in the manifest", len(v))
 	}
 	got := f.readManifest().Entries
 	if len(got) != 2 || got[0].Name != "ext.db.yaml.password" || cmp.Diff(kept, got[1]) != "" {

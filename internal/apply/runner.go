@@ -1001,26 +1001,33 @@ func keepManifestReadable(p *prepared) {
 		if len(edits) == 0 {
 			continue
 		}
-		if !manifestReadableAfter(f, edits) {
+		readable, err := manifestReadableAfter(f, edits)
+		if err != nil {
+			// The rewrite stage computes the same change, meets the same
+			// error and fails these targets as write-failed with it.
+			continue
+		}
+		if !readable {
 			f.skipAll(ReasonBreaksManifest)
 		}
 	}
 }
 
 // manifestReadableAfter reports whether f, the manifest, is still one
-// manifest.Parse reads once edits are made.
-func manifestReadableAfter(f *sourceFile, edits []rewrite.Edit) bool {
+// manifest.Parse reads once edits are made. It returns an error when the
+// change itself cannot be computed.
+func manifestReadableAfter(f *sourceFile, edits []rewrite.Edit) (bool, error) {
 	text, err := f.decode()
 	if err != nil {
-		return false
+		return false, fmt.Errorf("decoding the manifest: %w", err)
 	}
 	out, err := rewrite.Replace(f.raw, text, edits)
 	if err != nil {
-		return false
+		return false, fmt.Errorf("replacing in the manifest: %w", err)
 	}
 	defer clear(out.Content)
 	_, err = manifest.Parse(out.Content)
-	return err == nil
+	return err == nil, nil
 }
 
 // markUntracked handles customer data to redact in files git does not
