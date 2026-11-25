@@ -399,13 +399,21 @@ func nonNil(list []string) []string {
 // reopened. It returns ErrItemSettled, writing nothing, when an item is
 // already applied or failed for another reason, since the file must not
 // change unless every item it is changed for is writing; and ErrNotFound
-// when the run is not running.
-func (s *Store) BeginFile(ctx context.Context, id apply.ID, file, beforeHash, afterHash, tempName string, items []apply.Item) (err error) {
+// when the run is not running. A transient database error is retried, as
+// retried describes.
+func (s *Store) BeginFile(ctx context.Context, id apply.ID, file, beforeHash, afterHash, tempName string, items []apply.Item) error {
 	for _, it := range items {
 		if it.File != file {
 			return fmt.Errorf("announcing file of apply %d: an item of another file", id)
 		}
 	}
+	return retried(ctx, func() error {
+		return s.beginFile(ctx, id, file, beforeHash, afterHash, tempName, items)
+	})
+}
+
+// beginFile is one attempt of BeginFile.
+func (s *Store) beginFile(ctx context.Context, id apply.ID, file, beforeHash, afterHash, tempName string, items []apply.Item) (err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)
@@ -445,8 +453,14 @@ func (s *Store) BeginFile(ctx context.Context, id apply.ID, file, beforeHash, af
 // applied with their store path, in one transaction. Calling it again for
 // the same announcement does nothing. It returns ErrSuperseded, changing
 // nothing, when the file's record now holds another announcement, and
-// ErrNotFound when the run announced no change of file.
-func (s *Store) EndFile(ctx context.Context, id apply.ID, file, afterHash, tempName string) (err error) {
+// ErrNotFound when the run announced no change of file. A transient
+// database error is retried, as retried describes.
+func (s *Store) EndFile(ctx context.Context, id apply.ID, file, afterHash, tempName string) error {
+	return retried(ctx, func() error { return s.endFile(ctx, id, file, afterHash, tempName) })
+}
+
+// endFile is one attempt of EndFile.
+func (s *Store) endFile(ctx context.Context, id apply.ID, file, afterHash, tempName string) (err error) {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("starting transaction: %w", err)

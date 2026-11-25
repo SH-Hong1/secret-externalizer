@@ -637,3 +637,36 @@ func (s *Store) CloseJobAfterBlocking(ctx context.Context, jobID int64, start fu
 	}
 	return nil
 }
+
+// FailWrites makes the next n inserts and updates of apply_file in s's
+// schema fail with the SQLSTATE code, replacing what an earlier call set up.
+// A sequence counts the writes, so a failed transaction does not undo the
+// count.
+func (s *Store) FailWrites(ctx context.Context, code string, n int) error {
+	_, err := s.pool.Exec(ctx, fmt.Sprintf(`
+		DROP TRIGGER IF EXISTS fault ON apply_file;
+		DROP FUNCTION IF EXISTS fault();
+		DROP SEQUENCE IF EXISTS fault_seq;
+		CREATE SEQUENCE fault_seq;
+		CREATE FUNCTION fault() RETURNS trigger LANGUAGE plpgsql AS $f$
+		BEGIN
+			IF nextval('fault_seq') <= %d THEN
+				RAISE EXCEPTION 'injected fault' USING ERRCODE = %s;
+			END IF;
+			RETURN NEW;
+		END $f$;
+		CREATE TRIGGER fault BEFORE INSERT OR UPDATE ON apply_file FOR EACH ROW EXECUTE FUNCTION fault();`,
+		n, quoteLiteral(code)))
+	return err
+}
+
+// Writes returns how many inserts and updates of apply_file reached the
+// trigger FailWrites made.
+func (s *Store) Writes(ctx context.Context) (int, error) {
+	var n int
+	err := s.pool.QueryRow(ctx, "SELECT CASE WHEN is_called THEN last_value ELSE 0 END FROM fault_seq").Scan(&n)
+	return n, err
+}
+
+// quoteLiteral returns v as an SQL string literal.
+func quoteLiteral(v string) string { return "'" + strings.ReplaceAll(v, "'", "''") + "'" }
