@@ -7,7 +7,9 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"math/big"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -159,7 +161,7 @@ func TestNewHTTPClient(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			hc, err := bao.NewHTTPClient(tt.ca, 5*time.Second)
+			hc, err := bao.NewHTTPClient(tt.ca, 5*time.Second, time.Second)
 			if err != nil {
 				t.Fatalf("NewHTTPClient(%s) error = %v", tt.name, err)
 			}
@@ -182,10 +184,46 @@ func TestNewHTTPClient(t *testing.T) {
 }
 
 func TestNewHTTPClient_Refuses(t *testing.T) {
-	if _, err := bao.NewHTTPClient([]byte("not a certificate"), time.Second); err == nil {
+	if _, err := bao.NewHTTPClient([]byte("not a certificate"), time.Second, time.Second); err == nil {
 		t.Errorf("NewHTTPClient(not PEM) error = nil, want an error")
 	}
-	if _, err := bao.NewHTTPClient(nil, 0); err == nil {
-		t.Errorf("NewHTTPClient(nil, 0) error = nil, want an error for no timeout")
+	if _, err := bao.NewHTTPClient(nil, 0, time.Second); err == nil {
+		t.Errorf("NewHTTPClient(nil, 0, 1s) error = nil, want an error for no timeout")
+	}
+	if _, err := bao.NewHTTPClient(nil, time.Second, 0); err == nil {
+		t.Errorf("NewHTTPClient(nil, 1s, 0) error = nil, want an error for no answer limit")
+	}
+	if _, err := bao.NewHTTPClient(nil, time.Second, 2*time.Second); err == nil {
+		t.Errorf("NewHTTPClient(nil, 1s, 2s) error = nil, want an error for an answer limit over the timeout")
+	}
+}
+
+func TestNewHTTPClient_AnswerLimit(t *testing.T) {
+	stop := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		select {
+		case <-stop:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(srv.Close)
+	t.Cleanup(func() { close(stop) })
+
+	hc, err := bao.NewHTTPClient(nil, time.Hour, 50*time.Millisecond)
+	if err != nil {
+		t.Fatalf("NewHTTPClient(nil, 1h, 50ms) error = %v", err)
+	}
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL, nil)
+	if err != nil {
+		t.Fatalf("building the request: %v", err)
+	}
+	resp, err := hc.Do(req)
+	if err == nil {
+		_ = resp.Body.Close() // the body is not read
+		t.Fatalf("GET %s from a server that never answers error = nil, want a timeout", srv.URL)
+	}
+	var netErr net.Error
+	if !errors.As(err, &netErr) || !netErr.Timeout() {
+		t.Errorf("GET %s from a server that never answers error = %v, want a timeout", srv.URL, err)
 	}
 }

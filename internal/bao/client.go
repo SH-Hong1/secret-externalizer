@@ -141,8 +141,10 @@ func (c *Client) Format(f fmt.State, _ rune) {
 func (c *Client) LogValue() slog.Value { return slog.StringValue(clientText) }
 
 // New returns a Client for the OpenBao server at addr. hc must have a
-// timeout; it is copied, not changed. The official client retries a request
-// at most twice after a server error. New does not contact the server.
+// timeout, which bounds each attempt of a request; it is copied, not
+// changed. The official client retries a request at most twice after a
+// server error and puts no limit of its own on the attempts together, so
+// the caller's context bounds them. New does not contact the server.
 func New(addr string, creds Credentials, hc *http.Client) (*Client, error) {
 	if hc == nil || hc.Timeout <= 0 {
 		return nil, errors.New("creating openbao client: the HTTP client has no timeout")
@@ -162,6 +164,9 @@ func New(addr string, creds Credentials, hc *http.Client) (*Client, error) {
 	cfg.HttpClient = &httpClient
 	cfg.Address = addr
 	cfg.MaxRetries = 2
+	// The official client's own limit of 60 seconds would cut off a
+	// request whose hc timeout allows for a large value.
+	cfg.Timeout = 0
 	ac, err := api.NewClient(cfg)
 	if err != nil {
 		return nil, fmt.Errorf("creating openbao client for %q: the official client refused the configuration", addr)

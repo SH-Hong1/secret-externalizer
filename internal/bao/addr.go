@@ -55,16 +55,24 @@ func LoadCA(addr, caPath string) (bool, []byte, error) {
 	return true, ca, nil
 }
 
-// NewHTTPClient returns an HTTP client for New with the given timeout. When
-// ca is not nil, the client trusts only the certificates in it; otherwise it
-// trusts the system's roots.
-func NewHTTPClient(ca []byte, timeout time.Duration) (*http.Client, error) {
+// NewHTTPClient returns an HTTP client for New. timeout bounds one attempt
+// of a request, including sending its body and reading the answer, so it
+// must allow for the largest value the caller sends or reads. answer bounds
+// the wait for the server's answer after the whole request is sent, so a
+// server that takes a request and never answers fails in that time even
+// when timeout is long. When ca is not nil, the client trusts only the
+// certificates in it; otherwise it trusts the system's roots.
+func NewHTTPClient(ca []byte, timeout, answer time.Duration) (*http.Client, error) {
 	if timeout <= 0 {
 		return nil, errors.New("the timeout must be positive")
+	}
+	if answer <= 0 || answer > timeout {
+		return nil, errors.New("the answer limit must be positive and no longer than the timeout")
 	}
 	transport, err := cafile.Transport(ca)
 	if err != nil {
 		return nil, err
 	}
+	transport.ResponseHeaderTimeout = answer
 	return &http.Client{Transport: transport, Timeout: timeout}, nil
 }

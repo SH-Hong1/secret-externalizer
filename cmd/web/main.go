@@ -124,7 +124,7 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	if !cfg.baoTLS {
 		logger.WarnContext(ctx, "openbao connection is not encrypted", "bao_addr", cfg.baoAddr)
 	}
-	baoHTTP, err := bao.NewHTTPClient(cfg.baoCA, outboundTimeout)
+	baoHTTP, err := bao.NewHTTPClient(cfg.baoCA, outboundTimeout, outboundTimeout)
 	if err != nil {
 		return fmt.Errorf("preparing openbao TLS: %w", err)
 	}
