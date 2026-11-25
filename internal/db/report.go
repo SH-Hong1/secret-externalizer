@@ -448,9 +448,10 @@ func readEvents(ctx context.Context, tx pgx.Tx, projectID project.ID) ([]report.
 			GROUP BY at, actor_subject, actor_name, action, detail
 		)
 		SELECT g.at, g.actor_subject, g.actor_name, g.action, g.detail, g.bundles,
-			coalesce(f.category, ''), coalesce(f.kind, ''), coalesce(f.file_path, ''),
-			(SELECT count(*) FROM grp)::int
-		FROM (SELECT * FROM grp ORDER BY at DESC, last_id DESC LIMIT $2) g
+			coalesce(f.category, ''), coalesce(f.kind, ''), coalesce(f.file_path, ''), g.total
+		FROM (
+			SELECT *, count(*) OVER ()::int AS total FROM grp ORDER BY at DESC, last_id DESC LIMIT $2
+		) g
 		LEFT JOIN LATERAL (
 			SELECT category, kind, file_path FROM finding
 			WHERE bundle_id = g.first_bundle AND project_id = $1
