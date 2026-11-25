@@ -5,22 +5,25 @@ set -eu
 
 cd "$(git rev-parse --show-toplevel)"
 
-staged=$(git diff --cached --name-only --diff-filter=ACMR)
+# Deleted files count: removing a file can break code that still uses it.
+staged=$(git diff --cached --name-only --diff-filter=ACMRD)
 checked=$(printf '%s\n' "$staged" |
 	grep -E '(\.go$|^go\.(mod|sum)$|^\.golangci\.yml$|^Makefile$|^rules/|^internal/web/(templates|assets|static)/|(^|/)testdata/|^\.githooks/|^scripts/|^deploy/.*\.sh$|^deploy/worker/scanners\.lock$)' || true)
 [ -n "$checked" ] || exit 0
 
-gofiles=$(printf '%s\n' "$staged" | grep -E '\.go$' | grep -Ev '(^|/)testdata/' || true)
+# make check reads the work tree, so it checks what is committed only when
+# every checked file is staged as it is on disk. Formatting below also stages
+# the Go files again, which would take in changes deliberately left out.
+for f in $checked; do
+	if ! git diff --quiet -- "$f" || { [ -e "$f" ] && ! git cat-file -e ":$f" 2>/dev/null; }; then
+		printf 'pre-commit: %s has changes that are not staged; stage or stash them first\n' "$f" >&2
+		exit 1
+	fi
+done
+
+gofiles=$(git diff --cached --name-only --diff-filter=ACMR | grep -E '\.go$' | grep -Ev '(^|/)testdata/' || true)
 if [ -n "$gofiles" ]; then
 	make -s "$(pwd)/bin/golangci-lint"
-	# Formatting rewrites the file and stages it again, which would also
-	# stage changes that were deliberately left out of this commit.
-	for f in $gofiles; do
-		if ! git diff --quiet -- "$f"; then
-			printf 'pre-commit: %s has changes that are not staged; stage or stash them first\n' "$f" >&2
-			exit 1
-		fi
-	done
 	# shellcheck disable=SC2086 # Go file paths have no spaces.
 	bin/golangci-lint fmt $gofiles
 	# shellcheck disable=SC2086
