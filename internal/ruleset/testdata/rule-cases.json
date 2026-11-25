@@ -61,5 +61,11 @@
   {"file": "conf/application-commented.yml", "line": 6, "category": "storage-credential", "kind": "password", "value": "dev-only-fake-commented-yaml-password"},
   {"file": "conf/application-commented.yml", "line": 7, "category": "storage-credential", "kind": "host", "value": "old-yaml-host.example.invalid"},
   {"file": "conf/application-commented.yml", "line": 6, "category": "other-secret", "kind": "other", "value": "dev-only-fake-commented-yaml-password"},
-  {"file": "conf/commented.properties", "line": 2, "category": "other-secret", "kind": "other", "value": "dev-only-fake-commented-props-password"}
+  {"file": "conf/commented.properties", "line": 2, "category": "other-secret", "kind": "other", "value": "dev-only-fake-commented-props-password"},
+  {"file": "src/Commented.java", "line": 2, "category": "other-secret", "kind": "password", "value": "dev-only-fake-line-comment-pass"},
+  {"file": "src/Commented.java", "line": 3, "category": "other-secret", "kind": "password", "value": "dev-only-fake-line-set-password"},
+  {"file": "src/Commented.java", "line": 8, "category": "other-secret", "kind": "password", "value": "dev-only-fake-live-secret-key"},
+  {"file": "src/Commented.java", "line": 14, "category": "other-secret", "kind": "password", "value": "dev-only-fake-block-property"},
+  {"file": "src/Commented.java", "line": 15, "category": "other-secret", "kind": "password", "value": "dev-only-fake-block-assigned"},
+  {"file": "src/Commented.java", "line": 16, "category": "other-secret", "kind": "password", "value": "dev-only-fake-block-connection"}
 ]
