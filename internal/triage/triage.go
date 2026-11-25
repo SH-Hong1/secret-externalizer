@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"path"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -92,14 +93,17 @@ type Bundle struct {
 	Members     []Member
 }
 
+// FrontendExtensions returns the extensions, lower-case and with their dot,
+// of the files Frontend reports. The caller may change the slice it gets.
+func FrontendExtensions() []string {
+	return []string{".jsp", ".jspf", ".js", ".html", ".htm"}
+}
+
 // Frontend reports whether file is a JSP, JavaScript or HTML file, where a
-// value cannot be read from outside configuration. Case is ignored.
+// value cannot be read from outside configuration: whether its extension,
+// with case ignored, is one of FrontendExtensions.
 func Frontend(file string) bool {
-	switch strings.ToLower(path.Ext(file)) {
-	case ".jsp", ".jspf", ".js", ".html", ".htm":
-		return true
-	}
-	return false
+	return slices.Contains(FrontendExtensions(), strings.ToLower(path.Ext(file)))
 }
 
 // SharesBundle reports whether findings of kind k with the same fingerprint

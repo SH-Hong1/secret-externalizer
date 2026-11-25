@@ -37,15 +37,28 @@ const reportItems = `
 		CROSS JOIN (SELECT requested_at, apply_id FROM scan WHERE id = $2) sc
 	WHERE r.project_id = $1 AND i.status = 'applied' AND ` + runBefore
 
-// frontendFile is true for the path file_path when triage.Frontend is.
-const frontendFile = `lower(file_path COLLATE "C") LIKE ANY ('{%.jsp,%.jspf,%.js,%.html,%.htm}')`
+// frontendFile is true for the path file_path when triage.Frontend is,
+// given the patterns of frontendPatterns as $7.
+const frontendFile = `lower(file_path COLLATE "C") LIKE ANY ($7::text[])`
+
+// frontendPatterns returns a LIKE pattern for each of
+// triage.FrontendExtensions: any path that ends in the extension. No
+// extension holds a character that LIKE treats specially.
+func frontendPatterns() []string {
+	exts := triage.FrontendExtensions()
+	patterns := make([]string, len(exts))
+	for i, ext := range exts {
+		patterns[i] = "%" + ext
+	}
+	return patterns
+}
 
 // reportFound starts a query with common table expressions for project $1
-// and scan $2, of which member and found are for the query to read. member
-// is one row per finding the scan found. found is one row per bundle with
-// such a member, as scanBundles has it: category and kind are those of the
-// member with the lowest ID, file and first_line the first file and the
-// first line in it, files the file of each member, frontend whether one of
+// and scan $2, with frontendPatterns as $7, of which member and found are
+// for the query to read. member is one row per finding the scan found.
+// found is one row per bundle with such a member, as scanBundles has it:
+// category and kind are those of the member with the lowest ID, file and
+// first_line the first file and the first line in it, files the file of each member, frontend whether one of
 // them is a triage.Frontend file, and locations the number of locations;
 // before and after say whether an applied item of the bundle is in a run
 // before the scan, or in a run after it. It reads no preview.
@@ -244,7 +257,7 @@ const (
 
 // reportLines lists what scan $2 of project $1 found: the first $6 lines
 // of each list with the number of all its lines. $3, $4 and $5 are the
-// numbers of the lists.
+// numbers of the lists, and $7 is frontendPatterns.
 const reportLines = reportFound + `, line AS (
 		SELECT id AS bundle, category, kind, name, verdict, hold_reason, note, decided_at, file, first_line,
 			files, 1 AS bundles, locations, before, after, frontend
@@ -284,7 +297,7 @@ const reportLines = reportFound + `, line AS (
 // secret bundle's members.
 func readLines(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID, d *report.Data) error {
 	rows, err := tx.Query(ctx, reportLines,
-		projectID, id, sectionStructure, sectionRemaining, sectionFalsePositives, report.MaxRows)
+		projectID, id, sectionStructure, sectionRemaining, sectionFalsePositives, report.MaxRows, frontendPatterns())
 	if err != nil {
 		return fmt.Errorf("listing what scan %d found: %w", id, err)
 	}

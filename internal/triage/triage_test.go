@@ -117,6 +117,25 @@ func TestFrontend(t *testing.T) {
 	}
 }
 
+func TestFrontendExtensions(t *testing.T) {
+	exts := triage.FrontendExtensions()
+	want := []string{".jsp", ".jspf", ".js", ".html", ".htm"}
+	if diff := cmp.Diff(want, exts); diff != "" {
+		t.Errorf("FrontendExtensions() (-want +got):\n%s", diff)
+	}
+	for _, ext := range exts {
+		for _, file := range []string{"web/a" + ext, "web/A" + strings.ToUpper(ext)} {
+			if !triage.Frontend(file) {
+				t.Errorf("Frontend(%q) = false, want true for FrontendExtensions() entry %q", file, ext)
+			}
+		}
+	}
+	exts[0] = ".yml"
+	if triage.Frontend("conf/app.yml") || !triage.Frontend("web/index.jsp") {
+		t.Errorf("FrontendExtensions() returned its own slice: changing it changed Frontend")
+	}
+}
+
 func TestSharesBundle(t *testing.T) {
 	tests := map[finding.Kind]bool{
 		finding.KindPassword:   true,
