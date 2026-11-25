@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 
@@ -484,5 +485,90 @@ func TestParse_Betterleaks_DecodedDropped(t *testing.T) {
 				t.Errorf("Parse(%v) = %d results, %+v, want none and a.properties dropped", tt.tags, len(got), counts)
 			}
 		})
+	}
+}
+
+// A scan with excludes hands betterleaks a rule file in the scanners'
+// temporary folder that extends the configured one, and removes that file
+// when the scan ends. A scan without excludes uses the configured file.
+func TestScan_ExcludesConfig(t *testing.T) {
+	env := testEnv(t)
+	bin := fakeScanner(t, `for a in "$@"; do case "$a" in --config=*) printf '%s' "${a#--config=}" > "$HOME/path"; cat "${a#--config=}" > "$HOME/config";; esac; done; echo '[]'`)
+	s := betterleaks.New(bin, "/rules/better\"leaks.toml", env)
+	if _, err := s.Scan(t.Context(), t.TempDir(), []string{"vendor/lib", "a.b"}); err != nil {
+		t.Fatalf("Scan() error = %v", err)
+	}
+	path, err := os.ReadFile(filepath.Join(env.Home, "path"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := filepath.Dir(string(path)); got != env.TmpDir {
+		t.Errorf("Scan() rule file folder = %s, want the scanners' temporary folder %s", got, env.TmpDir)
+	}
+	config, err := os.ReadFile(filepath.Join(env.Home, "config"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{`path = "/rules/better\"leaks.toml"`, `"^vendor/lib(?:/|$)"`, `"^a\\.b(?:/|$)"`} {
+		if !strings.Contains(string(config), want) {
+			t.Errorf("Scan() rule file = %q, want it to contain %s", config, want)
+		}
+	}
+	left, err := os.ReadDir(env.TmpDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(left) != 0 {
+		t.Errorf("Scan() left %d files in the temporary folder, want none", len(left))
+	}
+}
+
+func TestScan_ExcludesConfigUnwritable(t *testing.T) {
+	env := testEnv(t)
+	env.TmpDir = filepath.Join(env.TmpDir, "missing")
+	bin := fakeScanner(t, `echo '[]'`)
+	s := betterleaks.New(bin, "/rules/betterleaks.toml", env)
+	if _, err := s.Scan(t.Context(), t.TempDir(), []string{"vendor"}); err == nil {
+		t.Errorf("Scan() with no temporary folder error = nil, want an error")
+	}
+}
+
+// Project excludes keep betterleaks out of those files and folders; a path
+// that only starts with the same letters is still scanned.
+func TestScan_RealBetterleaks_Excludes(t *testing.T) {
+	bin := realBinary(t)
+	config, err := filepath.Abs(filepath.Join("testdata", "rules.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const source = "password = \"dev-only-fake-excludes\"\n"
+	dir := t.TempDir()
+	files := []string{
+		"keep/a.conf", "skip/a.conf", "skipped/a.conf", "vendor/lib/a.conf", "vendor/other/a.conf",
+		"we*ird [x]?/a.conf", "a.b/a.conf", "aXb/a.conf", "one.conf", "one.conf.bak",
+	}
+	for _, f := range files {
+		p := filepath.Join(dir, filepath.FromSlash(f))
+		if err := os.MkdirAll(filepath.Dir(p), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(source), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	env := testEnv(t)
+	excludes := []string{"skip", "vendor/lib", "we*ird [x]?", "a.b", "one.conf"}
+	got, err := betterleaks.New(bin, config, env).Scan(t.Context(), dir, excludes)
+	if err != nil {
+		t.Fatalf("Scan(%q) error = %v", excludes, err)
+	}
+	var gotFiles []string
+	for _, r := range got {
+		gotFiles = append(gotFiles, r.File)
+	}
+	slices.Sort(gotFiles)
+	want := []string{"aXb/a.conf", "keep/a.conf", "one.conf.bak", "skipped/a.conf", "vendor/other/a.conf"}
+	if diff := cmp.Diff(want, gotFiles); diff != "" {
+		t.Errorf("Scan(%q) files mismatch (-want +got):\n%s", excludes, diff)
 	}
 }
