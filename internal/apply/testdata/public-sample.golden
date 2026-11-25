@@ -1,4 +1,11 @@
-src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	account	seededDataSource.username
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	account	
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	account	
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	account	
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	host	dataSource.url
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	host	dataSource.url
 src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	host	seededDataSource.url
-src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	password	seededDataSource.password
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	password	
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	password	
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	port	dataSource.url
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	port	dataSource.url
 src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	port	seededDataSource.url

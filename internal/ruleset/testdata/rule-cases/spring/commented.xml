@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans" xmlns:p="http://www.springframework.org/schema/p">
+  <bean id="liveSource" class="org.apache.commons.dbcp2.BasicDataSource">
+    <property name="password" value="${db.password}"/>
+  </bean>
+  <!-- old production database
+  <bean id="dataSource" class="org.apache.commons.dbcp2.BasicDataSource" destroy-method="close">
+    <property name="driverClassName" value="com.mysql.jdbc.Driver"/>
+    <property name="url" value="jdbc:mysql://old-db.example.invalid:3306/shop" />
+    <property name="username" value="old_shop_app"/>
+    <property name="password" value="dev-only-fake-commented-password"/>
+  </bean>
+  -->
+  <!-- <bean id="oldPool" class="com.zaxxer.hikari.HikariDataSource" p:jdbcUrl="jdbc:oracle:thin:@ora.example.invalid:1521:shop" p:username="ora_app" p:password="dev-only-fake-commented-p-password"/> -->
+  <!--
+  <bean id="ldapClient" class="com.example.shop.LdapClient">
+    <constructor-arg name="password">
+      <value>dev-only-fake-commented-value-password</value>
+    </constructor-arg>
+    <property name="managerPassword" value='dev-only-fake-commented-single-quoted'/>
+  </bean>
+  -->
+  <!-- A mail sender's account is not a data source credential:
+  <bean id="mailSender" class="org.springframework.mail.javamail.JavaMailSenderImpl">
+    <property name="username" value="mailer"/>
+    <property name="url" value="smtp://mail.example.invalid"/>
+  </bean>
+  -->
+  <!-- <property name="password" value="${db.password}"/> <property name="password" value=""/> -->
+  <!-- Set the password property of the data source to the vault reference. -->
+</beans>

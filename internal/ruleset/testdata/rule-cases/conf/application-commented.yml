@@ -1,0 +1,10 @@
+spring:
+  datasource:
+    url: ${DB_URL}
+#    url: jdbc:mysql://old-yaml.example.invalid:3306/shop
+    # username: old_yaml_app
+    # password: "dev-only-fake-commented-yaml-password"
+    # host: old-yaml-host.example.invalid
+    # password: ${DB_PASSWORD}
+    # password is read from the vault, see the operations wiki
+    password: ${DB_PASSWORD}

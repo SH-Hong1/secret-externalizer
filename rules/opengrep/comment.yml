@@ -1,0 +1,192 @@
+# Settings that a comment keeps: a data source bean commented out in a Spring
+# XML context, and commented-out lines of .properties and application*.yml
+# files. A legacy project often keeps an old production connection this way,
+# and the value stays in the repository even though the program does not
+# read it. Every rule reports only the value, never the quotes or the key,
+# and a value that is a ${...} or #{...} placeholder or empty is not
+# reported. The rules that read the same settings outside a comment are in
+# spring.yml; the XML ones there read the parsed document, in which a
+# comment holds no elements.
+#
+# A rule's patterns are regular expressions that all have to match, so a
+# value is reported only where its property lies inside an XML comment (and,
+# for a URL or a user name, inside a data source bean as well).
+#
+# Every rule starts with "  - id:" and has its category and kind under
+# metadata, which the rule tests read line by line.
+rules:
+  # A data source bean is one whose id or class contains datasource, jdbc,
+  # hikari, c3p0, dbcp, druid, bonecp, or proxool, as in spring.yml. Its URL
+  # is a <property name="url" value="..."/> (or URL, jdbcUrl, driverUrl) in
+  # the bean's body, or a p:url or p:jdbcUrl attribute on the bean. A value
+  # may be in double or single quotes.
+  - id: spring-xml-comment-datasource-url
+    message: A data source URL is written in a commented-out Spring XML bean.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.xml"]
+    metadata:
+      category: storage-credential
+      kind: url
+    patterns:
+      - pattern-regex: (?s)<!--.*?-->
+      - pattern-either:
+          - patterns:
+              - pattern-regex: (?s)<bean\b(?=[^>]*\b(?:id|class)\s*=\s*["'][^"']*(?i:datasource|jdbc|hikari|c3p0|dbcp|druid|bonecp|proxool))[^>]*>.*?</bean>
+              - pattern-regex: <property\s+name\s*=\s*["'](?:url|URL|jdbcUrl|driverUrl)["']\s+value\s*=\s*(?|"(?![$#]\{)(?P<VALUE>[^"\s][^"]*)"|'(?![$#]\{)([^'\s][^']*)')
+          - pattern-regex: <bean\b(?=[^>]*\b(?:id|class)\s*=\s*["'][^"']*(?i:datasource|jdbc|hikari|c3p0|dbcp|druid|bonecp|proxool))[^>]*?\sp:(?:url|jdbcUrl)\s*=\s*(?|"(?![$#]\{)(?P<VALUE>[^"\s][^"]*)"|'(?![$#]\{)([^'\s][^']*)')
+      - focus-metavariable: $VALUE
+
+  - id: spring-xml-comment-datasource-username
+    message: A data source user name is written in a commented-out Spring XML bean.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.xml"]
+    metadata:
+      category: storage-credential
+      kind: account
+    patterns:
+      - pattern-regex: (?s)<!--.*?-->
+      - pattern-either:
+          - patterns:
+              - pattern-regex: (?s)<bean\b(?=[^>]*\b(?:id|class)\s*=\s*["'][^"']*(?i:datasource|jdbc|hikari|c3p0|dbcp|druid|bonecp|proxool))[^>]*>.*?</bean>
+              - pattern-regex: <property\s+name\s*=\s*["'](?:username|user)["']\s+value\s*=\s*(?|"(?![$#]\{)(?P<VALUE>[^"\s][^"]*)"|'(?![$#]\{)([^'\s][^']*)')
+          - pattern-regex: <bean\b(?=[^>]*\b(?:id|class)\s*=\s*["'][^"']*(?i:datasource|jdbc|hikari|c3p0|dbcp|druid|bonecp|proxool))[^>]*?\sp:(?:username|user)\s*=\s*(?|"(?![$#]\{)(?P<VALUE>[^"\s][^"]*)"|'(?![$#]\{)([^'\s][^']*)')
+      - focus-metavariable: $VALUE
+
+  # A password in a comment, whatever bean it belongs to, as in spring.yml: a
+  # property or a constructor argument whose name ends in password or passwd
+  # in any case, given as an attribute or a <value> child, or a p:password
+  # attribute.
+  - id: spring-xml-comment-password
+    message: A password is written in a commented-out Spring XML element.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.xml"]
+    metadata:
+      category: storage-credential
+      kind: password
+    patterns:
+      - pattern-regex: (?s)<!--.*?-->
+      - pattern-either:
+          - pattern-regex: <(?:property|constructor-arg)\s+name\s*=\s*["'](?i:[\w.-]*passw(?:or)?d)["']\s+value\s*=\s*(?|"(?![$#]\{)(?P<VALUE>[^"\s][^"]*)"|'(?![$#]\{)([^'\s][^']*)')
+          - pattern-regex: <(?:property|constructor-arg)\s+name\s*=\s*["'](?i:[\w.-]*passw(?:or)?d)["']\s*>\s*<value>(?![$#]\{)(?P<VALUE>[^<\s](?:[^<]*[^<\s])?)\s*</value>
+          - pattern-regex: <bean\b[^>]*?\sp:password\s*=\s*(?|"(?![$#]\{)(?P<VALUE>[^"\s][^"]*)"|'(?![$#]\{)([^'\s][^']*)')
+      - focus-metavariable: $VALUE
+
+  # Comment lines of .properties files that hold a key and a value in the
+  # shape the properties rules in spring.yml report: the line starts with #
+  # or !, then the key, then = or :, then the value. White space alone does
+  # not separate them here, and the value is one word that ends the line, so
+  # a sentence such as "# password must be rotated" or "# password: see the
+  # wiki" is not a setting.
+  - id: properties-comment-password
+    message: A password is written in a commented-out line of a properties file.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.properties"]
+    metadata:
+      category: storage-credential
+      kind: password
+    patterns:
+      - pattern-regex: (?mi)^[ \t]*[#!][#! \t]*(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)[ \t]*[=:][ \t]*(?![$#]\{)(?P<VALUE>\S+)[ \t]*\r?$
+      - focus-metavariable: $VALUE
+
+  - id: properties-comment-username
+    message: A user name is written in a commented-out line of a properties file.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.properties"]
+    metadata:
+      category: storage-credential
+      kind: account
+    patterns:
+      - pattern-regex: (?mi)^[ \t]*[#!][#! \t]*(?:[\w-]+\.)*(?:username|user|userid)[ \t]*[=:][ \t]*(?![$#]\{)(?P<VALUE>\S+)[ \t]*\r?$
+      - focus-metavariable: $VALUE
+
+  - id: properties-comment-jdbc-url
+    message: A JDBC URL is written in a commented-out line of a properties file.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.properties"]
+    metadata:
+      category: storage-credential
+      kind: url
+    patterns:
+      - pattern-regex: (?mi)^[ \t]*[#!][#! \t]*[\w.-]*url[ \t]*[=:][ \t]*(?P<VALUE>jdbc:\S+)
+      - focus-metavariable: $VALUE
+
+  - id: properties-comment-host
+    message: A host name is written in a commented-out line of a properties file.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.properties"]
+    metadata:
+      category: storage-credential
+      kind: host
+    patterns:
+      - pattern-regex: (?mi)^[ \t]*[#!][#! \t]*(?:[\w-]+\.)*(?:host|hostname)[ \t]*[=:][ \t]*(?![$#]\{)(?P<VALUE>\S+)[ \t]*\r?$
+      - focus-metavariable: $VALUE
+
+  # Comment lines of application*.yml files that hold a key: value line in
+  # the shape the YAML rules in spring.yml report. The value may be quoted
+  # and is one word that ends the line, so "# password is read from the
+  # vault" is not a setting.
+  - id: yaml-comment-password
+    message: A password is written in a commented-out line of a Spring Boot YAML file.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["application*.yml", "application*.yaml"]
+    metadata:
+      category: storage-credential
+      kind: password
+    patterns:
+      - pattern-regex: (?mi)^[ \t]*#[# \t]*(?:-[ \t]+)?(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)[ \t]*:[ \t]+(?|"(?![$#]\{)(?P<VALUE>[^"\s]+)"|'(?![$#]\{)([^'\s]+)'|(?![$#]\{)([^\s"'#>|]\S*))[ \t]*\r?$
+      - focus-metavariable: $VALUE
+
+  - id: yaml-comment-username
+    message: A user name is written in a commented-out line of a Spring Boot YAML file.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["application*.yml", "application*.yaml"]
+    metadata:
+      category: storage-credential
+      kind: account
+    patterns:
+      - pattern-regex: (?mi)^[ \t]*#[# \t]*(?:-[ \t]+)?(?:[\w-]+\.)*(?:username|user|userid)[ \t]*:[ \t]+(?|"(?![$#]\{)(?P<VALUE>[^"\s]+)"|'(?![$#]\{)([^'\s]+)'|(?![$#]\{)([^\s"'#>|]\S*))[ \t]*\r?$
+      - focus-metavariable: $VALUE
+
+  - id: yaml-comment-jdbc-url
+    message: A JDBC URL is written in a commented-out line of a Spring Boot YAML file.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["application*.yml", "application*.yaml"]
+    metadata:
+      category: storage-credential
+      kind: url
+    patterns:
+      - pattern-regex: (?mi)^[ \t]*#[# \t]*(?:-[ \t]+)?[\w.-]*url[ \t]*:[ \t]+["']?(?P<VALUE>jdbc:[^\s"']+)
+      - focus-metavariable: $VALUE
+
+  - id: yaml-comment-host
+    message: A host name is written in a commented-out line of a Spring Boot YAML file.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["application*.yml", "application*.yaml"]
+    metadata:
+      category: storage-credential
+      kind: host
+    patterns:
+      - pattern-regex: (?mi)^[ \t]*#[# \t]*(?:-[ \t]+)?(?:[\w-]+\.)*(?:host|hostname)[ \t]*:[ \t]+(?|"(?![$#]\{)(?P<VALUE>[^"\s]+)"|'(?![$#]\{)([^'\s]+)'|(?![$#]\{)([^\s"'#>|]\S*))[ \t]*\r?$
+      - focus-metavariable: $VALUE
