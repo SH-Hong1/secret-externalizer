@@ -170,13 +170,14 @@ func runWith(ctx context.Context, args []string, getenv func(string) string, std
 	handlers := map[job.Kind]job.Handler{}
 	if cfg.jobs.scans() {
 		runner := scan.NewRunner(logger, database, sd.fingerprints, sd.originals, sd.scanners, scan.Options{
-			WorkerID:     workerID,
-			Root:         cfg.root,
-			RulesVersion: rulesVersion,
-			TempDir:      scanCopies(cfg),
-			Git:          cfg.gitBin,
-			MaxFileBytes: scan.DefaultMaxFileBytes,
-			TimeLimit:    scan.DefaultTimeLimit,
+			WorkerID:      workerID,
+			Root:          cfg.root,
+			RulesVersion:  rulesVersion,
+			TempDir:       scanCopies(cfg),
+			ScannerTmpDir: scanTmp(cfg),
+			Git:           cfg.gitBin,
+			MaxFileBytes:  scan.DefaultMaxFileBytes,
+			TimeLimit:     scan.DefaultTimeLimit,
 		})
 		handlers[job.KindScan] = runner.Handle
 	}

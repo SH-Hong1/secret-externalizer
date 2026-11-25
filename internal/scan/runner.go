@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"maps"
 	"os"
@@ -65,6 +66,9 @@ type Options struct {
 	// a folder of UTF-8 copies of its EUC-KR files. It should be on a
 	// temporary file system. A scan fails when it is not absolute.
 	TempDir string
+	// ScannerTmpDir is the absolute path of the scanners' temporary folder
+	// (their TMPDIR). Empty means the runner leaves it alone.
+	ScannerTmpDir string
 	// Git is the path of the git executable that reads a project's commit
 	// hash. Empty means the hash is not read.
 	Git string
@@ -147,6 +151,7 @@ func (r *Runner) Handle(ctx context.Context, j job.Job) error {
 	id := ID(j.ScanID)
 	limited, cancel := context.WithTimeoutCause(ctx, r.opts.TimeLimit, errTimeLimit)
 	defer cancel()
+	r.removeStale(ctx, id)
 	copies := filepath.Join(r.opts.TempDir, strconv.FormatInt(int64(id), 10))
 	defer r.removeCopies(ctx, id, copies)
 
@@ -417,6 +422,39 @@ func (r *Runner) removeCopies(ctx context.Context, id ID, copies string) {
 	}
 	if err := os.RemoveAll(copies); err != nil {
 		r.logger.ErrorContext(context.WithoutCancel(ctx), "removing the folder of copies failed", "scan_id", id, "error", err.Error())
+	}
+}
+
+// removeStale removes, from the folder of copies and the scanners'
+// temporary folder, every entry that has not changed for twice the time
+// limit. Such an entry was left by a scan that ended without removing it,
+// as when the worker was killed. A running scan, on this worker or another
+// one that shares the folders, changes its entries within the time limit,
+// so they stay. A symbolic link is removed, not followed. A failure is
+// logged and the scan goes on.
+func (r *Runner) removeStale(ctx context.Context, id ID) {
+	cutoff := time.Now().Add(-2 * r.opts.TimeLimit)
+	for _, dir := range []string{r.opts.TempDir, r.opts.ScannerTmpDir} {
+		if !filepath.IsAbs(dir) {
+			continue
+		}
+		entries, err := os.ReadDir(dir)
+		if errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if err != nil {
+			r.logger.WarnContext(ctx, "listing temporary folder failed", "scan_id", id, "error", err.Error())
+			continue
+		}
+		for _, entry := range entries {
+			info, err := entry.Info()
+			if err != nil || !info.ModTime().Before(cutoff) {
+				continue
+			}
+			if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
+				r.logger.WarnContext(ctx, "removing a stale temporary entry failed", "scan_id", id, "error", err.Error())
+			}
+		}
 	}
 }
 
