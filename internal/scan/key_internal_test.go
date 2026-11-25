@@ -49,6 +49,9 @@ func keyCases() []keyCase {
 		{"xml attribute", "build.xml", `<scp user="deploy" password="VALUE"/>`, "password"},
 		{"xml namespace", "ctx.xml", `<bean id="ds" p:password="VALUE"/>`, "ds.password"},
 		{"xml element text", "settings.xml", "<password>VALUE</password>", "password"},
+		{"xml name beside a namespaced value", "ctx.xml", `<bean id="ds" name="alias" p:password="VALUE"/>`, "ds.password"},
+		{"xml name beside a plain attribute", "server.xml", `<Resource name="jdbc/live" password="VALUE"/>`, "password"},
+		{"xml name with element text", "ctx.xml", `<property name="password">VALUE</property>`, "password"},
 		{"at zero", "c.properties", "VALUE", ""},
 	}
 }

@@ -209,7 +209,7 @@ applier (WORKER_JOBS=apply) ─┬─ postgres (점검, 적용 기록)
 | 파일 | 키 | 예 |
 |---|---|---|
 | YAML | 들여쓰기가 더 얕은 위쪽 키를 `.`으로 이은 경로. 목록 항목에서 끊는다 | `spring.datasource.live.password` |
-| XML | 요소의 `name="…"`, 없으면 속성 이름이나 요소 이름. 값의 자리에서 열려 있는 가장 가까운 `<bean id="…">`의 `id`를 앞에 붙인다 | `liveDataSource.password` |
+| XML | 값이 `value` 속성이나 요소의 글이면 그 요소의 `name="…"`, 다른 속성이면 그 속성 이름(이름공간은 뺀다), `name`이 없는 요소의 글이면 요소 이름. 값의 자리에서 열려 있는 가장 가까운 `<bean id="…">`의 `id`를 앞에 붙인다(ADR 0096) | `liveDataSource.password` |
 | 그 밖 | 같은 줄에서 값 바로 앞의 대입(`=`, `:`)의 이름, 없고 호출의 인자이면 `(` 앞의 이름 | `live.db.password`, `setPassword` |
 
 - 키는 ASCII 글자, 숫자, `.`, `_`, `-`만 쓰고 200바이트까지다.

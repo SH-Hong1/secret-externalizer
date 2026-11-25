@@ -178,18 +178,22 @@ func yamlPieces(text []byte, ls, at int) []finding.Span {
 }
 
 // xmlPieces returns the key of the value at byte at: the leaf name, prefixed
-// by the id of the enclosing bean when there is one.
+// by the id of the enclosing bean when there is one. The tag's name attribute
+// is the leaf only when the value is the tag's value attribute or its text,
+// as in <property name="password" value="…"/>. A value in any other
+// attribute takes that attribute's name, because there the name attribute
+// names the element, not the value.
 func xmlPieces(text []byte, ls, at int) []finding.Span {
 	lt := -1
 	if i := bytes.LastIndexByte(text[ls:at], '<'); i >= 0 {
 		lt = ls + i
 	}
 	leaf, ok := finding.Span{}, false
-	if lt >= 0 {
-		leaf, ok = xmlAttr(text, lt, at, "name")
+	if s, sym, found := leafPiece(text, ls, at); found && sym == '=' {
+		leaf, ok = s, true
 	}
-	if !ok {
-		if s, sym, found := leafPiece(text, ls, at); found && sym == '=' {
+	if lt >= 0 && (!ok || string(text[leaf.Start:leaf.End]) == "value") {
+		if s, found := xmlAttr(text, lt, at, "name"); found {
 			leaf, ok = s, true
 		}
 	}
