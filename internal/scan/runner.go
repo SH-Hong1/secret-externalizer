@@ -448,7 +448,15 @@ func (r *Runner) removeStale(ctx context.Context, id ID) {
 		}
 		for _, entry := range entries {
 			info, err := entry.Info()
-			if err != nil || !info.ModTime().Before(cutoff) {
+			if errors.Is(err, fs.ErrNotExist) {
+				// Another scan removed it after the folder was listed.
+				continue
+			}
+			if err != nil {
+				r.logger.WarnContext(ctx, "reading a temporary entry failed", "scan_id", id, "error", err.Error())
+				continue
+			}
+			if !info.ModTime().Before(cutoff) {
 				continue
 			}
 			if err := os.RemoveAll(filepath.Join(dir, entry.Name())); err != nil {
