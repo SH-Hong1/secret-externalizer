@@ -1609,7 +1609,7 @@ func TestHandle_PlaceholderIsNotAFinding(t *testing.T) {
 // betterleaks reports twice: once as written, and once more, at the same
 // start, with a part of its body decoded. The second result repeats a value
 // already placed, so it is not dropped and the file keeps its surrounding
-// lines. A decoded key that starts anywhere else is dropped as before.
+// lines. A decoded key that starts anywhere else is dropped.
 func TestHandle_DecodedKeyInsidePlacedKey(t *testing.T) {
 	// The key is indented, as in a YAML block scalar, so the key file
 	// detector does not take the whole file for a key.
