@@ -36,8 +36,9 @@ const placeholder = "${"
 //     with an optional path, and parameters after ? (separated by &) or ;
 //     (separated by ;), as MySQL, PostgreSQL, MariaDB, and SQL Server write
 //     them. The value of user or username is an account, and the value of
-//     any parameter whose name contains password, pwd, secret, or token
-//     (ignoring case) is a password. A value with an @ after the authority
+//     any parameter whose name ends with password, pwd, secret, or token,
+//     optionally followed by key or accesskey (ignoring case), is a
+//     password. A value with an @ after the authority
 //     is not split, because its user information may hold an unencoded
 //     delimiter;
 //   - account@host, account@host:port, and account@host:path, the target of
@@ -223,12 +224,21 @@ func (sp *splitter) params(from int) {
 }
 
 // secretKey reports whether a parameter named key, in lower case, holds a
-// secret: its name contains password, pwd, secret, or token, as
-// password, sslpassword, trustCertificateKeyStorePassword, accessToken,
-// and keyStoreSecret do.
+// secret: after an optional trailing "accesskey" or "key", its name ends
+// with password, pwd, secret, or token, as password, sslpassword,
+// trustCertificateKeyStorePassword, accessToken, keyStoreSecret, SecretKey,
+// and SecretAccessKey do. A name in which such a word is followed by
+// anything else names a setting about the secret, such as
+// passwordCharacterEncoding, sslpasswordcallback, or tokenProvider, and its
+// value is not a secret.
 func secretKey(key string) bool {
+	if k, ok := strings.CutSuffix(key, "accesskey"); ok {
+		key = k
+	} else {
+		key = strings.TrimSuffix(key, "key")
+	}
 	for _, w := range []string{"password", "pwd", "secret", "token"} {
-		if strings.Contains(key, w) {
+		if strings.HasSuffix(key, w) {
 			return true
 		}
 	}

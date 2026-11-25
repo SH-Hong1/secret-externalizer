@@ -83,6 +83,18 @@ func TestSplit(t *testing.T) {
 			"jdbc:sqlserver://db.invalid;accessToken=dev-only-fake-token;keyStoreSecret=dev-only-fake-secret;pwd=dev-only-fake-pwd",
 			[]part{{host, "db.invalid"}, {pw, "dev-only-fake-token"}, {pw, "dev-only-fake-secret"}, {pw, "dev-only-fake-pwd"}},
 		},
+		{
+			"jdbc:mysql://db.invalid/shop?passwordCharacterEncoding=UTF-8&password=dev-only-fake-pw",
+			[]part{{host, "db.invalid"}, {pw, "dev-only-fake-pw"}},
+		},
+		{
+			"jdbc:postgresql://db.invalid/shop?sslpasswordcallback=org.example.Callback&tokenProvider=org.example.Provider&secretFile=/etc/shop/secret",
+			[]part{{host, "db.invalid"}},
+		},
+		{
+			"jdbc:awsathena://athena.invalid:443;SecretKey=dev-only-fake-sk;SecretAccessKey=dev-only-fake-sak;AccessKey=AKIAFAKE",
+			[]part{{host, "athena.invalid"}, {port, "443"}, {pw, "dev-only-fake-sk"}, {pw, "dev-only-fake-sak"}},
+		},
 		{"jdbc:mysql://u:12#ab@db.invalid/x", nil},
 		{"jdbc:mysql://u:12?ab@db.invalid/x", nil},
 		{"jdbc:mysql://u:12/ab@db.invalid/x", nil},
