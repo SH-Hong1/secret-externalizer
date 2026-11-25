@@ -1305,3 +1305,101 @@ func TestFinishApply_ValueReasons(t *testing.T) {
 		t.Errorf("ApplyItems(%d) after finishing (-want +got):\n%s", id, diff)
 	}
 }
+
+// TestBeginEndFile_RetriesTransient makes the first writes of BeginFile and
+// EndFile fail as a serialization failure, a deadlock, a broken connection
+// or a server shutdown would, and expects both to succeed on a later
+// attempt.
+func TestBeginEndFile_RetriesTransient(t *testing.T) {
+	for _, code := range []string{"40001", "40P01", "08006", "57P01"} {
+		t.Run(code, func(t *testing.T) {
+			s := newMigratedStore(t)
+			ctx := t.Context()
+			pid, sid, pw, _ := decidedProject(t, s, "shop")
+			id := applyRunIn(t, s, pid, sid, apply.StateRunning)
+			it := replaceItem(t, s, pid, pw, "conf/a.yml")
+
+			failWrites(t, s, code, 2)
+			if err := s.BeginFile(ctx, id, "conf/a.yml", fileHash, hashOf("1"), tempOf("conf/a.yml"), []apply.Item{it}); err != nil {
+				t.Fatalf("BeginFile(%d) with two %s failures error = %v, want nil", id, code, err)
+			}
+			if n := writes(t, s); n != 3 {
+				t.Errorf("BeginFile(%d) with two %s failures wrote %d times, want 3", id, code, n)
+			}
+			failWrites(t, s, code, 2)
+			if err := s.EndFile(ctx, id, "conf/a.yml", hashOf("1"), tempOf("conf/a.yml")); err != nil {
+				t.Fatalf("EndFile(%d) with two %s failures error = %v, want nil", id, code, err)
+			}
+			it.Status = apply.StatusApplied
+			if diff := cmp.Diff([]apply.Item{it}, applyItems(t, s, id)); diff != "" {
+				t.Errorf("ApplyItems(%d) after EndFile (-want +got):\n%s", id, diff)
+			}
+			if got := openFiles(t, s, pid); len(got) != 0 {
+				t.Errorf("OpenFiles(%d) after EndFile = %+v, want none", pid, got)
+			}
+		})
+	}
+}
+
+// TestBeginEndFile_NotRetried expects BeginFile and EndFile to return at once
+// an error that another attempt would meet again, and to stop after a few
+// attempts at a transient one.
+func TestBeginEndFile_NotRetried(t *testing.T) {
+	tests := []struct {
+		name, code string
+		failures   int
+		wantWrites int
+	}{
+		{name: "check violation", code: "23514", failures: 1, wantWrites: 1},
+		{name: "persistent serialization failure", code: "40001", failures: 100, wantWrites: 3},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			s := newMigratedStore(t)
+			ctx := t.Context()
+			pid, sid, pw, _ := decidedProject(t, s, "shop")
+			id := applyRunIn(t, s, pid, sid, apply.StateRunning)
+			it := replaceItem(t, s, pid, pw, "conf/a.yml")
+
+			failWrites(t, s, tt.code, tt.failures)
+			if err := s.BeginFile(ctx, id, "conf/a.yml", fileHash, hashOf("1"), tempOf("conf/a.yml"), []apply.Item{it}); err == nil {
+				t.Fatalf("BeginFile(%d) with %d %s failures error = nil, want an error", id, tt.failures, tt.code)
+			}
+			if n := writes(t, s); n != tt.wantWrites {
+				t.Errorf("BeginFile(%d) with %d %s failures wrote %d times, want %d", id, tt.failures, tt.code, n, tt.wantWrites)
+			}
+			if got := openFiles(t, s, pid); len(got) != 0 {
+				t.Errorf("OpenFiles(%d) after a failed BeginFile = %+v, want none", pid, got)
+			}
+
+			failWrites(t, s, tt.code, 0)
+			beginFile(t, s, id, "conf/a.yml", hashOf("1"), it)
+			failWrites(t, s, tt.code, tt.failures)
+			if err := s.EndFile(ctx, id, "conf/a.yml", hashOf("1"), tempOf("conf/a.yml")); err == nil {
+				t.Fatalf("EndFile(%d) with %d %s failures error = nil, want an error", id, tt.failures, tt.code)
+			}
+			if n := writes(t, s); n != tt.wantWrites {
+				t.Errorf("EndFile(%d) with %d %s failures wrote %d times, want %d", id, tt.failures, tt.code, n, tt.wantWrites)
+			}
+		})
+	}
+}
+
+// failWrites makes the next n writes of apply_file in s fail with code.
+func failWrites(t *testing.T, s *db.Store, code string, n int) {
+	t.Helper()
+	if err := s.FailWrites(t.Context(), code, n); err != nil {
+		t.Fatalf("FailWrites(%s, %d) error = %v", code, n, err)
+	}
+}
+
+// writes returns how many writes of apply_file reached the trigger of the
+// last failWrites.
+func writes(t *testing.T, s *db.Store) int {
+	t.Helper()
+	n, err := s.Writes(t.Context())
+	if err != nil {
+		t.Fatalf("Writes() error = %v", err)
+	}
+	return n
+}

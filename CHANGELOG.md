@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 적용이 파일을 바꾸기 전후의 기록(`BeginFile`, `EndFile`)에서 데이터베이스가 일시적인 오류(연결 끊김, 서버 재시작, 직렬화 실패, 교착)를 내면 트랜잭션을 세 번까지 다시 시도한다. 전에는 한 번의 오류로 실행이 실패해 사람이 적용을 다시 요청해야 했다(`docs/adr/0095-file-records-retry-transient-database-errors.md`)
 - worker의 OpenBao 요청 한 번의 제한 시간이 10초에서 2분이 되고, 요청을 다 보낸 뒤 답을 기다리는 시간은 따로 30초로 묶는다. 공식 클라이언트가 요청마다 두던 60초 한도는 끄고, 작업의 시간 한도가 재시도를 합친 전체를 묶는다. 전에는 느린 호스트에서 큰 키 파일(16MiB까지)의 지문 요청, 저장, 다시 읽기가 10초를 넘어 `store-failed`가 되었다. web은 지금처럼 10초다(`docs/adr/0094-openbao-request-limits-allow-large-values.md`)
 - compose의 pdf와 `pdf-test` 컨테이너에 `memswap_limit: 1g`를 두어 스왑을 쓰지 않는다. 전에는 스왑이 있는 호스트에서 메모리 한도(1GiB)를 넘은 뒤에도 스왑을 1GiB까지 더 썼다. 띄운 스택은 `docker compose up -d pdf`로 바꾼다(`docs/adr/0092-pdf-container-has-no-swap.md`)
 - 스캔이 프로젝트의 제외 경로를 betterleaks에도 넘겨, betterleaks가 제외한 폴더와 파일을 읽지 않는다. 제외 경로가 있는 스캔마다 원래 규칙 파일을 `[extend]`로 잇고 `[[allowlists]] paths`를 더한 규칙 파일을 `<SCAN_TEMP_DIR>/tmp`에 만들어 넘기고, 스캔이 끝나면 지운다. 전에는 betterleaks가 제외한 폴더도 읽고 결과만 버렸다(`docs/adr/0091-betterleaks-excludes-through-a-scan-rule-file.md`)
