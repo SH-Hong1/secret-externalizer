@@ -6,6 +6,7 @@
 
 ### 변경
 
+- `pre-commit`이 파일을 지우기만 한 커밋도 검사 대상으로 보고 `make check`를 실행한다. 또 `make check`는 작업 트리를 읽으므로, Go 파일뿐 아니라 템플릿, testdata, 스크립트 등 검사 대상 파일 하나라도 스테이징되지 않은 변경이 있으면(지운 것으로 스테이징했는데 디스크에 남은 파일 포함) 커밋을 거부한다
 - `.properties` 파일에서 키 끝이 `user`, `username`, `userid`인 값은 공백 없는 한 낱말일 때만 계정으로 보고한다. 메시지 파일의 `confirm.required.user=User is required.`나 `\uXXXX`로 쓴 안내 문장처럼 공백이 든 문장은 더 이상 계정 항목이 아니다. 공개 예제 검증(`make sample-check`)은 예제 사본의 `context-datasource.xml`에 누가 봐도 가짜인 접속 정보 bean 하나를 넣어 적용과 확인 스캔이 실제로 바꿀 자리를 갖게 하고, 원본은 그것을 읽을 수 있는 web 역할로 읽는다(`docs/adr/0078-public-sample-seeded-data-source.md`)
 - worker가 작업을 닫는 커밋과 임대 연장이 겹쳐도 handler를 멈추지 않는다. 전에는 연장이 닫힌 작업을 보고 임대를 잃었다고 판단해 커밋 중인 handler를 취소했고, 그래서 결과는 저장되었는데 "job stopped before it finished"가 남거나 커밋이 되돌려져 작업이 임대가 끝날 때까지 `running`으로 남았다. 연장은 자기가 마지막으로 잡았던 작업이 닫혀 있고 임대가 아직 남아 있으면 그냥 멈춘다(`docs/adr/0077-renewal-that-finds-its-own-close.md`)
 - CI의 AI 검토가 base 브랜치의 `AGENTS.md`, 검토 지시문, 판정 스크립트를 쓴다. 이 파일들과 `.github/`를 바꾸는 PR도 검토한다. `review: override`는 절 이름을 어떻게 쓰든, 몇 번째에 있든 Security 위반을 통과시키지 않는다. 검토 작업의 체크아웃은 토큰을 남기지 않는다(`docs/adr/0076-review-files-come-from-the-base-branch.md`)

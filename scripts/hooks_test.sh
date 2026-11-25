@@ -131,5 +131,41 @@ if [ "$status" -eq 0 ] || ! grep -q 'has changes that are not staged' "$work/err
 	printf 'pre-commit: partly staged go file: status %s, want non-zero and the unstaged message\n' "$status" >&2
 	failed=1
 fi
+git -C "$repo" add a.go
+git -C "$repo" commit -q -m a --no-verify
+
+# make check reads the work tree, so every checked file, not only Go files,
+# must be staged as it is on disk.
+mkdir -p "$repo/scripts"
+printf 'echo a\n' >"$repo/scripts/x.sh"
+git -C "$repo" add scripts/x.sh
+printf 'echo b\n' >"$repo/scripts/x.sh"
+precommit
+if [ "$status" -eq 0 ] || ! grep -q 'scripts/x.sh has changes that are not staged' "$work/err" || [ -s "$work/calls" ]; then
+	printf 'pre-commit: partly staged script: status %s, calls %s, want non-zero, the unstaged message and no calls\n' "$status" "$(cat "$work/calls")" >&2
+	failed=1
+fi
+git -C "$repo" add scripts/x.sh
+git -C "$repo" commit -q -m script --no-verify
+
+# A commit that only deletes a Go file can break code that used it.
+git -C "$repo" rm -q a.go
+precommit
+if [ "$status" -ne 0 ] || ! grep -q '^make -s check$' "$work/calls" || grep -q '^golangci-lint' "$work/calls"; then
+	printf 'pre-commit: deleted go file: status %s, calls %s, want 0, make -s check and no formatting\n' "$status" "$(cat "$work/calls")" >&2
+	failed=1
+fi
+
+# A deletion that is staged while the file stays on disk is checked with the
+# file still there.
+git -C "$repo" reset -q
+git -C "$repo" checkout -q -- a.go
+git -C "$repo" rm -q --cached a.go
+precommit
+if [ "$status" -eq 0 ] || ! grep -q 'a.go has changes that are not staged' "$work/err"; then
+	printf 'pre-commit: deletion staged but file on disk: status %s, want non-zero and the unstaged message\n' "$status" >&2
+	failed=1
+fi
+git -C "$repo" reset -q
 
 exit "$failed"
