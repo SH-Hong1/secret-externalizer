@@ -6,6 +6,7 @@
 
 ### 변경
 
+- PR의 제목이나 본문을 고치면 `pull-request` 체크(`.github/workflows/pr-text.yml`)만 다시 돈다. 라벨은 `review: override`를 붙이거나 뗄 때만 head 커밋의 마지막 ci 실행에서 `review` 작업 하나를 다시 돌리고(`.github/workflows/review-label.yml`), 다른 라벨은 아무것도 돌리지 않는다. 그래서 이런 변경이 AI 검토 비용을 들이거나 진행 중인 `integration`을 취소하지 않는다. `review` 작업은 `review: override` 여부를 그 순간 PR의 라벨에서 읽는다(`docs/adr/0080-pr-events-rerun-only-what-they-change.md`)
 - 편집기 swap 파일 `.githooks/.pre-commit.swp`를 저장소에서 지우고, `.gitignore`가 `*.swp`, `*.swo`, `*~`를 무시한다
 - 실제 스캐너를 쓰는 `internal/apply` 테스트(공개 예제 검증 포함)가 스캔, 점검, 적용에 실패하면 worker 로그 전체 대신 레코드마다 level, 메시지, 속성 이름만 보이고, 메시지와 속성 이름도 프로그램 소스에 문자열 리터럴로 적힌 것일 때만 보인다. 값을 로그에 남기는 회귀와 실패가 겹쳐도 CI 로그에 값이 찍히지 않는다. 로컬에서 전체 로그가 필요하면 `SHOW_WORKER_LOG=1`을 준다(`docs/adr/0079-test-failures-show-a-log-digest.md`)
 - `pre-commit`이 파일을 지우기만 한 커밋도 검사 대상으로 보고 `make check`를 실행한다. 또 `make check`는 작업 트리를 읽으므로, Go 파일뿐 아니라 템플릿, testdata, 스크립트 등 검사 대상 파일 하나라도 스테이징되지 않은 변경이 있으면(지운 것으로 스테이징했는데 디스크에 남은 파일 포함) 커밋을 거부한다

@@ -1,0 +1,45 @@
+name: review-label
+
+# Adding or removing review: override changes only the verdict of the review
+# job, so only that job of the latest ci.yml run for the head commit runs
+# again. Other labels run nothing. The job here is not named review: a
+# skipped job counts as passed, and a skipped review would hide a failed one.
+on:
+  pull_request:
+    types: [labeled, unlabeled]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: review-label-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rerun-review:
+    if: "github.event.label.name == 'review: override'"
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - name: Rerun the review job of the latest ci run
+        run: |
+          run=$(gh run list --workflow ci.yml --event pull_request --commit "$HEAD_SHA" --limit 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$run" ]; then
+            echo "::error::No ci run for $HEAD_SHA; push a commit to start one."
+            exit 1
+          fi
+          # A job can be rerun only after its whole run has finished.
+          gh run watch "$run" --interval 30 > /dev/null || true
+          job=$(gh run view "$run" --json jobs --jq '.jobs[] | select(.name == "review") | .databaseId')
+          if [ -z "$job" ]; then
+            echo "::error::Run $run has no review job."
+            exit 1
+          fi
+          gh run rerun --job "$job"
+          echo "Rerunning the review job $job of run $run."
