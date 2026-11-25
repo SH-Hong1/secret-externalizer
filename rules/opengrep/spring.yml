@@ -119,6 +119,9 @@ rules:
       - pattern-regex: (?mi)^[ \t]*(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)(?:[ \t]*[=:][ \t]*|[ \t]+(?![=:]))(?![$#]\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$
       - focus-metavariable: $VALUE
 
+  # A user name is one word. A value with white space inside it is a
+  # sentence, such as the message "User is required." under the key
+  # confirm.required.user in a message bundle, and is not reported.
   - id: properties-username
     message: A user name is written in a properties file.
     severity: WARNING
@@ -129,7 +132,7 @@ rules:
       category: storage-credential
       kind: account
     patterns:
-      - pattern-regex: (?mi)^[ \t]*(?:[\w-]+\.)*(?:username|user|userid)(?:[ \t]*[=:][ \t]*|[ \t]+(?![=:]))(?![$#]\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$
+      - pattern-regex: (?mi)^[ \t]*(?:[\w-]+\.)*(?:username|user|userid)(?:[ \t]*[=:][ \t]*|[ \t]+(?![=:]))(?![$#]\{)(?P<VALUE>\S+)[ \t]*\r?$
       - focus-metavariable: $VALUE
 
   - id: properties-jdbc-url

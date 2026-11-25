@@ -64,6 +64,7 @@ func TestIntegration_PublicSample(t *testing.T) {
 	workspace := t.TempDir()
 	dir := filepath.Join(workspace, "sample")
 	copyWithoutGit(t, src, dir)
+	seedDataSource(t, dir)
 	worktreetest.Init(t, dir)
 
 	rules, err := filepath.Abs(filepath.Join("..", "..", "rules"))
@@ -132,12 +133,14 @@ func TestIntegration_PublicSample(t *testing.T) {
 			secretFP[fd.Fingerprint] = true
 		}
 	}
+	// Only the web role, which reveals an original to an admin, can read one.
+	reader := realRole(t, root, os.Getenv("TEST_BAO_ADDR"), "web")
 	var originals [][]byte
 	for _, fp := range fps {
 		if !secretFP[fp] {
 			continue
 		}
-		v, err := worker.ReadPending(ctx, int64(projectID), fp)
+		v, err := reader.ReadPending(ctx, int64(projectID), fp)
 		if err != nil {
 			t.Fatalf("ReadPending() error = %v", err)
 		}
@@ -279,6 +282,46 @@ func compareGolden(t *testing.T, findings []finding.Finding) {
 	}
 	if diff := cmp.Diff(string(want), got); diff != "" {
 		t.Errorf("findings of the public sample (-%s +scan):\n%s", sampleGolden, diff)
+	}
+}
+
+// sampleDataSource is the file of the public sample that defines its data
+// source, and dataSourceAnchor is the element after which seedDataSource
+// adds one.
+const (
+	sampleDataSource = "src/main/resources/egovframework/spring/context-datasource.xml"
+	dataSourceAnchor = "</jdbc:embedded-database>"
+)
+
+// seededDataSource is a data source bean whose URL, user name and password
+// are obviously fake, written the way a legacy project writes its own.
+const seededDataSource = `
+	<bean id="seededDataSource" class="org.apache.commons.dbcp2.BasicDataSource" destroy-method="close">
+		<property name="driverClassName" value="com.mysql.jdbc.Driver"/>
+		<property name="url" value="jdbc:mysql://db.example.invalid:3306/sample"/>
+		<property name="username" value="fake_sample_user"/>
+		<property name="password" value="fake-sample-password-not-real"/>
+	</bean>`
+
+// seedDataSource adds seededDataSource to the copy of the public sample in
+// dir, after its embedded database. The sample holds no credential of its
+// own, so without one the apply and the confirming scan would have nothing
+// to work on.
+func seedDataSource(t *testing.T, dir string) {
+	t.Helper()
+	p := filepath.Join(dir, filepath.FromSlash(sampleDataSource))
+	b, err := os.ReadFile(p) //nolint:gosec // G304: the path is under t.TempDir
+	if err != nil {
+		t.Fatalf("reading %s of the sample: %v", sampleDataSource, err)
+	}
+	i := bytes.Index(b, []byte(dataSourceAnchor))
+	if i < 0 {
+		t.Fatalf("%s of the sample has no %s to add the data source after", sampleDataSource, dataSourceAnchor)
+	}
+	i += len(dataSourceAnchor)
+	seeded := slices.Concat(b[:i], []byte(seededDataSource), b[i:])
+	if err := os.WriteFile(p, seeded, 0o600); err != nil { //nolint:gosec // G703: the path is under t.TempDir
+		t.Fatalf("writing %s of the sample: %v", sampleDataSource, err)
 	}
 }
 
