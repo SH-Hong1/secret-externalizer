@@ -431,8 +431,8 @@ type verdictTile struct {
 	N     int
 }
 
-// newVerdictTiles returns the tiles of the undecided bundles and of each
-// verdict.
+// newVerdictTiles returns the tiles of the undecided lines of the triage
+// list and of each verdict.
 func newVerdictTiles(id project.ID, counts map[triage.Verdict]int) []verdictTile {
 	out := []verdictTile{{Label: "미판정", Class: "untriaged", Href: triagePath(id), N: counts[""]}}
 	for _, v := range []triage.Verdict{triage.VerdictExternalize, triage.VerdictRedact, triage.VerdictFalsePositive, triage.VerdictHold} {

@@ -502,8 +502,10 @@ func TestEntries(t *testing.T) {
 		if diff := cmp.Diff([]int{5, 32}, counts); diff != "" {
 			t.Errorf("counts of the customer data lines after 5 false positives (-want +got):\n%s", diff)
 		}
-		if p.Counts[""] != 152 || p.Counts[triage.VerdictFalsePositive] != 5 {
-			t.Errorf("Entries().Counts = %v, want 152 undecided and 5 false positives", p.Counts)
+		// Counts are lines: 120 secrets and one customer data line are
+		// undecided, and the other customer data line is false positives.
+		if p.Counts[""] != 121 || p.Counts[triage.VerdictFalsePositive] != 1 {
+			t.Errorf("Entries().Counts = %v, want 121 undecided lines and 1 false positive line", p.Counts)
 		}
 	})
 
@@ -567,8 +569,10 @@ func TestVerdictCounts(t *testing.T) {
 		sid  scan.ID
 		want map[triage.Verdict]int
 	}{
+		// The three phone numbers in one file are one line per verdict: one
+		// undecided line and one false positive line.
 		{"first scan", first, map[triage.Verdict]int{
-			"": 4, triage.VerdictExternalize: 1, triage.VerdictRedact: 0, triage.VerdictFalsePositive: 2, triage.VerdictHold: 0,
+			"": 3, triage.VerdictExternalize: 1, triage.VerdictRedact: 0, triage.VerdictFalsePositive: 2, triage.VerdictHold: 0,
 		}},
 		{"second scan", second, map[triage.Verdict]int{
 			"": 0, triage.VerdictExternalize: 1, triage.VerdictRedact: 0, triage.VerdictFalsePositive: 1, triage.VerdictHold: 0,
@@ -588,6 +592,13 @@ func TestVerdictCounts(t *testing.T) {
 			}
 			if diff := cmp.Diff(p.Counts, got); diff != "" {
 				t.Errorf("VerdictCounts differs from Entries().Counts (-entries +counts):\n%s", diff)
+			}
+			sum := 0
+			for _, n := range got {
+				sum += n
+			}
+			if sum != p.Total {
+				t.Errorf("VerdictCounts(%d, %d) adds up to %d, want the %d lines of the list", pid, tt.sid, sum, p.Total)
 			}
 		})
 	}
@@ -720,6 +731,7 @@ func TestProjectSummaries(t *testing.T) {
 	alpha := newProject(t, s, "alpha")
 	bravo := newProject(t, s, "bravo")
 	charlie := newProject(t, s, "charlie")
+	delta := newProject(t, s, "delta")
 
 	save(t, s, bravo, mixed()...)
 	decide(t, s, bravo, triage.Decision{Verdict: triage.VerdictFalsePositive}, bundleOf(t, s, bravo, fpB, "conf/a.yml"))
@@ -727,6 +739,14 @@ func TestProjectSummaries(t *testing.T) {
 	if err := s.FailScan(ctx, j.ID, "worker-a", failed, "fake failure"); err != nil {
 		t.Fatalf("FailScan(%d) error = %v", failed, err)
 	}
+
+	// Three phone numbers in one file are one line of the triage list.
+	var phones []finding.Finding
+	for i := range 3 {
+		phones = append(phones, fnd(fmt.Sprintf("%064x", 2000+i), "logs/app.log", finding.CategoryCustomerData, finding.KindPhone, i+1))
+	}
+	phones = append(phones, password("conf/a.yml"))
+	deltaScan := save(t, s, delta, phones...)
 
 	save(t, s, charlie, mixed()...)
 	save(t, s, charlie, password("conf/a.yml"))
@@ -739,8 +759,8 @@ func TestProjectSummaries(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ProjectSummaries() error = %v", err)
 	}
-	if len(got) != 3 {
-		t.Fatalf("ProjectSummaries() = %d summaries, want 3", len(got))
+	if len(got) != 4 {
+		t.Fatalf("ProjectSummaries() = %d summaries, want 4", len(got))
 	}
 	for i, sum := range got {
 		if sum.LastScanAt.IsZero() != (sum.LastScanID == 0) {
@@ -764,6 +784,7 @@ func TestProjectSummaries(t *testing.T) {
 		{alpha, "alpha", 0, "", false, 0, 0},
 		{bravo, "bravo", int64(failed), "failed", true, 5, 6},
 		{charlie, "charlie", int64(queued), "queued", true, 1, 1},
+		{delta, "delta", int64(deltaScan), "succeeded", true, 2, 2},
 	}
 	if diff := cmp.Diff(want, rows); diff != "" {
 		t.Errorf("ProjectSummaries() (-want +got):\n%s", diff)

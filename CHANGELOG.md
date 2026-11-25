@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 판정 화면의 상태 탭과 머리말, 스캔·프로젝트 화면의 "판정하기 · 미판정 N" 버튼과 판정 타일, 프로젝트 목록의 미판정·전체가 묶음 수가 아니라 판정 목록의 줄 수를 보인다. 고객정보는 파일, 종류, 판정마다 한 줄이므로, 한 줄이 탭에서 2 이상으로 세지지 않는다. 대시보드와 리포트는 묶음 수 그대로다(`docs/adr/0090-triage-counts-are-list-lines.md`)
 - 스캔이 시작할 때 EUC-KR 사본 폴더(`<SCAN_TEMP_DIR>/copies`)와 스캐너의 임시 폴더(`<SCAN_TEMP_DIR>/tmp`)에서 스캔 시간 한도의 두 배 동안 바뀌지 않은 항목을 지운다. worker가 강제로 죽어 지우지 못한 스캔 대상의 사본이 남지 않는다. 같은 폴더를 쓰는 다른 worker의 진행 중인 스캔 항목은 지우지 않는다(`docs/adr/0089-stale-scan-temporary-entries.md`)
 - 같은 PEM 개인 키를 betterleaks가 본문 일부를 풀어 한 번 더 보고한 결과를 버린 결과로 세지 않고, 그 파일의 주변 줄도 빼지 않는다. 전에는 키를 담은 `application.yml` 같은 파일에서 버린 건수가 늘고, 같은 파일의 비밀번호 항목도 주변 줄 없이 보였다. 이 일은 CRLF와 관계없이 키 본문 일부가 글자로 풀릴 때 생긴다(`docs/adr/0088-decoded-key-that-repeats-a-placed-key.md`)
 - 스캔이 프로젝트의 제외 경로를 opengrep(`--exclude`)과 키 파일 탐지기에 넘겨, 두 스캐너가 제외한 폴더를 읽지 않는다. 전에는 모든 스캐너가 제외한 폴더도 읽고 결과만 버렸다. betterleaks는 경로를 제외하는 옵션이 없어 지금처럼 읽고 결과를 버린다(`docs/adr/0087-project-excludes-reach-the-scanners.md`)

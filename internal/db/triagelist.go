@@ -177,8 +177,9 @@ func statusVerdict(status string) (v triage.Verdict, all bool, err error) {
 // Entries returns one page of the triage list of the project for scanID:
 // the bundles that scan found, ordered by category, file, and first line.
 // A page past the last gives the last page and a page before the first the
-// first. Counts holds the number of bundles for each verdict, whatever the
-// filter.
+// first. Counts holds the number of lines of the list for each verdict,
+// whatever the filter: a secret bundle is one line, and the customer data of
+// one file, kind and verdict is one line.
 func (s *Store) Entries(ctx context.Context, projectID project.ID, scanID scan.ID, f triage.Filter) (triage.Page, error) {
 	verdict, all, err := statusVerdict(f.Status)
 	if err != nil {
@@ -214,8 +215,8 @@ func zeroCounts() map[triage.Verdict]int {
 	}
 }
 
-// VerdictCounts returns the number of bundles of each verdict that the
-// scan found, as the Counts of Entries has it. The key of the bundles
+// VerdictCounts returns the number of lines of each verdict in the triage
+// list of the scan, as the Counts of Entries has it. The key of the lines
 // without a verdict is the empty verdict.
 func (s *Store) VerdictCounts(ctx context.Context, projectID project.ID, scanID scan.ID) (map[triage.Verdict]int, error) {
 	counts := zeroCounts()
@@ -227,12 +228,12 @@ func (s *Store) VerdictCounts(ctx context.Context, projectID project.ID, scanID 
 	return counts, nil
 }
 
-// readCounts adds to counts the number of bundles of each verdict that
-// scanID found.
+// readCounts sets in counts the number of lines of each verdict in the
+// triage list of scanID.
 func readCounts(ctx context.Context, tx pgx.Tx, projectID project.ID, scanID scan.ID, counts map[triage.Verdict]int) error {
-	rows, err := tx.Query(ctx, scanBundles+" SELECT verdict, count(*) FROM scan_bundle GROUP BY verdict", projectID, scanID)
+	rows, err := tx.Query(ctx, scanEntries+" SELECT verdict, count(*) FROM entry GROUP BY verdict", projectID, scanID)
 	if err != nil {
-		return fmt.Errorf("counting bundles: %w", err)
+		return fmt.Errorf("counting lines: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
@@ -246,7 +247,7 @@ func readCounts(ctx context.Context, tx pgx.Tx, projectID project.ID, scanID sca
 		counts[v] = n
 	}
 	if err := rows.Err(); err != nil {
-		return fmt.Errorf("counting bundles: %w", err)
+		return fmt.Errorf("counting lines: %w", err)
 	}
 	return nil
 }
