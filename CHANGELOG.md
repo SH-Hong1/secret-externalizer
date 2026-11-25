@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 적용과 점검이 `secrets-manifest.yml` 안의 비밀 값 자리를 바꾸기 전에, 바꾼 결과를 manifest로 다시 읽을 수 있는지 확인한다. 읽을 수 없으면(따옴표 없는 값을 placeholder로 바꾸는 경우) 그 파일의 자리를 모두 새 사유 `breaks-manifest`("바꾸면 manifest를 읽을 수 없게 됨")로 건너뛰고 값을 OpenBao에 저장하지 않는다. 전에는 소스와 OpenBao를 바꾼 뒤 manifest 쓰기가 실패해 사람이 manifest를 고쳐야 했다. 마이그레이션 `0013_apply_breaks_manifest.sql`이 사유를 더한다(`docs/adr/0084-manifest-targets-that-break-it-are-skipped.md`)
 - `scripts/fetch-sample.sh`가 예제를 받지 못했을 때 저장소가 응답하면 "commit … not found"를, 응답하지 않으면 "cannot reach <URL>:"과 git의 오류를 보인다. 전에는 DNS나 네트워크 실패도 커밋이 없다고 보고했다
 - 주석으로 막아 둔 Java 코드의 비밀 리터럴을 항목으로 보고한다. 이름이 비밀을 뜻하는 변수나 필드에 대입한 문자열, `setPassword`, 비밀번호 키의 `setProperty`, `getConnection`의 세 번째 인자가 대상이고, 이름 규칙은 주석 밖의 Java 규칙과 같다. `//`와 `/* … */`는 표시가 줄 처음에 올 때만 주석으로 본다. 규칙은 `rules/opengrep/comment.yml`에 있다(`docs/adr/0083-commented-java-code-is-scanned.md`)
 - 주석으로 막아 둔 설정의 접속 정보를 항목으로 보고한다. XML 주석 안의 dataSource bean의 URL, 계정과 주석 안의 비밀번호, `.properties`의 `#`/`!` 줄과 `application*.yml`의 `#` 줄에 적힌 비밀번호, 계정, JDBC URL, 호스트가 대상이고, 규칙은 `rules/opengrep/comment.yml`에 있다(규칙 ID에 `comment`가 든다). 주석 줄의 값은 줄을 끝내는 한 낱말일 때만 보고해 설명 문장은 거른다. 적용은 주석 안의 값도 판정대로 바꾼다. 공개 예제 검증의 기대 목록에 예제의 주석 속 bean 셋의 항목이 더해진다(`docs/adr/0081-settings-kept-in-comments-are-findings.md`)

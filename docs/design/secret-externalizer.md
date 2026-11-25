@@ -303,6 +303,7 @@ git은 `internal/worktree`가 읽기만 하는 명령으로 부른다. 시스템
 - 키 파일 전체 대상: 고객정보가 있을 수 있는 파일은 `key-holds-customer-data`, 소스·설정 파일 확장자는 `key-in-source-file`로 건너뛴다. 키 저장소·인증서 확장자와 `id_*` 이름은 대상이고, 그 밖은 내용이 PEM 블록뿐일 때만 지운다(ADR 0039).
 - 같은 파일에서 범위가 겹치는 두 위치는 `overlap`, 고객정보 위치와 겹치는 비밀 값은 `holds-customer-data`로 건너뛴다. 고객정보 항목을 오탐으로 판정하면 풀린다(ADR 0039).
 - 하위 폴더의 다른 저장소(`nested-repository`), 16MiB를 넘는 값(`too-large`), 스캔 뒤에 바뀐 파일(`file-changed`), 다시 읽은 값의 지문이 다른 자리(`value-mismatch`)도 건너뛴다(ADR 0032, 0035).
+- `secrets-manifest.yml` 안의 자리는 치환한 결과를 manifest로 다시 읽을 수 있을 때만 바꾼다. 읽을 수 없으면(따옴표 없는 값을 placeholder로 바꾸는 경우) 그 파일의 자리를 모두 `breaks-manifest`로 건너뛰고 값을 저장하지 않는다(ADR 0084).
 - 추적되지 않는 파일의 비밀 값은 그대로 적용한다. 원본이 OpenBao에 남기 때문이다. 추적되지 않는 파일의 고객정보 마스킹은 되돌릴 수 없으므로 점검 화면에 "복구 불가"로 따로 보이고 동의를 받은 실행에서만 가린다(`untracked-irreversible`, ADR 0032, 0036).
 
 #### 저장할 값
