@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1654,5 +1655,41 @@ func TestHandle_DecodedKeyInsidePlacedKey(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// TestHandle_RemovesStaleTemporaryEntries checks that a scan first removes
+// what scans that ended without cleaning up left in the folder of copies
+// and in the scanners' temporary folder: entries not changed for twice the
+// time limit, which no running scan can own. Newer entries, which may be a
+// running scan's on another worker, stay.
+func TestHandle_RemovesStaleTemporaryEntries(t *testing.T) {
+	e := newEnv(t, map[string]string{propsFile: "p=" + password + "\n"})
+	scannerTmp := t.TempDir()
+	e.opts.ScannerTmpDir = scannerTmp
+	e.opts.TimeLimit = time.Hour
+	old := time.Now().Add(-3 * time.Hour)
+	recent := time.Now().Add(-90 * time.Minute)
+	entries := map[string]time.Time{
+		filepath.Join(e.tempDir, "41"):            old,
+		filepath.Join(e.tempDir, "42"):            recent,
+		filepath.Join(scannerTmp, "opengrep-old"): old,
+		filepath.Join(scannerTmp, "opengrep-new"): recent,
+	}
+	for p, mtime := range entries {
+		writeFile(t, filepath.Join(p, "conf", "copy.properties"), "p=dev-only-fake-copy\n")
+		if err := os.Chtimes(p, mtime, mtime); err != nil {
+			t.Fatalf("Chtimes(%s) error = %v", p, err)
+		}
+	}
+
+	if err := e.handle(t.Context(), passwordOG()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	for p, mtime := range entries {
+		_, err := os.Lstat(p)
+		if gone := errors.Is(err, fs.ErrNotExist); gone != mtime.Equal(old) {
+			t.Errorf("Handle() left %s: Lstat error = %v, want removed %v", p, err, mtime.Equal(old))
+		}
 	}
 }
