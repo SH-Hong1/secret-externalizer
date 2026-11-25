@@ -1,6 +1,6 @@
 # Settings that a comment keeps: a data source bean commented out in a Spring
-# XML context, and commented-out lines of .properties and application*.yml
-# files. A legacy project often keeps an old production connection this way,
+# XML context, commented-out lines of .properties and application*.yml
+# files, and commented-out Java code. A legacy project often keeps an old production connection this way,
 # and the value stays in the repository even though the program does not
 # read it. Every rule reports only the value, never the quotes or the key,
 # and a value that is a ${...} or #{...} placeholder or empty is not
@@ -10,7 +10,8 @@
 #
 # A rule's patterns are regular expressions that all have to match, so a
 # value is reported only where its property lies inside an XML comment (and,
-# for a URL or a user name, inside a data source bean as well).
+# for a URL or a user name, inside a data source bean as well), or where its
+# Java statement lies inside a Java comment.
 #
 # Every rule starts with "  - id:" and has its category and kind under
 # metadata, which the rule tests read line by line.
@@ -189,4 +190,80 @@ rules:
       kind: host
     patterns:
       - pattern-regex: (?mi)^[ \t]*#[# \t]*(?:-[ \t]+)?(?:[\w-]+\.)*(?:host|hostname)[ \t]*:[ \t]+(?|"(?![$#]\{)(?P<VALUE>[^"\s]+)"|'(?![$#]\{)([^'\s]+)'|(?![$#]\{)([^\s"'#>|]\S*))[ \t]*\r?$
+      - focus-metavariable: $VALUE
+
+  # Commented-out Java code reported as java.yml reports the same code
+  # outside a comment. A Java comment here is a // comment or a /* ... */
+  # block (Javadoc included) whose opening marker is the first thing on its
+  # line. A marker after code on the same line is not taken as a comment,
+  # because "//" and "/*" also occur inside string literals such as
+  # "http://..." and "/api/**", and the code around them is read by java.yml
+  # already. A literal is a double-quoted string on one line, which may hold
+  # backslash escapes, and is not empty.
+  #
+  # A literal assigned to a variable or field, with or without a type or a
+  # qualifier such as this., when the name is one java-secret-variable
+  # reports: the name rules there are repeated here as lookaheads on the
+  # last identifier before the =.
+  - id: java-comment-secret-variable
+    message: A string literal is assigned to a variable whose name says it holds a secret, in commented-out Java code.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.java"]
+    metadata:
+      category: other-secret
+      kind: password
+    patterns:
+      - pattern-regex: (?m)^[ \t]*(?://.*|/\*(?s:.*?)\*/)
+      - pattern-regex: (?<![\w$.])(?:[\w$]+\.)*(?=(?:[\w$]*(?i:passw|secret|token|pwd)|[\w$]*[a-z0-9_](?:Pass|PASS|Pw|PW)(?![\w$])|(?i:pass|pw)(?![\w$])))(?![\w$]*(?i:header|name|field|param|parameter|attr|attribute|label|prefix|suffix|type|url|uri|path|pattern|format)(?![\w$]))(?!(?:MSG|MESSAGE|ERR|ERROR|LABEL|TITLE|TEXT)_)(?!(?:msg|message|err|error|label|title|text)[A-Z])[A-Za-z_$][\w$]*[ \t]*=[ \t]*"(?P<VALUE>(?:[^"\\\r\n]|\\.)+)"[ \t]*;
+      - focus-metavariable: $VALUE
+
+  # A literal passed to setPassword, as java-set-password reports.
+  - id: java-comment-set-password
+    message: A string literal is passed to setPassword in commented-out Java code.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.java"]
+    metadata:
+      category: other-secret
+      kind: password
+    patterns:
+      - pattern-regex: (?m)^[ \t]*(?://.*|/\*(?s:.*?)\*/)
+      - pattern-regex: \.[ \t]*setPassword[ \t]*\([ \t]*"(?P<VALUE>(?:[^"\\\r\n]|\\.)+)"[ \t]*\)
+      - focus-metavariable: $VALUE
+
+  # A literal set as a property whose key contains passw or pwd, as
+  # java-set-property-password reports.
+  - id: java-comment-set-property-password
+    message: A string literal is set as a password property in commented-out Java code.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.java"]
+    metadata:
+      category: other-secret
+      kind: password
+    patterns:
+      - pattern-regex: (?m)^[ \t]*(?://.*|/\*(?s:.*?)\*/)
+      - pattern-regex: \.[ \t]*setProperty[ \t]*\([ \t]*"(?i:[^"\\\r\n]*(?:passw|pwd)[^"\\\r\n]*)"[ \t]*,[ \t]*"(?P<VALUE>(?:[^"\\\r\n]|\\.)+)"[ \t]*\)
+      - focus-metavariable: $VALUE
+
+  # A literal passed as the third argument of getConnection, as
+  # java-get-connection-password reports. The first two arguments are each a
+  # string literal, or code without commas, quotes, or nested calls beyond
+  # one level of parentheses.
+  - id: java-comment-get-connection-password
+    message: A string literal is passed as the password to getConnection in commented-out Java code.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.java"]
+    metadata:
+      category: other-secret
+      kind: password
+    patterns:
+      - pattern-regex: (?m)^[ \t]*(?://.*|/\*(?s:.*?)\*/)
+      - pattern-regex: (?<![\w$])getConnection[ \t]*\((?:[ \t]*(?:"(?:[^"\\\r\n]|\\.)*"|(?:[^,()"\r\n]|\([^()"\r\n]*\))+)[ \t]*,){2}[ \t]*"(?P<VALUE>(?:[^"\\\r\n]|\\.)+)"[ \t]*\)
       - focus-metavariable: $VALUE
