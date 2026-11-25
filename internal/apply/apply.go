@@ -108,6 +108,7 @@ const (
 	ReasonOverlap               Reason = "overlap"
 	ReasonUntrackedIrreversible Reason = "untracked-irreversible"
 	ReasonNestedRepository      Reason = "nested-repository"
+	ReasonBreaksManifest        Reason = "breaks-manifest"
 	ReasonKeyInSourceFile       Reason = "key-in-source-file"
 	ReasonKeyHoldsCustomerData  Reason = "key-holds-customer-data"
 	ReasonHoldsCustomerData     Reason = "holds-customer-data"

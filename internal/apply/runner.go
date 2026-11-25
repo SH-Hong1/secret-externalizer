@@ -497,6 +497,7 @@ func (r *Runner) prepare(ctx context.Context, j job.Job, phase job.Kind) (_ *pre
 		return nil, err
 	}
 	takeWholeFiles(p)
+	keepManifestReadable(p)
 	r.markUntracked(p, phase)
 	if phase == job.KindApplyCheck && !p.anyPlanned() && len(p.in.Unlisted) == 0 {
 		p.block(BlockerNothingToApply)
@@ -979,6 +980,47 @@ func takeWholeFiles(p *prepared) {
 			}
 		}
 	}
+}
+
+// keepManifestReadable skips every target in the manifest when the text
+// written in their places would leave a file manifest.Parse rejects, such
+// as a placeholder in place of a plain scalar. The manifest is written
+// after the rewrite stage, and it could not be written then; a value that
+// is left in place is not stored either.
+func keepManifestReadable(p *prepared) {
+	for _, f := range p.files {
+		if f.rel != manifest.FileName {
+			continue
+		}
+		var edits []rewrite.Edit
+		for _, t := range f.targets {
+			if t.reason == "" && !t.WholeFile {
+				edits = append(edits, rewrite.Edit{Span: t.span, With: t.Text})
+			}
+		}
+		if len(edits) == 0 {
+			continue
+		}
+		if !manifestReadableAfter(f, edits) {
+			f.skipAll(ReasonBreaksManifest)
+		}
+	}
+}
+
+// manifestReadableAfter reports whether f, the manifest, is still one
+// manifest.Parse reads once edits are made.
+func manifestReadableAfter(f *sourceFile, edits []rewrite.Edit) bool {
+	text, err := f.decode()
+	if err != nil {
+		return false
+	}
+	out, err := rewrite.Replace(f.raw, text, edits)
+	if err != nil {
+		return false
+	}
+	defer clear(out.Content)
+	_, err = manifest.Parse(out.Content)
+	return err == nil
 }
 
 // markUntracked handles customer data to redact in files git does not

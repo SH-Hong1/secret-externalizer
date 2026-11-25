@@ -459,6 +459,7 @@ func TestApplyPage_SkipReasons(t *testing.T) {
 		apply.ReasonOverlap:               "다른 항목과 범위가 겹침",
 		apply.ReasonUntrackedIrreversible: "git이 추적하지 않아 되돌릴 수 없음",
 		apply.ReasonNestedRepository:      "프로젝트 안의 다른 저장소에 있음",
+		apply.ReasonBreaksManifest:        "바꾸면 manifest를 읽을 수 없게 됨",
 		apply.ReasonKeyInSourceFile:       "소스 파일이라 통째로 옮기지 않음",
 		apply.ReasonKeyHoldsCustomerData:  "고객정보가 있을 수 있는 파일이라 통째로 옮기지 않음",
 		apply.ReasonHoldsCustomerData:     "고객정보가 섞여 있음",

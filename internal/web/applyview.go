@@ -275,6 +275,11 @@ func reasonOf(r apply.Reason) blockerView {
 		return blockerView{Label: "git이 추적하지 않아 되돌릴 수 없음", Action: "복구 불가에 동의해야 가립니다."}
 	case apply.ReasonNestedRepository:
 		return blockerView{Label: "프로젝트 안의 다른 저장소에 있음"}
+	case apply.ReasonBreaksManifest:
+		return blockerView{
+			Label:  "바꾸면 manifest를 읽을 수 없게 됨",
+			Action: "secrets-manifest.yml의 그 값을 큰따옴표로 감싸거나 직접 옮겨 주세요.",
+		}
 	case apply.ReasonKeyInSourceFile:
 		return blockerView{Label: "소스 파일이라 통째로 옮기지 않음"}
 	case apply.ReasonKeyHoldsCustomerData:

@@ -1999,6 +1999,44 @@ func TestApply_ManifestIsATarget(t *testing.T) {
 	}
 }
 
+func TestApply_ManifestTargetLeftReadable(t *testing.T) {
+	const stored = "dev-only-fake-manifest-store"
+	f := newShop(t, inRepository)
+	kept := manifest.Entry{
+		Name: "ext.kept.thing", Category: finding.CategoryOther, Action: manifest.ActionExternalized,
+		Store: stored, Locations: []manifest.Location{{File: "conf/other.yml", Line: 4}},
+	}
+	content, err := manifest.Manifest{Entries: []manifest.Entry{kept}}.Encode()
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	// The store is a plain scalar, so a placeholder in its place would
+	// not be in the form the manifest reader accepts.
+	write(t, f.dir, manifest.FileName, string(content))
+	f.commit()
+	want := all(map[string]string{}, skippedFor(apply.ReasonBreaksManifest),
+		f.secret("manifest.store.password", stored, manifest.FileName)...)
+	// The skipped value stays in the manifest, where the leak check would
+	// otherwise report it.
+	f.values = slices.DeleteFunc(f.values, func(v string) bool { return v == stored })
+	for _, k := range f.secret("db.yaml.password", ymlValue, ymlFile) {
+		want[k] = string(apply.StatusApplied)
+	}
+
+	f.mustApply()
+
+	if diff := cmp.Diff(want, f.items()); diff != "" {
+		t.Errorf("Apply() outcomes mismatch (-want +got):\n%s", diff)
+	}
+	if f.vault.value("ext.manifest.store.password") != nil {
+		t.Errorf("Apply() stored a value it left in the manifest")
+	}
+	got := f.readManifest().Entries
+	if len(got) != 2 || got[0].Name != "ext.db.yaml.password" || cmp.Diff(kept, got[1]) != "" {
+		t.Errorf("manifest entries = %+v, want the YAML secret added and %+v as it was", got, kept)
+	}
+}
+
 func TestApply_FinishedLogCounts(t *testing.T) {
 	f := newShop(t, inRepository)
 	keys, want := f.twoFiles()
