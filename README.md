@@ -66,7 +66,7 @@ PR마다 CI가 `check`, `integration`, `pull-request`(PR 제목과 `Closes #N`),
 
 4. PR 제목은 커밋 메시지 형식(영어), 본문은 한국어로 쓰고 `Closes #12`로 끝낸다.
 5. `gh pr merge --auto --squash`로 자동 병합을 건다. 체크가 모두 통과하면 스쿼시 병합되고 Issue가 닫힌다.
-6. AI 검토가 위반이 아닌 것을 지적하면 `review: override` 라벨을 붙인다. Security 절 위반은 라벨로 통과시킬 수 없다.
+6. AI 검토가 위반이 아닌 것을 지적하면 `review: override` 라벨을 붙인다. 라벨을 붙이면 `review` 작업만 다시 돈다. Security 절 위반은 라벨로 통과시킬 수 없다.
 
 규칙 전체는 [AGENTS.md](AGENTS.md)에 있다.
 

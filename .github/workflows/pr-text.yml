@@ -1,0 +1,28 @@
+name: pull-request
+
+# Only the title and the body are checked here, so an edit to them does not
+# rerun the other checks or cancel a run of ci.yml.
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-text-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  pull-request:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Check the title and the closing line
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+        run: |
+          sh scripts/commit-lint.sh --title "$PR_TITLE"
+          printf '%s\n' "$PR_BODY" | tr -d '\r' > "$RUNNER_TEMP/body"
+          sh scripts/commit-lint.sh --closes "$RUNNER_TEMP/body"
