@@ -1604,3 +1604,55 @@ func TestHandle_PlaceholderIsNotAFinding(t *testing.T) {
 		}
 	}
 }
+
+// TestHandle_DecodedKeyInsidePlacedKey checks a PEM private key that
+// betterleaks reports twice: once as written, and once more, at the same
+// start, with a part of its body decoded. The second result repeats a value
+// already placed, so it is not dropped and the file keeps its surrounding
+// lines. A decoded key that starts anywhere else is dropped as before.
+func TestHandle_DecodedKeyInsidePlacedKey(t *testing.T) {
+	// The key is indented, as in a YAML block scalar, so the key file
+	// detector does not take the whole file for a key.
+	pem := "-----BEGIN RSA PRIVATE KEY-----\n  FAKEFAKEFAKEFAKE\n  FAKEFAKEFAKEFAKE\n  -----END RSA PRIVATE KEY-----" //nolint:gosec // G101: an obviously fake key
+	text := "db:\n  password: " + password + "\npartner: |\n  " + pem + "\n"
+	decoded := func(line, col int) scan.Raw {
+		return scan.Raw{
+			Tool: "betterleaks", Rule: "private-key", Category: finding.CategorySSH, Kind: finding.KindPrivateKey,
+			File: "conf/app.yml", Offset: -1, EndOffset: -1, Line: line, ByteCol: col,
+			Value:    scan.Value("-----BEGIN RSA PRIVATE KEY-----\ndev-only-decoded\n-----END RSA PRIVATE KEY-----"),
+			Encoding: finding.EncodingBase64, Depth: 1,
+		}
+	}
+	tests := []struct {
+		name        string
+		line, col   int
+		wantDropped int
+	}{
+		{"same start as the key", 4, 3, 0},
+		{"another start", 4, 1, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{"conf/app.yml": text})
+			key := &needleScanner{
+				tool: "betterleaks", rule: "private-key", category: finding.CategorySSH, kind: finding.KindPrivateKey,
+				needle: pem, lineCol: true, extra: []scan.Raw{decoded(tt.line, tt.col)},
+			}
+			if err := e.handle(t.Context(), passwordBL(), key); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+			got := e.result(t)
+			if got.Dropped != tt.wantDropped {
+				t.Errorf("Handle() dropped %d, want %d", got.Dropped, tt.wantDropped)
+			}
+			for _, f := range got.Findings {
+				if f.Fingerprint != fingerprintOf(password) {
+					continue
+				}
+				if hasContext := len(f.Locations[0].Context) > 0; hasContext != (tt.wantDropped == 0) {
+					t.Errorf("Handle() password context = %q, want context %v", f.Locations[0].Context, tt.wantDropped == 0)
+				}
+			}
+		})
+	}
+}

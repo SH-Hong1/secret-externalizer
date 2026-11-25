@@ -119,7 +119,10 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 	}
 
 	dropped := 0
-	var original []byte
+	var (
+		original []byte
+		failed   []Raw
+	)
 	for _, raw := range raws {
 		if raw.wholeFile() {
 			pf.noContext = pf.noContext || src.text
@@ -141,17 +144,52 @@ func placeFile(dir, rel string, src sourceFile, raws []Raw, maxBytes int64) (*pl
 			ok = false
 		}
 		if !ok {
-			// Where the value is, or in what form, cannot be told, so no
-			// line of the file is known to be free of it. The masks are a
-			// second layer.
-			pf.noContext = true
-			pf.unplaced = append(pf.unplaced, unplacedSpans(pf.file.Text, bom, raw)...)
-			dropped++
+			failed = append(failed, raw)
 			continue
 		}
 		pf.spots = append(pf.spots, spot{raw: raw, span: span, value: Value(pf.file.Text[span.Start:span.End]), keyAt: span.Start})
 	}
+	for _, raw := range failed {
+		if pf.repeatsKey(bom, raw) {
+			continue
+		}
+		// Where the value is, or in what form, cannot be told, so no line
+		// of the file is known to be free of it. The masks are a second
+		// layer.
+		pf.noContext = true
+		pf.unplaced = append(pf.unplaced, unplacedSpans(pf.file.Text, bom, raw)...)
+		dropped++
+	}
 	return pf, dropped
+}
+
+// repeatsKey reports whether raw, a result that could not be placed, is a
+// private key the scanner found by decoding a part of a key it also
+// reported as written: the same tool and rule, kind private-key, and the
+// same start as a placed result of that key. betterleaks reports such a key
+// once more, with a part of its body decoded, when that part decodes to
+// text. Its value runs from the key's BEGIN line to an END line, so the
+// encoded text it came from lies inside the placed key, whose range is
+// masked; the result adds no value and no unmasked text.
+func (pf *placedFile) repeatsKey(bom int, raw Raw) bool {
+	if raw.Encoding == "" || raw.Kind != finding.KindPrivateKey {
+		return false
+	}
+	col := raw.ByteCol
+	if raw.Line == 1 {
+		col -= bom
+	}
+	start, err := pf.file.Offset(raw.Line, col)
+	if err != nil {
+		return false
+	}
+	for _, s := range pf.spots {
+		if s.raw.Encoding == "" && !s.raw.wholeFile() && s.raw.Tool == raw.Tool && s.raw.Rule == raw.Rule &&
+			s.raw.Kind == finding.KindPrivateKey && s.span.Start == start {
+			return true
+		}
+	}
+	return false
 }
 
 // splitConnections replaces each placed result of kind url whose value

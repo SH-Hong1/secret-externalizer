@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 같은 PEM 개인 키를 betterleaks가 본문 일부를 풀어 한 번 더 보고한 결과를 버린 결과로 세지 않고, 그 파일의 주변 줄도 빼지 않는다. 전에는 키를 담은 `application.yml` 같은 파일에서 버린 건수가 늘고, 같은 파일의 비밀번호 항목도 주변 줄 없이 보였다. 이 일은 CRLF와 관계없이 키 본문 일부가 글자로 풀릴 때 생긴다(`docs/adr/0088-decoded-key-that-repeats-a-placed-key.md`)
 - 스캔이 프로젝트의 제외 경로를 opengrep(`--exclude`)과 키 파일 탐지기에 넘겨, 두 스캐너가 제외한 폴더를 읽지 않는다. 전에는 모든 스캐너가 제외한 폴더도 읽고 결과만 버렸다. betterleaks는 경로를 제외하는 옵션이 없어 지금처럼 읽고 결과를 버린다(`docs/adr/0087-project-excludes-reach-the-scanners.md`)
 - JDBC URL의 매개변수는 이름이 `password`, `pwd`, `secret`, `token`으로 끝날 때(끝의 `key`, `accesskey`는 떼고 본다)만 그 값을 비밀번호 항목으로 나눈다. `passwordCharacterEncoding=UTF-8`, `sslpasswordcallback`, `tokenProvider` 같은 설정 값은 더 이상 항목이 되지 않는다. 전에는 이름에 그 낱말이 들어 있기만 하면 비밀번호로 보았다(`docs/adr/0086-setting-parameters-are-not-passwords.md`)
 - 적용과 점검이 `secrets-manifest.yml` 안의 비밀 값 자리를 바꾸기 전에, 바꾼 결과를 manifest로 다시 읽을 수 있는지 확인한다. 읽을 수 없으면(따옴표 없는 값을 placeholder로 바꾸는 경우) 그 파일의 자리를 모두 새 사유 `breaks-manifest`("바꾸면 manifest를 읽을 수 없게 됨")로 건너뛰고 값을 OpenBao에 저장하지 않는다. 전에는 소스와 OpenBao를 바꾼 뒤 manifest 쓰기가 실패해 사람이 manifest를 고쳐야 했다. 마이그레이션 `0013_apply_breaks_manifest.sql`이 사유를 더한다(`docs/adr/0084-manifest-targets-that-break-it-are-skipped.md`)

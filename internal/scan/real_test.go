@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"golang.org/x/text/encoding/korean"
@@ -301,5 +302,67 @@ func TestHandle_RealScannersKeysOfOneFile(t *testing.T) {
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("storage findings of %s by key mismatch (-want +got):\n%s", file, diff)
+	}
+}
+
+// TestHandle_RealScannersPEMKeyLineEndings scans a key file and a settings
+// file that embeds the same PEM key, once with LF and once with CRLF line
+// endings. The body holds a run of printable bytes, so a part of it
+// decodes to text and betterleaks reports the key once more as a decoded
+// result. That result repeats the key: no result is dropped and the
+// password next to the key keeps its surrounding lines.
+func TestHandle_RealScannersPEMKeyLineEndings(t *testing.T) {
+	blBin := realBin(t, "BETTERLEAKS_BIN", "betterleaks")
+	ogBin := realBin(t, "OPENGREP_BIN", "opengrep")
+	rules, err := filepath.Abs(filepath.Join("..", "..", "rules"))
+	if err != nil {
+		t.Fatalf("Abs(rules) error = %v", err)
+	}
+	der := []byte{0x30, 0x82, 0x02, 0x5c, 0x02, 0x01, 0x00}
+	for range 2 {
+		for b := range 256 {
+			der = append(der, byte(b))
+		}
+	}
+	body := base64.StdEncoding.EncodeToString(der)
+	keyLines := []string{"-----BEGIN RSA PRIVATE KEY-----"}
+	for len(body) > 64 {
+		keyLines = append(keyLines, body[:64])
+		body = body[64:]
+	}
+	keyLines = append(keyLines, body, "-----END RSA PRIVATE KEY-----")
+
+	for name, eol := range map[string]string{"lf": "\n", "crlf": "\r\n"} {
+		t.Run(name, func(t *testing.T) {
+			var yml strings.Builder
+			yml.WriteString("spring:" + eol + "  datasource:" + eol + "    password: " + password + eol + "partner:" + eol + "  key: |" + eol)
+			for _, l := range keyLines {
+				yml.WriteString("    " + l + eol)
+			}
+			e := newEnv(t, map[string]string{
+				"keys/partner.pem":     strings.Join(keyLines, eol) + eol,
+				"conf/application.yml": yml.String(),
+			})
+			env := scanexec.Env{Path: "/usr/bin:/bin", Home: t.TempDir(), TmpDir: t.TempDir()}
+			bl := betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env)
+			og := opengrep.New(ogBin, filepath.Join(rules, "opengrep"), env)
+
+			if err := e.handle(t.Context(), bl, og); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+			got := e.result(t)
+			if got.Dropped != 0 {
+				t.Errorf("Handle() dropped %d results, want none", got.Dropped)
+			}
+			var pw *finding.Finding
+			for i, f := range got.Findings {
+				if f.File == "conf/application.yml" && f.Fingerprint == fingerprintOf(password) {
+					pw = &got.Findings[i]
+				}
+			}
+			if pw == nil || len(pw.Locations) != 1 || len(pw.Locations[0].Context) == 0 {
+				t.Errorf("Handle() password in conf/application.yml = %+v, want one location with surrounding lines", pw)
+			}
+		})
 	}
 }
