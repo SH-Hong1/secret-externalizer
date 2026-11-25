@@ -43,6 +43,8 @@ func keyCases() []keyCase {
 		{"xml inner self-closed bean", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <bean class=\"Y\"/>\n  <property name=\"password\" value=\"VALUE\"/>\n</bean>", "outer.password"},
 		{"xml inner self-closed bean with id", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <bean id=\"inner\" class=\"Y\"/>\n  <property name=\"password\" value=\"VALUE\"/>\n</bean>", "outer.password"},
 		{"xml inner closed bean", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <property name=\"a\"><bean id=\"inner\" class=\"Y\"><property name=\"u\" value=\"x\"/></bean></property>\n  <property name=\"password\" value=\"VALUE\"/>\n</bean>", "outer.password"},
+		{"xml inner self-closed bean with > in a value", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <bean id=\"inner\" init=\"a>b\"/>\n  <property name=\"password\" value=\"VALUE\"/>\n</bean>", "outer.password"},
+		{"xml inner open bean with > in a value", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <bean id=\"inner\" init='a>b'>\n    <property name=\"password\" value=\"VALUE\"/>", "inner.password"},
 		{"xml nested open bean", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <property name=\"ds\">\n    <bean id=\"inner\" class=\"Y\">\n      <property name=\"password\" value=\"VALUE\"/>", "inner.password"},
 		{"xml nested open bean without id", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <property name=\"ds\">\n    <bean class=\"Y\">\n      <property name=\"password\" value=\"VALUE\"/>", "password"},
 		{"xml prefixed bean", "ctx.xml", "<beans:bean id=\"ds\" class=\"X\">\n  <beans:property name=\"password\" value=\"VALUE\"/>", "password"},
@@ -66,6 +68,33 @@ func TestConfigKey(t *testing.T) {
 			}
 			if (got == "") != (spans == nil) {
 				t.Errorf("configKey(%q, %q, %d) spans = %v for key %q", tc.rel, tc.text, at, spans, got)
+			}
+		})
+	}
+}
+
+func TestURLStart(t *testing.T) {
+	tests := []struct {
+		name, text string
+		want       int
+		wantOK     bool
+	}{
+		{"mysql user info", "db.url=jdbc:mysql://shopadmin:VALUE@db.invalid/shop", 7, true},
+		{"ssh scheme", "repo.url=ssh://deploy:VALUE@git.invalid/shop.git", 9, true},
+		{"oracle thin password", "db.url=jdbc:oracle:thin:shopadmin/VALUE@db.invalid:1521/shop", 7, true},
+		{"oracle thin user", "db.url=jdbc:oracle:thin:VALUE/x@db.invalid:1521/shop", 7, true},
+		{"oracle thin in quotes", `url: "jdbc:oracle:thin:shopadmin/VALUE@db.invalid:1521/shop"`, 6, true},
+		{"jdbc after white space", "db.url=jdbc:oracle:thin:a/b@h VALUE", 0, false},
+		{"jdbc inside a word", "db.url=xjdbc:oracle:thin:a/VALUE@h", 0, false},
+		{"jdbc on the line before", "db.url=jdbc:oracle:thin:a/b@h\npw=VALUE", 0, false},
+		{"no url", "db.password=VALUE", 0, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			at := strings.Index(tt.text, "VALUE")
+			got, ok := urlStart([]byte(tt.text), at)
+			if got != tt.want || ok != tt.wantOK {
+				t.Errorf("urlStart(%q, %d) = %d, %v, want %d, %v", tt.text, at, got, ok, tt.want, tt.wantOK)
 			}
 		})
 	}

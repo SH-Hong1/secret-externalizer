@@ -241,6 +241,8 @@ func TestHandle_ValueInUnsplitURLTakesKeyOfURL(t *testing.T) {
 		{"yaml quoted", "conf/application.yml", "db:\n  url: \"jdbc:mysql://shopadmin:" + password + "@db.invalid/shop\"\n", "db.url"},
 		{"properties colon", "conf/db.properties", "db.url:jdbc:mysql://shopadmin:" + password + "@db.invalid/shop\n", "db.url"},
 		{"ssh scheme", "conf/db.properties", "repo.url=ssh://deploy:" + password + "@git.invalid/shop.git\n", "repo.url"},
+		{"oracle thin", "conf/db.properties", "db.url=jdbc:oracle:thin:shopadmin/" + password + "@db.invalid:1521/shop\n", "db.url"},
+		{"yaml oracle thin", "conf/application.yml", "db:\n  url: jdbc:oracle:thin:shopadmin/" + password + "@db.invalid:1521/shop\n", "db.url"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

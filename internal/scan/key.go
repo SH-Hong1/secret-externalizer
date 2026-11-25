@@ -225,7 +225,8 @@ func xmlPieces(text []byte, ls, at int) []finding.Span {
 // the start tag that holds at, or else the last start tag before at whose
 // element has not been closed by then. It walks the tags backwards,
 // counting each </bean> against the next start tag, and passes over a
-// self-closed <bean .../> that ends before at. It returns the offset of the
+// self-closed <bean .../> that ends before at. A '>' inside a quoted
+// attribute value does not end a tag. It returns the offset of the
 // start tag's '<' and of its '>', or of the end of text when the tag is not
 // closed. A prefixed element such as <beans:bean> is not a bean here.
 func openBean(text []byte, at int) (start, tagEnd int, ok bool) {
@@ -240,10 +241,7 @@ func openBean(text []byte, at int) (start, tagEnd int, ok bool) {
 		case isTag(text, lt, "</bean"):
 			depth++
 		case isTag(text, lt, "<bean"):
-			end := len(text)
-			if i := bytes.IndexByte(text[lt:], '>'); i >= 0 {
-				end = lt + i
-			}
+			end := tagClose(text, lt)
 			if end < at && text[end-1] == '/' {
 				continue
 			}
@@ -254,6 +252,26 @@ func openBean(text []byte, at int) (start, tagEnd int, ok bool) {
 		}
 	}
 	return 0, 0, false
+}
+
+// tagClose returns the offset of the '>' that closes the tag starting at
+// byte lt, passing over a '>' inside a quoted attribute value, or the end of
+// text when the tag is not closed.
+func tagClose(text []byte, lt int) int {
+	var quote byte
+	for i := lt; i < len(text); i++ {
+		switch b := text[i]; {
+		case quote != 0:
+			if b == quote {
+				quote = 0
+			}
+		case isQuote(b):
+			quote = b
+		case b == '>':
+			return i
+		}
+	}
+	return len(text)
 }
 
 // isTag reports whether text holds the tag opening name at byte i, followed

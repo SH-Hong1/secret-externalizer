@@ -361,9 +361,9 @@ func (pf *placedFile) showsContext() bool {
 // keyAt returns the byte offset at which the configuration key of s is read.
 // A value inside a URL that splitConnections split takes the start of that
 // URL, the outermost one when URLs overlap, whichever rule reported the
-// value. A value inside any other scheme://... token takes the start of the
-// token, so that the user name or the parameter name before the value is
-// never read as its key. Any other value takes s.keyAt.
+// value. A value inside any other URL token that urlStart finds takes the
+// start of the token, so that the user name or the parameter name before the
+// value is never read as its key. Any other value takes s.keyAt.
 func (pf *placedFile) keyAt(s spot) int {
 	if s.raw.wholeFile() {
 		return s.keyAt
@@ -383,21 +383,57 @@ func (pf *placedFile) keyAt(s spot) int {
 	return s.keyAt
 }
 
-// urlStart returns the start of the scheme://... token that holds byte at
-// of text, if one does: a "://" earlier on the line with no white space,
-// quote, '<' or '>' between it and at. The token starts at its scheme, or at
-// a "jdbc:" before the scheme, as in jdbc:mysql://.
+// urlStart returns the start of the URL token that holds byte at of text,
+// if one does. That is a scheme://... token, which starts at its scheme or at
+// a "jdbc:" before the scheme, as in jdbc:mysql://. Failing that, it is a
+// token that starts with "jdbc:" and has no "://", as in
+// jdbc:oracle:thin:user/password@host, where the ':' and '/' before the user
+// name and the password would otherwise be read as assignments.
 func urlStart(text []byte, at int) (int, bool) {
 	ls := bytes.LastIndexByte(text[:at], '\n') + 1
+	if start, ok := schemeURLStart(text, ls, at); ok {
+		return start, true
+	}
+	return jdbcURLStart(text, ls, at)
+}
+
+// jdbcURLStart returns the start of a "jdbc:" token on the line that starts
+// at ls, if one holds byte at: the last "jdbc:" before at that is not part
+// of a longer word, with no break between it and at.
+func jdbcURLStart(text []byte, ls, at int) (int, bool) {
+	j := bytes.LastIndex(bytes.ToLower(text[ls:at]), []byte("jdbc:"))
+	if j < 0 {
+		return 0, false
+	}
+	j += ls
+	if j > ls && isAlnum(text[j-1]) || !unbroken(text[j:at]) {
+		return 0, false
+	}
+	return j, true
+}
+
+// unbroken reports whether b holds no white space, quote, '<' or '>', which
+// would end a URL token.
+func unbroken(b []byte) bool {
+	for _, c := range b {
+		if isSpace(c) || isQuote(c) || c == '<' || c == '>' {
+			return false
+		}
+	}
+	return true
+}
+
+// schemeURLStart returns the start of the scheme://... token on the line
+// that starts at ls, if one holds byte at: a "://" earlier on the line with
+// no break between it and at.
+func schemeURLStart(text []byte, ls, at int) (int, bool) {
 	sep := bytes.LastIndex(text[ls:at], []byte("://"))
 	if sep < 0 {
 		return 0, false
 	}
 	sep += ls
-	for _, b := range text[sep+len("://") : at] {
-		if isSpace(b) || isQuote(b) || b == '<' || b == '>' {
-			return 0, false
-		}
+	if !unbroken(text[sep+len("://") : at]) {
+		return 0, false
 	}
 	run := sep
 	for run > ls && isSchemeChar(text[run-1]) {
