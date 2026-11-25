@@ -1,3 +1,4 @@
-src/main/resources/egovframework/message/message-common.properties	storage-credential	account	confirm.required.user
-src/main/resources/egovframework/message/message-common_en.properties	storage-credential	account	confirm.required.user
-src/main/resources/egovframework/message/message-common_ko.properties	storage-credential	account	confirm.required.user
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	account	seededDataSource.username
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	host	seededDataSource.url
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	password	seededDataSource.password
+src/main/resources/egovframework/spring/context-datasource.xml	storage-credential	port	seededDataSource.url
