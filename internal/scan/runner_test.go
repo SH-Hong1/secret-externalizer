@@ -890,6 +890,26 @@ func TestHandle_ResultOutsideFileListIgnored(t *testing.T) {
 	}
 }
 
+func TestHandle_ScannersGetProjectExcludes(t *testing.T) {
+	euckr, err := korean.EUCKR.NewEncoder().String("# 주문 설정\np=" + password + "\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newEnv(t, map[string]string{propsFile: "p=" + password + "\n", "euckr/a.properties": euckr, "vendor/lib.properties": "x=1\n"})
+	e.store.project.Excludes = []string{"vendor", "conf/old.properties"}
+	s := passwordOG()
+
+	if err := e.handle(t.Context(), s); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	// The project folder and the folder of EUC-KR copies are both scanned
+	// without the project's excludes.
+	want := [][]string{{"vendor", "conf/old.properties"}, {"vendor", "conf/old.properties"}}
+	if diff := cmp.Diff(want, s.scannedExcludes()); diff != "" {
+		t.Errorf("Handle() scanner excludes mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestHandle_ScannerIgnoreFileFails(t *testing.T) {
 	for _, name := range []string{".gitleaksignore", ".betterleaksignore", ".GitLeaksIgnore"} {
 		t.Run(name, func(t *testing.T) {
@@ -940,7 +960,7 @@ func (*blockingScanner) Name() string { return "opengrep" }
 
 func (*blockingScanner) Version(context.Context) (string, error) { return "fake-1", nil }
 
-func (*blockingScanner) Scan(ctx context.Context, _ string) ([]scan.Raw, error) {
+func (*blockingScanner) Scan(ctx context.Context, _ string, _ []string) ([]scan.Raw, error) {
 	<-ctx.Done()
 	return nil, fmt.Errorf("scanning: %w", ctx.Err())
 }

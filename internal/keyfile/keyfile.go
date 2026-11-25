@@ -59,15 +59,16 @@ func (*Scanner) Version(context.Context) (string, error) { return version, nil }
 // key file: one named like an SSH private key (id_rsa, id_dsa, id_ecdsa,
 // id_ed25519), one with a key store extension (.jks, .p12, .pfx, .keystore,
 // .ppk), or one whose first 4 KiB hold a PEM private key or certificate
-// marker line. A result covers the whole file and holds no value. Files that
+// marker line, leaving out excludes, paths relative to dir with forward
+// slashes. A result covers the whole file and holds no value. Files that
 // cannot be read are left out; the walk that lists the files to scan counts
 // them.
-func (s *Scanner) Scan(ctx context.Context, dir string) ([]scan.Raw, error) {
+func (s *Scanner) Scan(ctx context.Context, dir string, excludes []string) ([]scan.Raw, error) {
 	if !filepath.IsAbs(dir) {
 		return nil, fmt.Errorf("scanning %s: the folder is not an absolute path", name)
 	}
 	var raws []scan.Raw
-	_, err := textfile.Walk(dir, nil, func(rel string, _ fs.DirEntry) error {
+	_, err := textfile.Walk(dir, excludes, func(rel string, _ fs.DirEntry) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}

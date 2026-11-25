@@ -45,13 +45,15 @@ func (s *Scanner) Version(ctx context.Context) (string, error) {
 }
 
 // Scan scans dir, an absolute path, and returns what betterleaks found.
-func (s *Scanner) Scan(ctx context.Context, dir string) ([]scan.Raw, error) {
-	raws, _, err := s.ScanWithCounts(ctx, dir)
+// betterleaks has no option to leave paths out, so excludes are scanned too
+// and the caller drops their results.
+func (s *Scanner) Scan(ctx context.Context, dir string, excludes []string) ([]scan.Raw, error) {
+	raws, _, err := s.ScanWithCounts(ctx, dir, excludes)
 	return raws, err
 }
 
 // ScanWithCounts is Scan that also returns how many results were dropped.
-func (s *Scanner) ScanWithCounts(ctx context.Context, dir string) ([]scan.Raw, scan.Counts, error) {
+func (s *Scanner) ScanWithCounts(ctx context.Context, dir string, _ []string) ([]scan.Raw, scan.Counts, error) {
 	if !filepath.IsAbs(dir) {
 		return nil, scan.Counts{}, fmt.Errorf("scanning %s: the folder is not an absolute path", name)
 	}

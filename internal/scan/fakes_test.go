@@ -207,22 +207,24 @@ type needleScanner struct {
 	// onScan, when set, runs first with the scanned folder.
 	onScan func(dir string)
 
-	mu   sync.Mutex
-	dirs []string
+	mu       sync.Mutex
+	dirs     []string
+	excludes [][]string
 }
 
 func (s *needleScanner) Name() string { return s.tool }
 
 func (*needleScanner) Version(context.Context) (string, error) { return "fake-1", nil }
 
-func (s *needleScanner) Scan(ctx context.Context, dir string) ([]scan.Raw, error) {
-	raws, _, err := s.ScanWithCounts(ctx, dir)
+func (s *needleScanner) Scan(ctx context.Context, dir string, excludes []string) ([]scan.Raw, error) {
+	raws, _, err := s.ScanWithCounts(ctx, dir, excludes)
 	return raws, err
 }
 
-func (s *needleScanner) ScanWithCounts(ctx context.Context, dir string) ([]scan.Raw, scan.Counts, error) {
+func (s *needleScanner) ScanWithCounts(ctx context.Context, dir string, excludes []string) ([]scan.Raw, scan.Counts, error) {
 	s.mu.Lock()
 	s.dirs = append(s.dirs, dir)
+	s.excludes = append(s.excludes, slices.Clone(excludes))
 	s.mu.Unlock()
 	if s.onScan != nil {
 		s.onScan(dir)
@@ -275,6 +277,14 @@ func (s *needleScanner) scannedDirs() []string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return slices.Clone(s.dirs)
+}
+
+// scannedExcludes returns the excludes the scanner was given, one entry per
+// run.
+func (s *needleScanner) scannedExcludes() [][]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return slices.Clone(s.excludes)
 }
 
 // Fake values. None of them is a real secret.

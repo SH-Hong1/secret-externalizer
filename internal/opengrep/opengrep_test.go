@@ -193,8 +193,8 @@ func testEnv(t *testing.T) scanexec.Env {
 func TestScan_NonZeroExit(t *testing.T) {
 	for _, code := range []int{1, 2, 3, 7} {
 		bin := fakeScanner(t, fmt.Sprintf(`echo '{"results":[],"errors":[{"message":"dev-only-fake-leak"}]}'; echo dev-only-fake-leak >&2; exit %d`, code))
-		s := opengrep.New(bin, "/rules/opengrep", nil, testEnv(t))
-		_, err := s.Scan(t.Context(), t.TempDir())
+		s := opengrep.New(bin, "/rules/opengrep", testEnv(t))
+		_, err := s.Scan(t.Context(), t.TempDir(), nil)
 		if !errors.Is(err, scan.ErrScannerFailed) {
 			t.Errorf("Scan() with exit code %d error = %v, want ErrScannerFailed", code, err)
 			continue
@@ -216,9 +216,8 @@ func TestScan_Args(t *testing.T) {
 		t.Fatal(err)
 	}
 	excludes := []string{"vendor/lib", "we*ird [x]?", `back\slash`, "-starts-with-dash"}
-	s := opengrep.New(bin, "/rules/opengrep", excludes, env)
-	excludes[0] = "changed-after-new"
-	got, counts, err := s.ScanWithCounts(t.Context(), dir)
+	s := opengrep.New(bin, "/rules/opengrep", env)
+	got, counts, err := s.ScanWithCounts(t.Context(), dir, excludes)
 	if err != nil || len(got) != 0 || !cmp.Equal(counts, scan.Counts{Errors: 2}) {
 		t.Fatalf("ScanWithCounts() = %v, %+v, %v, want no results, 2 errors, no error", got, counts, err)
 	}
@@ -249,15 +248,15 @@ func TestScan_Args(t *testing.T) {
 
 func TestScan_RelativeDir(t *testing.T) {
 	bin := fakeScanner(t, `echo '{"results":[],"errors":[]}'`)
-	s := opengrep.New(bin, "/rules/opengrep", nil, testEnv(t))
-	if _, err := s.Scan(t.Context(), "relative/dir"); err == nil {
+	s := opengrep.New(bin, "/rules/opengrep", testEnv(t))
+	if _, err := s.Scan(t.Context(), "relative/dir", nil); err == nil {
 		t.Errorf("Scan(relative/dir) error = nil, want an error")
 	}
 }
 
 func TestVersion(t *testing.T) {
 	bin := fakeScanner(t, `[ "$1" = --version ] && echo 2.0.0`)
-	s := opengrep.New(bin, "/rules/opengrep", nil, testEnv(t))
+	s := opengrep.New(bin, "/rules/opengrep", testEnv(t))
 	got, err := s.Version(t.Context())
 	if err != nil || got != "2.0.0" {
 		t.Errorf("Version() = %q, %v, want 2.0.0", got, err)
@@ -309,7 +308,7 @@ func TestScan_RealOpengrep(t *testing.T) {
 		}
 	}
 
-	got, err := opengrep.New(bin, rules, []string{"skip"}, testEnv(t)).Scan(t.Context(), dir)
+	got, err := opengrep.New(bin, rules, testEnv(t)).Scan(t.Context(), dir, []string{"skip"})
 	if err != nil {
 		t.Fatalf("Scan() error = %v", err)
 	}

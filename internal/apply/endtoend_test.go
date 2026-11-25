@@ -229,7 +229,7 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 	logger := slog.New(slog.NewJSONHandler(&f.logs, nil))
 	scanner := scan.NewRunner(logger, store, worker, worker, []scan.Scanner{
 		betterleaks.New(blBin, filepath.Join(rules, "betterleaks.toml"), env),
-		opengrep.New(ogBin, filepath.Join(rules, "opengrep"), nil, env),
+		opengrep.New(ogBin, filepath.Join(rules, "opengrep"), env),
 		keyfile.New(),
 	}, scan.Options{WorkerID: realWorker, Root: f.root, RulesVersion: rulesVersion, TempDir: t.TempDir(), Git: f.gitBinary})
 	applier := apply.NewRunner(logger, store, vault, apply.Options{WorkerID: realWorker, Root: f.root, Git: f.gitBinary})

@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 스캔이 프로젝트의 제외 경로를 opengrep(`--exclude`)과 키 파일 탐지기에 넘겨, 두 스캐너가 제외한 폴더를 읽지 않는다. 전에는 모든 스캐너가 제외한 폴더도 읽고 결과만 버렸다. betterleaks는 경로를 제외하는 옵션이 없어 지금처럼 읽고 결과를 버린다(`docs/adr/0087-project-excludes-reach-the-scanners.md`)
 - JDBC URL의 매개변수는 이름이 `password`, `pwd`, `secret`, `token`으로 끝날 때(끝의 `key`, `accesskey`는 떼고 본다)만 그 값을 비밀번호 항목으로 나눈다. `passwordCharacterEncoding=UTF-8`, `sslpasswordcallback`, `tokenProvider` 같은 설정 값은 더 이상 항목이 되지 않는다. 전에는 이름에 그 낱말이 들어 있기만 하면 비밀번호로 보았다(`docs/adr/0086-setting-parameters-are-not-passwords.md`)
 - 적용과 점검이 `secrets-manifest.yml` 안의 비밀 값 자리를 바꾸기 전에, 바꾼 결과를 manifest로 다시 읽을 수 있는지 확인한다. 읽을 수 없으면(따옴표 없는 값을 placeholder로 바꾸는 경우) 그 파일의 자리를 모두 새 사유 `breaks-manifest`("바꾸면 manifest를 읽을 수 없게 됨")로 건너뛰고 값을 OpenBao에 저장하지 않는다. 전에는 소스와 OpenBao를 바꾼 뒤 manifest 쓰기가 실패해 사람이 manifest를 고쳐야 했다. 마이그레이션 `0013_apply_breaks_manifest.sql`이 사유를 더한다(`docs/adr/0084-manifest-targets-that-break-it-are-skipped.md`)
 - `scripts/fetch-sample.sh`가 예제를 받지 못했을 때 저장소가 응답하면 "commit … not found"를, 응답하지 않으면 "cannot reach <URL>:"과 git의 오류를 보인다. 전에는 DNS나 네트워크 실패도 커밋이 없다고 보고했다
