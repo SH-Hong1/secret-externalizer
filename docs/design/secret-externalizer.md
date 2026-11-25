@@ -157,7 +157,7 @@ applier (WORKER_JOBS=apply) ─┬─ postgres (점검, 적용 기록)
 | 탐지기 | 찾는 것 |
 |---|---|
 | betterleaks | 기본 규칙(키, 토큰, 비밀번호 등 알려진 형식), 제휴사 세션(쿠키, Bearer 토큰), 고객정보(전화번호, 주민·외국인등록번호, 이메일, 카드번호, 주소). 고객정보 규칙은 고객정보 경로에만 적용한다 |
-| opengrep | 문맥으로 찾는 것. Spring XML의 dataSource, `.properties`와 `application*.yml`의 접속 정보, Java 문자열 리터럴 대입, 셸의 ssh 인자, Maven과 Ant의 비밀번호 |
+| opengrep | 문맥으로 찾는 것. Spring XML의 dataSource, `.properties`와 `application*.yml`의 접속 정보(주석으로 막아 둔 것 포함, ADR 0081), Java 문자열 리터럴 대입, 셸의 ssh 인자, Maven과 Ant의 비밀번호 |
 | 키 파일 탐지기(`internal/keyfile`) | 이름(`id_rsa` 등), 확장자(`jks`, `p12`, `pfx`, `keystore`, `ppk`), 앞 4KiB의 PEM 머리 줄로 찾은 파일 전체 |
 
 - 규칙은 `rules/`(`betterleaks.toml`, `opengrep/*.yml`)에 있고, 규칙마다 분류와 종류를 적는다. 규칙은 값만 잡고 따옴표, 키 이름, 태그는 범위에 넣지 않는다. 규칙 버전은 `rules/` 아래 파일의 이름과 내용으로 계산한다.

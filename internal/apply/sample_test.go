@@ -44,7 +44,8 @@ const sampleGolden = "testdata/public-sample.golden"
 // confirming scan, with the real scanners, database, OpenBao and git. It
 // checks that the scan finds what testdata/public-sample.golden lists, that
 // the confirming scan does not find an applied secret again, that no
-// original secret is in any table or the worker log, and that the apply
+// original secret is in any table or the worker log (unless it is a word of
+// the rule files), and that the apply
 // changed only files it applied a place in, and the manifest.
 func TestIntegration_PublicSample(t *testing.T) {
 	src := os.Getenv("SAMPLE_PROJECT_DIR")
@@ -251,13 +252,40 @@ func TestIntegration_PublicSample(t *testing.T) {
 	for _, table := range tableNames(t, admin, schema) {
 		places["table "+table] = tableText(t, admin, schema, table)
 	}
+	// An original that is also a word of the rule files, such as the
+	// placeholder value "password" in the sample's commented-out data
+	// sources, is in the tables anyway as a kind or a rule name, so finding
+	// it there says nothing about the value.
+	vocabulary := rulesText(t, rules)
 	for where, text := range places {
 		for _, v := range originals {
-			if len(v) >= 4 && strings.Contains(text, string(v)) {
+			if len(v) >= 4 && !strings.Contains(vocabulary, string(v)) && strings.Contains(text, string(v)) {
 				t.Errorf("the %s holds an original secret (%d bytes)", where, len(v))
 			}
 		}
 	}
+}
+
+// rulesText returns the text of every file under the rules folder dir.
+func rulesText(t *testing.T, dir string) string {
+	t.Helper()
+	var b strings.Builder
+	err := filepath.WalkDir(dir, func(p string, d fs.DirEntry, err error) error {
+		if err != nil || !d.Type().IsRegular() {
+			return err
+		}
+		data, err := os.ReadFile(p) //nolint:gosec // G304: the path is under this repository's rules folder
+		if err != nil {
+			return err
+		}
+		b.Write(data)
+		b.WriteByte('\n')
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("reading the rules under %s: %v", dir, err)
+	}
+	return b.String()
 }
 
 // compareGolden compares the findings with testdata/public-sample.golden, or
