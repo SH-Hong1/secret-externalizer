@@ -440,6 +440,11 @@ services:
     # filled to its caps (100 rows in each section, 50 places an entry)
     # peaked at 480-582 MiB (decision 0042).
     mem_limit: 1g
+    # Equal to mem_limit, so the container gets no swap. Without it Docker
+    # allows as much swap again as mem_limit on a host that has swap, and
+    # Chromium slows down on a page too large for it instead of being
+    # killed inside the limit (decision 0092).
+    memswap_limit: 1g
     cap_drop:
       - ALL
     security_opt:
