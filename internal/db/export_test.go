@@ -9,6 +9,7 @@ import (
 	"io/fs"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"testing/fstest"
 	"time"
@@ -80,6 +81,50 @@ func NewTestStoreLike(t *testing.T, s *Store) *Store {
 	}
 	t.Cleanup(pool.Close)
 	return &Store{pool: pool}
+}
+
+// pauseAfterFirstSelect is a pgx.QueryTracer that, once, right after the
+// first SELECT statement has finished, closes paused and waits until resume
+// is closed.
+type pauseAfterFirstSelect struct {
+	paused chan struct{}
+	resume chan struct{}
+	once   sync.Once
+}
+
+func (p *pauseAfterFirstSelect) TraceQueryStart(ctx context.Context, _ *pgx.Conn, _ pgx.TraceQueryStartData) context.Context {
+	return ctx
+}
+
+func (p *pauseAfterFirstSelect) TraceQueryEnd(_ context.Context, _ *pgx.Conn, data pgx.TraceQueryEndData) {
+	if data.Err != nil || !data.CommandTag.Select() {
+		return
+	}
+	p.once.Do(func() {
+		close(p.paused)
+		<-p.resume
+	})
+}
+
+// NewTestStorePaused returns a second Store on the same schema as s that,
+// once, stops right after its first SELECT statement has finished. paused
+// is closed when it stops, and it goes on when the caller calls resume, or
+// at the latest when the test ends. resume may be called more than once.
+func NewTestStorePaused(t *testing.T, s *Store) (paused <-chan struct{}, resume func(), store *Store) {
+	t.Helper()
+	tracer := &pauseAfterFirstSelect{paused: make(chan struct{}), resume: make(chan struct{})}
+	cfg := s.pool.Config()
+	cfg.ConnConfig.Tracer = tracer
+	pool, err := pgxpool.NewWithConfig(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("pgxpool.NewWithConfig() error = %v", err)
+	}
+	t.Cleanup(pool.Close)
+	resume = sync.OnceFunc(func() { close(tracer.resume) })
+	// Cleanups run last first, so a paused statement goes on before the pool
+	// waits for its connection.
+	t.Cleanup(resume)
+	return tracer.paused, resume, &Store{pool: pool}
 }
 
 // Count returns the number of rows in the given table, which must be a

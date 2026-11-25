@@ -273,6 +273,49 @@ func TestReport_TotalsMatchLines(t *testing.T) {
 	}
 }
 
+func TestReport_OneSnapshot(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid, _, second := totalsProject(t, s, "shop")
+	before := readReport(t, s, second)
+
+	paused, resume, traced := db.NewTestStorePaused(t, s)
+	type result struct {
+		d   report.Data
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		d, err := traced.Report(ctx, second)
+		done <- result{d, err}
+	}()
+
+	// Report has read the scan row and has the rest of its statements still
+	// to run. The write commits a change to the totals, the lines, the
+	// events and the latest scan.
+	select {
+	case <-paused:
+	case r := <-done:
+		t.Fatalf("Report(%d) = %v before it paused after its first SELECT", second, r.err)
+	}
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive},
+		bundleOf(t, s, pid, totalsUndec.Fingerprint, totalsUndec.File))
+	saveAt(t, s, pid, minute(180), totalsHost)
+	resume()
+
+	r := <-done
+	if r.err != nil {
+		t.Fatalf("Report(%d) error = %v", second, r.err)
+	}
+	if diff := cmp.Diff(before, r.d); diff != "" {
+		t.Errorf("Report(%d) with a write committed after its first read differs from the report before the write (-before +during):\n%s",
+			second, diff)
+	}
+	if after := readReport(t, s, second); cmp.Equal(before, after) {
+		t.Errorf("Report(%d) after the write = the report before it, want the write to show", second)
+	}
+}
+
 // phones returns n phone numbers in file, each a value of its own.
 func phones(file string, n int) []finding.Finding {
 	out := make([]finding.Finding, 0, n)
