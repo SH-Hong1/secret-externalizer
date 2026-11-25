@@ -282,18 +282,3 @@ func xmlAttr(text []byte, from, to int, name string) (finding.Span, bool) {
 	}
 	return finding.Span{}, false
 }
-
-// isKeyWord reports whether b, ignoring case, is a word that configuration
-// keys use to name a credential, such as "user" or "password". A key holding
-// such a word says nothing about a value that happens to be the same word:
-// the word is there because of the key, and the rule files of this tool
-// name it. So a value like that does not drop the keys it appears in.
-func isKeyWord(b []byte) bool {
-	switch strings.ToLower(string(b)) {
-	case "user", "username", "userid", "account", "login",
-		"pass", "passwd", "password", "passphrase",
-		"secret", "token", "credential", "credentials":
-		return true
-	}
-	return false
-}

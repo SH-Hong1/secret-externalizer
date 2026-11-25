@@ -279,7 +279,10 @@ func TestHandle_KeyNeverHoldsValueFoundElsewhere(t *testing.T) {
 	}
 }
 
-func TestHandle_ValueThatIsAKeyWordKeepsKeys(t *testing.T) {
+// A value can be a word that keys also use, such as "user". A key that holds
+// the word holds the value, so the key is dropped even though the word may be
+// there only because of the key.
+func TestHandle_KeyNeverHoldsValueThatIsAKeyWord(t *testing.T) {
 	e := newEnv(t, map[string]string{
 		"a.properties": "db.user=user\n",
 		"b.properties": "app.username=" + account + "\n",
@@ -298,7 +301,7 @@ func TestHandle_ValueThatIsAKeyWordKeepsKeys(t *testing.T) {
 	for _, f := range e.result(t).Findings {
 		got[f.File] = f.Key
 	}
-	want := map[string]string{"a.properties": "db.user", "b.properties": "app.username"}
+	want := map[string]string{"a.properties": "", "b.properties": ""}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Handle() keys by file mismatch (-want +got):\n%s", diff)
 	}

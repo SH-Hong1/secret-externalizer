@@ -53,8 +53,7 @@ type mergedLocation struct {
 // (placedFile.keyAt). A key is empty in a file without surrounding lines, for a
 // whole-file result, for customer data, for a value that spans lines, and
 // when a piece of the key overlaps a range masked in surrounding lines, so
-// that a key never holds a value found in the scan, unless that range is a
-// credential key word (isKeyWord).
+// that a key never holds a value found in the scan.
 func merge(placed []*placedFile, fingerprints map[string]string, elsewhere valueIndex) ([]finding.Finding, map[string][]byte) {
 	var findings []finding.Finding
 	originals := map[string][]byte{}
@@ -113,8 +112,7 @@ func merge(placed []*placedFile, fingerprints map[string]string, elsewhere value
 
 // spotKey returns the configuration key of s in pf, read at byte at, or ""
 // when s gets none. spans are the ranges masked in the file's surrounding
-// lines; a key that overlaps one of them holds a value and is dropped,
-// unless the masked text is a credential key word.
+// lines; a key that overlaps one of them holds a value and is dropped.
 func spotKey(pf *placedFile, s spot, at int, spans []finding.Span) string {
 	if !pf.showsContext() || s.raw.wholeFile() || s.raw.Category == finding.CategoryCustomerData ||
 		bytes.IndexByte(s.value, '\n') >= 0 {
@@ -123,7 +121,7 @@ func spotKey(pf *placedFile, s spot, at int, spans []finding.Span) string {
 	key, pieces := configKey(pf.rel, pf.file.Text, at)
 	for _, p := range pieces {
 		for _, m := range spans {
-			if p.Start < m.End && m.Start < p.End && !isKeyWord(pf.file.Text[m.Start:m.End]) {
+			if p.Start < m.End && m.Start < p.End {
 				return ""
 			}
 		}

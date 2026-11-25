@@ -6,7 +6,6 @@
 
 ### 변경
 
-- 값이 `user`, `password`처럼 자격 증명 키 이름에 쓰는 낱말이면 같은 파일의 `username`, `password` 같은 키를 더 이상 비우지 않는다. 주변 줄은 전처럼 그 낱말을 가린다. 공개 예제 검증의 기대 목록에서 `context-datasource.xml`의 계정과 비밀번호 항목이 키를 갖는다(`docs/adr/0082-key-words-do-not-empty-keys.md`)
 - 주석으로 막아 둔 설정의 접속 정보를 항목으로 보고한다. XML 주석 안의 dataSource bean의 URL, 계정과 주석 안의 비밀번호, `.properties`의 `#`/`!` 줄과 `application*.yml`의 `#` 줄에 적힌 비밀번호, 계정, JDBC URL, 호스트가 대상이고, 규칙은 `rules/opengrep/comment.yml`에 있다(규칙 ID에 `comment`가 든다). 주석 줄의 값은 줄을 끝내는 한 낱말일 때만 보고해 설명 문장은 거른다. 적용은 주석 안의 값도 판정대로 바꾼다. Java 주석은 아직 보지 않는다. 공개 예제 검증의 기대 목록에 예제의 주석 속 bean 셋의 항목이 더해진다(`docs/adr/0081-settings-kept-in-comments-are-findings.md`)
 - PR의 제목이나 본문을 고치면 `pull-request` 체크(`.github/workflows/pr-text.yml`)만 다시 돈다. 라벨은 `review: override`를 붙이거나 뗄 때만 head 커밋의 마지막 ci 실행에서 `review` 작업 하나를 다시 돌리고(`.github/workflows/review-label.yml`), 다른 라벨은 아무것도 돌리지 않는다. 그래서 이런 변경이 AI 검토 비용을 들이거나 진행 중인 `integration`을 취소하지 않는다. `review` 작업은 `review: override` 여부를 그 순간 PR의 라벨에서 읽는다(`docs/adr/0080-pr-events-rerun-only-what-they-change.md`)
 - 편집기 swap 파일 `.githooks/.pre-commit.swp`를 저장소에서 지우고, `.gitignore`가 `*.swp`, `*.swo`, `*~`를 무시한다
