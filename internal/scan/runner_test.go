@@ -279,6 +279,31 @@ func TestHandle_KeyNeverHoldsValueFoundElsewhere(t *testing.T) {
 	}
 }
 
+func TestHandle_ValueThatIsAKeyWordKeepsKeys(t *testing.T) {
+	e := newEnv(t, map[string]string{
+		"a.properties": "db.user=user\n",
+		"b.properties": "app.username=" + account + "\n",
+	})
+	acct := &needleScanner{
+		tool: "opengrep", rule: "properties-user", category: finding.CategoryStorage, kind: finding.KindAccount, needle: account,
+		extra: []scan.Raw{{
+			Tool: "opengrep", Rule: "properties-user", Category: finding.CategoryStorage, Kind: finding.KindAccount,
+			File: "a.properties", Offset: len("db.user="), EndOffset: len("db.user=user"),
+		}},
+	}
+	if err := e.handle(t.Context(), acct); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := map[string]string{}
+	for _, f := range e.result(t).Findings {
+		got[f.File] = f.Key
+	}
+	want := map[string]string{"a.properties": "db.user", "b.properties": "app.username"}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Handle() keys by file mismatch (-want +got):\n%s", diff)
+	}
+}
+
 func TestHandle_NoKeyWhereCustomerDataMayBe(t *testing.T) {
 	const token = "dev-only-fake-bearer-token" //nolint:gosec // G101: an obviously fake fixture value
 	tests := []struct {
