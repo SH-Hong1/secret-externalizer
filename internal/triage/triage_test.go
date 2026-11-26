@@ -66,7 +66,9 @@ func TestShellFile(t *testing.T) {
 		"conf/app.yml":     false,
 		"bin/run.sh.bak":   false,
 		"bin/sh":           false,
-		"bin/run.bash":     false,
+		"bin/run.bash":     true,
+		"bin/run.KSH":      true,
+		"bin/run.zsh":      false,
 		"src/Shell.java":   false,
 		"scripts.sh/x.yml": false,
 	}
@@ -133,6 +135,25 @@ func TestFrontendExtensions(t *testing.T) {
 	exts[0] = ".yml"
 	if triage.Frontend("conf/app.yml") || !triage.Frontend("web/index.jsp") {
 		t.Errorf("FrontendExtensions() returned its own slice: changing it changed Frontend")
+	}
+}
+
+func TestShellExtensions(t *testing.T) {
+	exts := triage.ShellExtensions()
+	want := []string{".sh", ".bash", ".ksh"}
+	if diff := cmp.Diff(want, exts); diff != "" {
+		t.Errorf("ShellExtensions() (-want +got):\n%s", diff)
+	}
+	for _, ext := range exts {
+		for _, file := range []string{"bin/a" + ext, "bin/A" + strings.ToUpper(ext)} {
+			if !triage.ShellFile(file) {
+				t.Errorf("ShellFile(%q) = false, want true for ShellExtensions() entry %q", file, ext)
+			}
+		}
+	}
+	exts[0] = ".yml"
+	if triage.ShellFile("conf/app.yml") || !triage.ShellFile("bin/run.sh") {
+		t.Errorf("ShellExtensions() returned its own slice: changing it changed ShellFile")
 	}
 }
 

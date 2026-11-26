@@ -306,8 +306,16 @@ type Group struct {
 	Lines   []int
 }
 
+// ShellExtensions returns the extensions, lower-case and with their dot,
+// of the files ShellFile reports. They are the extensions the shell rules
+// of the scanner read. The caller may change the slice it gets.
+func ShellExtensions() []string {
+	return []string{".sh", ".bash", ".ksh"}
+}
+
 // ShellFile reports whether file is a shell script, whose placeholder takes
-// the shell form. Case is ignored.
+// the shell form: whether its extension, with case ignored, is one of
+// ShellExtensions.
 func ShellFile(file string) bool {
-	return strings.EqualFold(path.Ext(file), ".sh")
+	return slices.Contains(ShellExtensions(), strings.ToLower(path.Ext(file)))
 }

@@ -1232,7 +1232,8 @@ func TestAppliedBundles(t *testing.T) {
 func TestEntries_Shell(t *testing.T) {
 	s := newMigratedStore(t)
 	pid := newProject(t, s, "shop")
-	sid := save(t, s, pid, password("bin/run.sh"), password("deploy/start.SH"), host("bin/run.sh"), host("conf/a.yml"))
+	sid := save(t, s, pid, password("bin/run.sh"), password("deploy/start.SH"), host("bin/run.sh"), host("conf/a.yml"),
+		host("bin/backup.ksh"))
 	page, err := s.Entries(t.Context(), pid, sid, triage.Filter{Status: triage.StatusAll, Page: 1})
 	if err != nil {
 		t.Fatalf("Entries(%d) error = %v", sid, err)
@@ -1241,7 +1242,10 @@ func TestEntries_Shell(t *testing.T) {
 	for _, e := range page.Entries {
 		shell[string(e.Kind)+" "+e.File] = e.Shell
 	}
-	want := map[string]bool{"password bin/run.sh": true, "host bin/run.sh": true, "host conf/a.yml": false}
+	want := map[string]bool{
+		"password bin/run.sh": true, "host bin/run.sh": true, "host conf/a.yml": false,
+		"host bin/backup.ksh": true,
+	}
 	if diff := cmp.Diff(want, shell); diff != "" {
 		t.Errorf("Entries(%d) shell by line (-want +got):\n%s", sid, diff)
 	}
