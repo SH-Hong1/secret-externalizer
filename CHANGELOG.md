@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 비밀 값 미리보기의 앞 네 글자에 유니코드 형식 문자(방향 바꿈 U+202E, 폭 없는 공백 U+200B 등)나 줄·문단 구분자(U+2028, U+2029)가 있으면 마스크(`****`)만 보인다. 건너뛴 파일 목록도 이런 글자가 든 경로를 저장하지 않고 수에만 센다. 전에는 제어 문자만 걸러, 보이지 않거나 글의 방향을 바꾸는 글자가 화면에 그대로 나갔다(`docs/adr/0107-hidden-format-characters-in-previews-and-skipped-paths.md`)
 - 셸 스크립트의 ssh 키 파일 규칙(`shell-ssh-identity`)이 ssh의 인자를 옵션, 목적지, 옵션 차례로 읽어, 원격 명령이 시작된 뒤의 `-i`를 키 파일로 보고하지 않는다. 전에는 따옴표와 `user@` 없이 쓴 `ssh host sed -i s/a/b/ 파일`의 `s/a/b/`와 `ssh-keygen -i -f 파일`의 `-f`가 키 파일로 보고되었다. `ssh host -i 키`처럼 목적지 뒤의 ssh 옵션은 지금처럼 보고한다(`docs/adr/0106-ssh-identity-reads-ssh-arguments-in-order.md`)
 - `.properties` 파일에서 비밀번호 키의 값에 한글이 있으면(글자 그대로이거나 한글 영역의 `\uXXXX` 이스케이프) 비밀번호로 보고하지 않는다. 주석 처리한 줄도 같다. 전에는 메시지 묶음의 `label.password=비밀번호`, `changePassword=비밀번호 변경` 같은 줄이 비밀번호로 보고되었다(`docs/adr/0105-hangul-property-values-are-messages.md`)
 - Spring XML bean의 `url`, `URL`, `jdbcUrl`, `driverUrl`(`p:url`, `p:jdbcUrl` 포함) 값이 `jdbc:`로 시작하면 bean 이름과 상관없이 데이터 소스 URL로 보고하고, 그 bean의 `user`, `username`도 데이터 소스 계정으로 보고한다. 전에는 `orderPool`처럼 이름에 `pool`만 있고 알려진 데이터 소스 이름이 없는 bean의 URL과 계정이 빠졌다. 스레드 풀처럼 `jdbc:` URL이 없는 bean은 지금처럼 보고하지 않는다(`docs/adr/0104-jdbc-url-makes-a-bean-a-data-source.md`)

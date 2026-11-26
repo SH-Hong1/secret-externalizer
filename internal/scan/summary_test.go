@@ -116,10 +116,11 @@ func TestHandle_KeepsSkippedFileNames(t *testing.T) {
 		files[fmt.Sprintf("bin/f%03d.bin", i)] = "\x00"
 	}
 	e := newEnv(t, files)
-	// Paths that are not valid UTF-8 or hold a control character are counted
-	// but not kept. A file system may refuse such a name.
+	// Paths that are not valid UTF-8 or hold a control character, a format
+	// character, or a line or paragraph separator are counted but not kept.
+	// A file system may refuse such a name.
 	unkept := 0
-	for _, rel := range []string{"bin/a\x01.bin", "bin/a\t.bin", "bin/a\xff.bin"} {
+	for _, rel := range []string{"bin/a\x01.bin", "bin/a\t.bin", "bin/a\xff.bin", "bin/a\u202e.bin", "bin/a\u200b.bin", "bin/a\u2028.bin", "bin/a\u2029.bin"} {
 		if err := os.WriteFile(filepath.Join(e.dir, filepath.FromSlash(rel)), []byte("\x00"), 0o600); err == nil {
 			unkept++
 		}
