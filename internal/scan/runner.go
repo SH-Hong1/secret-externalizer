@@ -229,7 +229,7 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 		return err
 	}
 	settled := r.settled(ctx, id, p.ID)
-	findings, originals := merge(placed, fingerprints, newValueIndex(maskValues(placed, d.raws)))
+	findings, originals := merge(placed, fingerprints, newValueIndex(maskPatterns(placed, d.raws)))
 	dropSettled(findings, originals, settled)
 	if err := r.park(ctx, int64(p.ID), originals); err != nil {
 		return err
