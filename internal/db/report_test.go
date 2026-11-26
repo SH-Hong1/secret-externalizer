@@ -812,7 +812,10 @@ func TestReport_Externalized(t *testing.T) {
 		place(totalsPwA, "EXT_DB_MAIN_PASSWORD", "deploy.sh", 3, nil),
 		place(totalsPwA, "ext.db.main.password", "a.yml", 14, nil),
 		place(totalsPwA, "ext.db.main.password", "k/key.pem", 0, func(i *apply.Item) { i.Action = apply.ActionRemoveFile }),
-		place(totalsPwA, "ext.db.main.password", "Conn.java", 8, func(i *apply.Item) { i.CodeChange = true }),
+		// The first place by file has another kind; most places say password.
+		place(totalsPwA, "ext.db.main.password", "Conn.java", 8, func(i *apply.Item) {
+			i.CodeChange, i.Category, i.Kind = true, finding.CategoryOther, finding.KindOther
+		}),
 		place(gone, "ext.api.main.token", "conf/gone.yml", 9, nil),
 		place(later, "ext.db.other.password", "conf/d.yml", 6, nil))
 	second := saveAt(t, s, pid, minute(20), totalsPwA, later)
@@ -823,12 +826,6 @@ func TestReport_Externalized(t *testing.T) {
 	pw, token, other := bundleOf(t, s, pid, fpA, "conf/a.yml"), bundleOf(t, s, pid, fpH, "conf/gone.yml"),
 		bundleOf(t, s, pid, fpG, "conf/d.yml")
 	want := report.List[report.Entry]{Total: 4, Rows: []report.Entry{
-		// Names sort by byte value, so the upper-case name comes first.
-		{
-			Bundle: pw, Name: "EXT_DB_MAIN_PASSWORD", Category: finding.CategoryStorage, Kind: finding.KindPassword,
-			StorePath: storePath, PlaceTotal: 1, Reappeared: true,
-			Places: []report.Place{{File: "deploy.sh", Line: 3, Run: run}},
-		},
 		{
 			Bundle: token, Name: "ext.api.main.token", Category: finding.CategoryPartnerSession, Kind: finding.KindToken,
 			StorePath: storePath, PlaceTotal: 1,
@@ -843,6 +840,12 @@ func TestReport_Externalized(t *testing.T) {
 				{File: "b.xml", Line: 31, Run: run},
 				{File: "k/key.pem", Removed: true, Run: run},
 			},
+		},
+		// The shell form of a name follows its config form.
+		{
+			Bundle: pw, Name: "EXT_DB_MAIN_PASSWORD", Category: finding.CategoryStorage, Kind: finding.KindPassword,
+			StorePath: storePath, PlaceTotal: 1, Reappeared: true,
+			Places: []report.Place{{File: "deploy.sh", Line: 3, Run: run}},
 		},
 		{
 			Bundle: other, Name: "ext.db.other.password", Category: finding.CategoryStorage, Kind: finding.KindPassword,
