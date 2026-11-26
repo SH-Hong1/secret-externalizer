@@ -6,6 +6,7 @@
 
 ### 변경
 
+- YAML 목록 안의 값도 목록 위의 경로를 설정 키로 받고, 목록 항목에 `name`이나 `id`가 있으면 그 값이 목록 키 뒤에 붙는다. 한 파일의 `servers: - name: dev password: …`와 `- name: live password: …`가 이제 `servers.dev.password`, `servers.live.password`로 나뉜다. 전에는 둘 다 `password`여서 값이 같으면 한 항목이 되었다. `name`과 `id`가 없는 항목은 `servers.password`다. 키가 바뀐 자리는 다음 스캔에서 새 항목이 되어 판정을 이어받지 않는다(`docs/adr/0116-yaml-list-item-key-keeps-the-list-path-and-item-name.md`)
 - 780px보다 좁은 화면에서 대시보드 추이 차트가 오른쪽 끝, 곧 가장 새 막대부터 보인다. 차트와 표처럼 가로로 스크롤되는 틀은 Tab으로 초점을 받아 화살표 키로 스크롤할 수 있고, 화면 낭독기에 틀의 이름(예: "남은 항목 추이 차트", "판정 이력")을 알린다. 전에는 가장 오래된 막대부터 보였고 틀에 키보드로 갈 수 없었다(`docs/adr/0115-scroll-frames-open-on-newest-and-take-focus.md`)
 - 적용이 대기 중에 다시 점검한 조건(커밋되지 않은 변경 등)에 막혀 실패하면, 적용 결과 화면이 실패 사유 아래에 조건 목록과 커밋되지 않은 변경 파일(처음 50개)을 적용 화면처럼 보인다. 그 실행의 "처리하지 않음" 위치는 "조건을 통과하지 못해 이 위치는 바꾸지 않았습니다"로 설명한다. 전에는 실패 사유만 보여 다시 점검해야 어느 조건이 어느 파일에서 막혔는지 알 수 있었고, 변경 목록은 저장되지 않았다(`docs/adr/0114-refused-apply-keeps-its-blockers-and-dirty-files.md`)
 - PDF의 판정 이력 표에서 이름은 28자까지, 사람은 8em까지 한 단어로 두어 글자 중간이나 하이픈에서 줄바꿈되지 않는다. 그보다 긴 값만 그 폭 안에서 줄바꿈된다. 외부화 항목 표의 이름도 36자까지 한 단어로 둔다. 판정 이력의 이름은 굵게 쓴다. 전에는 표가 긴 경로 칸에 폭을 몰아주어 `ext.db.main8.pass` / `word`, `dev-` / `admin`처럼 끊겼다(`docs/adr/0113-printed-name-and-person-stay-whole.md`).

@@ -130,51 +130,175 @@ func leafPiece(text []byte, ls, at int) (finding.Span, byte, bool) {
 }
 
 // yamlPieces returns the key of the value at byte at: the parents found by
-// climbing to shallower lines, then the key on the value's own line.
+// climbing to shallower lines, then the key on the value's own line. A list
+// item adds the value of its name or id key, when it has one, between the
+// list's key and the keys inside the item, so that two items of one list
+// get different keys.
 func yamlPieces(text []byte, ls, at int) []finding.Span {
 	leaf, sym, ok := leafPiece(text, ls, at)
 	if !ok || sym != ':' {
 		return nil
 	}
-	indent := 0
-	for ls+indent < len(text) && isBlank(text[ls+indent]) {
-		indent++
-	}
-	if bytes.HasPrefix(text[ls+indent:], []byte("- ")) {
-		return []finding.Span{leaf}
+	spans := []finding.Span{leaf}
+	cur, content := yamlLine(text, ls)
+	// atList is set when cur is the column of a list item's dash. The key of
+	// the list may then sit at the same column as the dash.
+	atList := false
+	if isDashItem(content) {
+		if s, ok := itemName(text, ls, cur, at); ok {
+			spans = append(spans, s)
+		}
+		atList = true
 	}
 
-	spans := []finding.Span{leaf}
-	cur, pos := indent, ls
-	for cur > 0 && pos > 0 {
+	pos := ls
+	for (cur > 0 || atList) && pos > 0 {
 		end := pos - 1
 		start := bytes.LastIndexByte(text[:end], '\n') + 1
 		pos = start
-		line := bytes.TrimRight(text[start:end], "\r \t")
-		ind := 0
-		for ind < len(line) && isBlank(line[ind]) {
-			ind++
-		}
-		content := line[ind:]
-		if len(content) == 0 || content[0] == '#' || ind >= cur {
+		ind, content := yamlLine(text, start)
+		if len(content) == 0 || content[0] == '#' || ind > cur {
 			continue
 		}
-		if bytes.HasPrefix(content, []byte("- ")) || bytes.Equal(content, []byte("-")) {
-			break
+		dash := isDashItem(content)
+		if ind == cur && (!atList || dash) {
+			continue
 		}
-		k := 0
-		for k < len(content) && isKeyChar(content[k]) {
-			k++
+		if dash {
+			// The list item that holds the keys found so far. A key on the
+			// dash's line is their parent when they are deeper than it.
+			if k, ok := yamlKey(content, 1); ok && k.End == len(content) && cur > k.Start+ind {
+				spans = append(spans, finding.Span{Start: start + ind + k.Start, End: start + ind + k.End - 1})
+			}
+			if s, ok := itemName(text, start, ind, at); ok {
+				spans = append(spans, s)
+			}
+			cur, atList = ind, true
+			continue
 		}
-		if k == 0 || k >= len(content) || content[k] != ':' ||
-			(k+1 < len(content) && !isBlank(content[k+1])) {
+		k, ok := yamlKey(content, 0)
+		if !ok || k.Start != 0 {
 			return nil
 		}
-		spans = append(spans, finding.Span{Start: start + ind, End: start + ind + k})
-		cur = ind
+		spans = append(spans, finding.Span{Start: start + ind, End: start + ind + k.End - 1})
+		cur, atList = ind, false
 	}
 	slices.Reverse(spans)
 	return spans
+}
+
+// yamlLine returns the indentation of the line that starts at ls and the
+// rest of that line, without its trailing blanks.
+func yamlLine(text []byte, ls int) (int, []byte) {
+	le := len(text)
+	if i := bytes.IndexByte(text[ls:], '\n'); i >= 0 {
+		le = ls + i
+	}
+	line := bytes.TrimRight(text[ls:le], "\r \t")
+	ind := 0
+	for ind < len(line) && isBlank(line[ind]) {
+		ind++
+	}
+	return ind, line[ind:]
+}
+
+// isDashItem reports whether a line's content starts a list item.
+func isDashItem(content []byte) bool {
+	return len(content) > 0 && content[0] == '-' && (len(content) == 1 || isBlank(content[1]))
+}
+
+// yamlKey reads a mapping key in content after skipping blanks from byte
+// from. The span starts at the key and ends after its colon, which is
+// followed by a blank or by the end of content.
+func yamlKey(content []byte, from int) (finding.Span, bool) {
+	i := from
+	for i < len(content) && isBlank(content[i]) {
+		i++
+	}
+	k := i
+	for k < len(content) && isKeyChar(content[k]) {
+		k++
+	}
+	if k == i || k >= len(content) || content[k] != ':' ||
+		(k+1 < len(content) && !isBlank(content[k+1])) {
+		return finding.Span{}, false
+	}
+	return finding.Span{Start: i, End: k + 1}, true
+}
+
+// itemName returns the value of the first name or id key of the list item
+// whose dash is at column ind of the line that starts at ls. Only keys of the
+// item itself count, not keys nested deeper in it. The value must be made of
+// key characters, and must not hold the byte at, which is the value whose
+// key is being read.
+func itemName(text []byte, ls, ind, at int) (finding.Span, bool) {
+	keyCol := -1
+	for pos := ls; pos < len(text); {
+		next := len(text)
+		if i := bytes.IndexByte(text[pos:], '\n'); i >= 0 {
+			next = pos + i + 1
+		}
+		lineInd, content := yamlLine(text, pos)
+		from := 0
+		switch {
+		case pos == ls:
+			from = 1
+		case len(content) == 0 || content[0] == '#':
+			pos = next
+			continue
+		case lineInd <= ind:
+			return finding.Span{}, false
+		}
+		k, ok := yamlKey(content, from)
+		col := lineInd + k.Start
+		if ok && keyCol < 0 {
+			keyCol = col
+		}
+		if ok && col == keyCol {
+			name := string(content[k.Start : k.End-1])
+			if name == "name" || name == "id" {
+				return nameValue(content, k.End, pos+lineInd, at)
+			}
+		}
+		if !ok && pos != ls && keyCol < 0 {
+			keyCol = lineInd
+		}
+		pos = next
+	}
+	return finding.Span{}, false
+}
+
+// nameValue returns the plain scalar after byte from of content, which
+// starts at byte base of the text. A quoted scalar is returned without its
+// quotes and a trailing comment is dropped.
+func nameValue(content []byte, from, base, at int) (finding.Span, bool) {
+	rest := content[from:]
+	if i := bytes.Index(rest, []byte(" #")); i >= 0 {
+		rest = rest[:i]
+	}
+	s := from
+	for len(rest) > 0 && isBlank(rest[0]) {
+		rest = rest[1:]
+		s++
+	}
+	rest = bytes.TrimRight(rest, " \t")
+	if len(rest) >= 2 && isQuote(rest[0]) && rest[len(rest)-1] == rest[0] {
+		rest = rest[1 : len(rest)-1]
+		s++
+	}
+	if len(rest) == 0 {
+		return finding.Span{}, false
+	}
+	for _, b := range rest {
+		if !isKeyChar(b) {
+			return finding.Span{}, false
+		}
+	}
+	span := finding.Span{Start: base + s, End: base + s + len(rest)}
+	if span.Start <= at && at < span.End {
+		return finding.Span{}, false
+	}
+	return span, true
 }
 
 // xmlPieces returns the key of the value at byte at: the leaf name, prefixed
