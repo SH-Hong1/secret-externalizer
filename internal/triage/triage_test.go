@@ -2,6 +2,7 @@ package triage_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -104,11 +105,16 @@ func TestShellFile(t *testing.T) {
 
 func TestNameFor(t *testing.T) {
 	n := triage.Name("db.main.password")
-	if got, want := n.For(true), "EXT_DB_MAIN_PASSWORD"; got != want {
-		t.Errorf("Name(%q).For(true) = %q, want %q", n, got, want)
+	tests := map[bool]string{
+		true:  "EXT_DB_MAIN_PASSWORD",
+		false: "ext.db.main.password",
 	}
-	if got, want := n.For(false), "ext.db.main.password"; got != want {
-		t.Errorf("Name(%q).For(false) = %q, want %q", n, got, want)
+	for shell, want := range tests {
+		t.Run(fmt.Sprint(shell), func(t *testing.T) {
+			if got := n.For(shell); got != want {
+				t.Errorf("Name(%q).For(%v) = %q, want %q", n, shell, got, want)
+			}
+		})
 	}
 }
 
