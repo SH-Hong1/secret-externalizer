@@ -260,7 +260,7 @@ func TestApply_ReplacesAndStores(t *testing.T) {
 
 	assertOutside(t, before[ymlFile], read(t, f.dir, ymlFile), []change{{mainValue, "${ext.db.main.password}"}})
 	assertOutside(t, before[xmlFile], read(t, f.dir, xmlFile), []change{{mainValue, "${ext.db.main.password}"}})
-	assertOutside(t, before[shFile], read(t, f.dir, shFile), []change{{mainValue, "${EXT_DB_MAIN_PASSWORD}"}})
+	assertOutside(t, before[shFile], read(t, f.dir, shFile), []change{{mainValue, `'"${EXT_DB_MAIN_PASSWORD}"'`}})
 	if len(f.vault.stored) != 1 || string(f.vault.value("ext.db.main.password")) != mainValue {
 		t.Errorf("vault holds %d paths, ext.db.main.password holding the value: %v; want that one path with the value",
 			len(f.vault.stored), string(f.vault.value("ext.db.main.password")) == mainValue)
@@ -921,6 +921,42 @@ func TestApply_UnclearValueSkipped(t *testing.T) {
 	}
 }
 
+func TestApply_SingleQuotedShellValue(t *testing.T) {
+	const value = "dev-only-fake-quoted-password"
+	texts := map[string][2]string{
+		"bin/whole.sh": {"PW='" + value + "'\n", `PW=''"${EXT_QUOTED_PASSWORD}"''` + "\n"},
+		"bin/part.sh":  {"export X='a " + value + " b'\n", `export X='a '"${EXT_QUOTED_PASSWORD}"' b'` + "\n"},
+		"bin/plain.sh": {`PW="` + value + `"` + "\n", `PW="${EXT_QUOTED_PASSWORD}"` + "\n"},
+	}
+	f := newShop(t, inRepository)
+	for file, tt := range texts {
+		write(t, f.dir, file, tt[0])
+	}
+	f.commit()
+	want := map[string]string{}
+	for _, k := range f.secret("quoted.password", value, "bin/part.sh", "bin/plain.sh", "bin/whole.sh") {
+		want[k] = string(apply.StatusApplied)
+	}
+	for _, k := range f.secret("db.yaml.password", ymlValue, ymlFile) {
+		want[k] = string(apply.StatusApplied)
+	}
+
+	f.mustApply()
+
+	if diff := cmp.Diff(want, f.items()); diff != "" {
+		t.Errorf("Apply() outcomes mismatch (-want +got):\n%s", diff)
+	}
+	// The shell expands the placeholder only outside single quotes.
+	for file, tt := range texts {
+		if got := string(read(t, f.dir, file)); got != tt[1] {
+			t.Errorf("Apply() changed %s to %q, want %q", file, got, tt[1])
+		}
+	}
+	if got := f.vault.value("ext.quoted.password"); string(got) != value {
+		t.Errorf("after Apply(), vault path ext.quoted.password holds %d bytes, want the %d bytes of the value in the scripts", len(got), len(value))
+	}
+}
+
 func TestApply_DecodedValuesDiffer(t *testing.T) {
 	const (
 		value    = `dev-only-fake-a\=b`
@@ -1174,7 +1210,7 @@ func TestApply_AbandonedRunIsReconciled(t *testing.T) {
 	f := newShop(t, inRepository)
 	keys, want := f.twoFiles()
 	ks := f.secret("deploy.ssh.password", shValue, shFile)[0]
-	want[shFile] = strings.Replace(string(read(t, f.dir, shFile)), shValue, "${EXT_DEPLOY_SSH_PASSWORD}", 1)
+	want[shFile] = strings.Replace(string(read(t, f.dir, shFile)), shValue, `'"${EXT_DEPLOY_SSH_PASSWORD}"'`, 1)
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	// Files are changed in path order: the script, the YAML file, then the
