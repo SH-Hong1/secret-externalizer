@@ -250,8 +250,7 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 }
 
 // keptPaths returns the first MaxSkippedFiles of paths in path order,
-// leaving out the paths that are not valid UTF-8 or hold a control
-// character. paths is not changed.
+// leaving out the paths that printablePath rejects. paths is not changed.
 func keptPaths(paths []string) []string {
 	var out []string
 	for _, p := range paths {
@@ -263,13 +262,17 @@ func keptPaths(paths []string) []string {
 	return out[:min(len(out), MaxSkippedFiles)]
 }
 
-// printablePath reports whether p is valid UTF-8 without control characters,
-// tab included.
+// printablePath reports whether p is valid UTF-8 without control characters
+// (tab included), format characters such as a direction override or a zero
+// width space, and line or paragraph separators. Such a path would be shown
+// in the list of skipped files differently from how it is named.
 func printablePath(p string) bool {
 	if !utf8.ValidString(p) {
 		return false
 	}
-	return !strings.ContainsFunc(p, unicode.IsControl)
+	return !strings.ContainsFunc(p, func(r rune) bool {
+		return unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp)
+	})
 }
 
 // reportedErrors returns the entries of errs that are not zero, or nil.

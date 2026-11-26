@@ -157,7 +157,8 @@ const (
 )
 
 // Preview returns the masked form of value that is safe to store and show.
-// A secret of at least eight characters keeps its first four characters;
+// A secret of at least eight characters keeps its first four characters,
+// unless one of them is invisible or changes the direction of the text;
 // shorter secrets, keys and key files show nothing. Customer data shows only a
 // format: a phone number keeps its leading digit group, and every other kind
 // is a fixed string. An unknown category or kind gives "****".
@@ -201,7 +202,7 @@ func secretPreview(k Kind, value string) string {
 	var head strings.Builder
 	n := 0
 	for _, r := range value {
-		if unicode.IsControl(r) || r == utf8.RuneError {
+		if !shown(r) {
 			return maskText
 		}
 		head.WriteRune(r)
@@ -210,6 +211,14 @@ func secretPreview(k Kind, value string) string {
 		}
 	}
 	return head.String() + maskText
+}
+
+// shown reports whether r can be shown in a preview as it is. A control
+// character, a format character such as a direction override or a zero
+// width space, a line or paragraph separator, and U+FFFD are not: they are
+// invisible or change how the text around them reads.
+func shown(r rune) bool {
+	return r != utf8.RuneError && !unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp)
 }
 
 // phonePreview keeps at most the first three digits of the leading digit
