@@ -1402,6 +1402,47 @@ func TestHandle_ScannerDroppedResultDropsContext(t *testing.T) {
 	}
 }
 
+func TestHandle_ScannerDroppedResultInEUCKRFile(t *testing.T) {
+	raw, err := korean.EUCKR.NewEncoder().String("# 주문 설정\njdbc.password=" + password + "\n# 끝\n")
+	if err != nil {
+		t.Fatalf("encoding EUC-KR: %v", err)
+	}
+	tests := []struct {
+		name string
+		// fromCopy tells whether the scanner drops its result in the run
+		// over the folder of copies rather than the project folder.
+		fromCopy    bool
+		wantDropped int
+		wantContext bool
+	}{
+		// The results of the project folder's run are at EUC-KR offsets and
+		// are not used, so a result dropped there says nothing about where
+		// the file's values are.
+		{name: "project folder", wantDropped: 0, wantContext: true},
+		{name: "folder of copies", fromCopy: true, wantDropped: 1, wantContext: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, map[string]string{propsFile: raw})
+			dropper := &needleScanner{
+				tool: "betterleaks", rule: "generic-password", category: finding.CategoryOther, kind: finding.KindOther, needle: "no such value",
+				dropped: 1, droppedFiles: []string{propsFile},
+				dropsIn: func(dir string) bool { return (dir != e.dir) == tt.fromCopy },
+			}
+			if err := e.handle(t.Context(), passwordOG(), dropper); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+			got := e.result(t)
+			if got.Dropped != tt.wantDropped || len(got.Findings) != 1 {
+				t.Fatalf("Handle() = %+v, want one finding and %d dropped", got, tt.wantDropped)
+			}
+			if l := got.Findings[0].Locations[0]; (l.Context != nil) != tt.wantContext {
+				t.Errorf("Handle() location = %+v, want surrounding lines %t", l, tt.wantContext)
+			}
+		})
+	}
+}
+
 func TestHandle_ScannerDroppedUnknownFileDropsAllContext(t *testing.T) {
 	e := newEnv(t, map[string]string{
 		propsFile:               "jdbc.password=" + password + "\n",
