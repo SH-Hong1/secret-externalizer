@@ -72,7 +72,7 @@ the view of the PDF document does not. */}}
 {{range .}}<tr>
 <td><span class="mono report-name">{{.Name}}</span><span class="mono report-sub">{{.Store}}</span></td>
 <td>{{.Category}}<span class="report-sub">{{.Kind}}</span></td>
-<td><ul class="report-places">{{range .Places}}<li>{{.}}</li>{{end}}{{with .MorePlaces}}<li class="muted">{{.}}</li>{{end}}</ul></td>
+<td><ul class="report-places">{{range .Places}}<li>{{visible .}}</li>{{end}}{{with .MorePlaces}}<li class="muted">{{.}}</li>{{end}}</ul></td>
 <td>{{if .CodeChange}}<span class="badge badge-hold">코드 수정 필요</span> {{end}}{{if .Reappeared}}<span class="badge badge-failed">다시 발견</span>{{end}}</td>
 </tr>
 {{end}}</tbody>
@@ -98,7 +98,7 @@ the view of the PDF document does not. */}}
 <tbody>
 {{range .Redacted.Rows}}<tr>
 <td>{{.Kind}}</td>
-<td><span class="mono report-path">{{.File}}</span>{{if .Untracked}} <span class="badge badge-failed">복구 불가</span>{{end}}</td>
+<td><span class="mono report-path">{{visible .File}}</span>{{if .Untracked}} <span class="badge badge-failed">복구 불가</span>{{end}}</td>
 <td class="num">{{.Bundles}}개</td>
 <td class="num">{{.Locations}}곳</td>
 </tr>
@@ -127,7 +127,7 @@ the view of the PDF document does not. */}}
 <tbody>
 {{range .}}<tr>
 <td>{{.Category}}<span class="report-sub">{{.Kind}}</span></td>
-<td class="mono report-path">{{.Place}}</td>
+<td class="mono report-path">{{visible .Place}}</td>
 <td>{{.Count}}</td>
 <td class="report-note">{{.Note}}</td>
 <td class="mono report-time">{{.DecidedAt}}</td>
@@ -149,7 +149,7 @@ the view of the PDF document does not. */}}
 <td class="mono report-time">{{.At}}</td>
 <td class="report-user">{{.User}}</td>
 <td>{{if .RunHref}}<a class="badge badge-{{.ActionClass}}" href="{{.RunHref}}">{{.ActionLabel}}</a>{{else}}<span class="badge badge-{{.ActionClass}}">{{.ActionLabel}}</span>{{end}}</td>
-<td class="report-path">{{.Target}}</td>
+<td class="report-path">{{visible .Target}}</td>
 <td class="report-note">{{with .Name}}<span class="mono">{{.}}</span> {{end}}{{with .Reason}}<span class="report-sub">{{.}}</span>{{end}}{{with .Note}}<span class="report-sub">{{.}}</span>{{end}}</td>
 </tr>
 {{end}}</tbody>
@@ -168,7 +168,7 @@ has lines. */}}
 <tbody>
 {{range .}}<tr>
 <td>{{.Category}}<span class="report-sub">{{.Kind}}</span></td>
-<td class="mono report-path">{{.Place}}</td>
+<td class="mono report-path">{{visible .Place}}</td>
 <td>{{.Count}}</td>
 <td><span class="badge badge-{{.StatusClass}}">{{.Status}}</span></td>
 <td class="report-note">{{.Note}}</td>

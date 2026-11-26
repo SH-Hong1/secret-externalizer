@@ -269,6 +269,30 @@ func TestHandleReport_Escapes(t *testing.T) {
 	wantNotIn(t, "GET /scans/7/report with markup in names", res.body, "<script>alert", "<img src=x")
 }
 
+func TestHandleReport_ShowsHiddenCharacters(t *testing.T) {
+	const file = "conf/a\u202egnp.yml\u200b"
+	const shown = "conf/a&lt;U&#43;202E&gt;gnp.yml&lt;U&#43;200B&gt;"
+	e := newTestEnv(t)
+	d := fullReport()
+	d.Remaining.Rows[0].File = file
+	d.Externalized.Rows[1].Places[0].File = file
+	d.Redactions[0].File = file
+	d.Events[0].File = file
+	e.reports.put(d)
+	res := e.getReport(t)
+	what := "GET /scans/7/report with format characters in file names"
+	wantNotIn(t, what, res.body, "\u202e", "\u200b")
+	if got := strings.Count(res.body, shown); got != 4 {
+		t.Errorf("%s shows %q %d times, want 4", what, shown, got)
+	}
+	if res := e.getReportPDF(t); res.status != http.StatusOK {
+		t.Fatalf("GET /scans/7/report.pdf status = %d, want 200; body:\n%s", res.status, res.body)
+	}
+	index := string(e.lastDocument(t).Index)
+	wantNotIn(t, "the PDF page", index, "\u202e", "\u200b")
+	wantIn(t, "the PDF page", index, shown)
+}
+
 func TestHandleReport_NoPreview(t *testing.T) {
 	e := newTestEnv(t)
 	e.reports.put(fullReport())

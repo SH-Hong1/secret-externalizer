@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"unicode"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/auth"
 )
@@ -100,6 +101,7 @@ func parseTemplates(fsys fs.FS, a *assets) *renderer {
 		t, err := template.New(name).Funcs(template.FuncMap{
 			"asset":   a.url,
 			"section": func() string { return "" },
+			"visible": visible,
 		}).ParseFS(fsys, append([]string{"templates/" + layoutFile, file}, partialsOf(name)...)...)
 		if err != nil {
 			panic(fmt.Sprintf("parsing template %s: %v", name, err))
@@ -115,6 +117,32 @@ func parseTemplates(fsys fs.FS, a *assets) *renderer {
 		panic("missing template " + errorFile)
 	}
 	return rd
+}
+
+// visible returns s with every character that is invisible or changes the
+// direction of the text around it written as its code point, such as
+// "<U+202E>": control characters other than tab, format characters such as
+// a direction override or a zero width space, and line and paragraph
+// separators. File paths and context lines come from scanned files and are
+// shown through it, so that a page shows them as they are named and written.
+func visible(s string) string {
+	if !strings.ContainsFunc(s, hidden) {
+		return s
+	}
+	var b strings.Builder
+	for _, r := range s {
+		if hidden(r) {
+			fmt.Fprintf(&b, "<U+%04X>", r)
+			continue
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+// hidden reports whether visible writes r as its code point.
+func hidden(r rune) bool {
+	return r != '\t' && unicode.In(r, unicode.Cc, unicode.Cf, unicode.Zl, unicode.Zp)
 }
 
 // sectionOf returns the trimmed text of t's "section" template, or "" when t

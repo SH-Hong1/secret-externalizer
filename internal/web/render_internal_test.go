@@ -186,3 +186,25 @@ func newTestRequest(t *testing.T) *http.Request {
 	t.Helper()
 	return httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 }
+
+func TestVisible(t *testing.T) {
+	tests := []struct {
+		in, want string
+	}{
+		{"", ""},
+		{"src/main/resources/application.yml", "src/main/resources/application.yml"},
+		{"설정/비밀.yml", "설정/비밀.yml"},
+		{"\tpassword: ****", "\tpassword: ****"},
+		{"a\u202egnp.yml", "a<U+202E>gnp.yml"},
+		{"a\u200bb\ufeff", "a<U+200B>b<U+FEFF>"},
+		{"a\u2028b\u2029", "a<U+2028>b<U+2029>"},
+		{"a\rb\x7f", "a<U+000D>b<U+007F>"},
+		{"\U000e0041", "<U+E0041>"},
+		{"a\ufffdb", "a\ufffdb"},
+	}
+	for _, tt := range tests {
+		if got := visible(tt.in); got != tt.want {
+			t.Errorf("visible(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}

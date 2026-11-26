@@ -74,7 +74,7 @@
 {{define "list"}}<nav class="triage-list" id="list" aria-label="묶음 목록" hx-swap-oob="true">
 {{range .Rows}}<a class="list-row" href="{{.Href}}" hx-get="{{.Href}}" hx-target="#detail" hx-swap="outerHTML" hx-push-url="true"{{if .Current}} aria-current="true"{{end}}>
 <span class="list-row-main"><span class="list-row-title">{{.KindLabel}} <span class="muted">· {{.CategoryText}}</span></span><span class="muted">{{.CountText}}</span></span>
-<span class="list-row-foot"><span class="list-row-sub">{{.Sub}}</span>{{if .Applied}}<span class="badge badge-succeeded">적용됨</span>{{end}}{{if $.ShowState}}<span class="badge badge-{{.Verdict.Class}}">{{.Verdict.Label}}</span>{{end}}</span>
+<span class="list-row-foot"><span class="list-row-sub">{{visible .Sub}}</span>{{if .Applied}}<span class="badge badge-succeeded">적용됨</span>{{end}}{{if $.ShowState}}<span class="badge badge-{{.Verdict.Class}}">{{.Verdict.Label}}</span>{{end}}</span>
 </a>
 {{else}}<p class="list-empty muted">이 조건에 맞는 항목이 없습니다.</p>
 {{end}}<div class="pager">
@@ -113,7 +113,7 @@
 {{range .Members}}{{$m := .}}{{with .Key}}<p class="text-2"><span class="muted">키</span> <span class="mono">{{.}}</span></p>
 {{end}}{{range $i, $l := .Locations}}<div class="code-box">
 <div class="code-head">
-<span class="code-file">{{$l.Where}}</span>
+<span class="code-file">{{visible $l.Where}}</span>
 <span class="grow"></span>
 {{range $l.Detections}}<span class="code-rule">{{.Tool}} {{.Rule}}{{with .Encoding}} ({{.}} 디코딩){{end}}</span>
 {{end}}{{if eq $i 0}}{{if $m.Split}}<form class="move-form" method="post" action="{{$m.MoveAction}}">
@@ -131,7 +131,7 @@
 <button class="btn btn-sm" type="submit">다른 묶음으로</button>
 </form>
 {{end}}{{end}}</div>
-{{if $l.Context}}<pre class="code">{{range $l.Context}}{{if .Hit}}<mark class="code-line code-line-hit"><span class="sr-only">탐지된 줄 </span><span class="line-no">{{.Number}}</span>{{.Text}}</mark>{{else}}<span class="code-line"><span class="line-no">{{.Number}}</span>{{.Text}}</span>{{end}}{{end}}</pre>
+{{if $l.Context}}<pre class="code">{{range $l.Context}}{{if .Hit}}<mark class="code-line code-line-hit"><span class="sr-only">탐지된 줄 </span><span class="line-no">{{.Number}}</span>{{visible .Text}}</mark>{{else}}<span class="code-line"><span class="line-no">{{.Number}}</span>{{visible .Text}}</span>{{end}}{{end}}</pre>
 {{else}}<p class="code-empty">주변 줄을 저장하지 않았습니다.</p>
 {{end}}</div>
 {{end}}{{end}}</div>
@@ -173,7 +173,7 @@
 <span class="badge badge-lg badge-{{.Verdict.Class}}">{{.Verdict.Label}}</span>
 </div>
 <dl class="detail-facts">
-<dt>파일</dt><dd class="mono detail-file">{{.File}}</dd>
+<dt>파일</dt><dd class="mono detail-file">{{visible .File}}</dd>
 <dt>이 파일의 건수</dt><dd>{{.Count}}건</dd>
 <dt>줄 번호</dt><dd class="mono detail-lines">{{.Lines}}{{if .MoreLines}} <span class="muted detail-more">처음 {{.Shown}}개 줄만 보입니다</span>{{end}}</dd>
 {{if .Detections}}<dt>탐지</dt><dd class="mono detail-rules">{{range $i, $d := .Detections}}{{if $i}}, {{end}}{{$d.Tool}} {{$d.Rule}}{{with $d.Encoding}} ({{.}} 디코딩){{end}}{{end}}</dd>

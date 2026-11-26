@@ -14,7 +14,7 @@
 <td>{{.User}}</td>
 <td><span class="badge badge-{{.ActionClass}}">{{.ActionLabel}}</span></td>
 <td><a href="{{.ProjectHref}}">{{.ProjectName}}</a></td>
-<td>{{if .RunHref}}<a href="{{.RunHref}}">{{.Run}}</a>{{with .Consent}} · {{.}}{{end}}{{else if .Consent}}{{.Consent}}{{else if .Move}}{{.Finding}} · {{.Bundle}} → {{.To}}{{else}}{{.Bundle}}{{with .Kind}} · {{.}}{{end}}{{with .File}} · <span class="mono">{{.}}</span>{{end}}{{with .Name}} · 이름 <span class="mono">{{.}}</span>{{end}}{{with .Reason}} · {{.}}{{end}}{{with .Note}} · 메모 "{{.}}"{{end}}{{end}}</td>
+<td>{{if .RunHref}}<a href="{{.RunHref}}">{{.Run}}</a>{{with .Consent}} · {{.}}{{end}}{{else if .Consent}}{{.Consent}}{{else if .Move}}{{.Finding}} · {{.Bundle}} → {{.To}}{{else}}{{.Bundle}}{{with .Kind}} · {{.}}{{end}}{{with .File}} · <span class="mono">{{visible .}}</span>{{end}}{{with .Name}} · 이름 <span class="mono">{{.}}</span>{{end}}{{with .Reason}} · {{.}}{{end}}{{with .Note}} · 메모 "{{.}}"{{end}}{{end}}</td>
 </tr>
 {{end}}</tbody>
 </table>
