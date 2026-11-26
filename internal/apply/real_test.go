@@ -538,7 +538,7 @@ func testApplyLegacyShop(t *testing.T, consent bool) {
 	for _, file := range []string{euckrFile, ymlFile, xmlFile} {
 		assertOutside(t, before[file], read(t, f.dir, file), []change{{realMainValue, "${ext.db.main.password}"}})
 	}
-	assertOutside(t, before[shFile], read(t, f.dir, shFile), []change{{realMainValue, "${EXT_DB_MAIN_PASSWORD}"}})
+	assertOutside(t, before[shFile], read(t, f.dir, shFile), []change{{realMainValue, `'"${EXT_DB_MAIN_PASSWORD}"'`}})
 	assertOutside(t, before[localFile], read(t, f.dir, localFile), []change{{localValue, "${ext.db.local.password}"}})
 	assertOutside(t, before[trackedLog], read(t, f.dir, trackedLog), []change{{phone, "[REDACTED:phone]"}})
 	if consent {

@@ -715,3 +715,15 @@ func json(line, raw []byte) ([]byte, error) {
 	}
 	return out, nil
 }
+
+// ShellSingleQuoted reports whether the range sp of text, in a shell file,
+// starts inside a single-quoted string, where the shell does not expand a
+// placeholder such as ${EXT_NAME}. The string is read from the line of the
+// range, as Value reads it.
+func ShellSingleQuoted(file string, text []byte, sp finding.Span) bool {
+	if syntaxOf(file) != syntaxShell || sp.Start < 0 || sp.Start > len(text) {
+		return false
+	}
+	line := text[bytes.LastIndexByte(text[:sp.Start], '\n')+1 : sp.Start]
+	return shellQuoting(line) == inSingle
+}

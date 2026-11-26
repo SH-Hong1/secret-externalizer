@@ -936,6 +936,10 @@ func (r *Runner) decodeValues(ctx context.Context, p *prepared) error {
 }
 
 // decodeValue sets what is stored for t, a target of f with a store key.
+// A place in a single-quoted shell string, where the shell would not
+// expand ${NAME}, gets the placeholder as '"${NAME}"': the quote is closed,
+// the placeholder is expanded in a double-quoted string, and the quote is
+// opened again.
 func (f *sourceFile) decodeValue(t *target) error {
 	if t.WholeFile {
 		t.stored = t.value
@@ -944,6 +948,9 @@ func (f *sourceFile) decodeValue(t *target) error {
 	text, err := f.decode()
 	if err != nil {
 		return err
+	}
+	if literal.ShellSingleQuoted(f.rel, text.Text, t.span) {
+		t.Text = `'"` + t.Text + `"'`
 	}
 	v, err := literal.Value(f.rel, text.Text, t.span)
 	if err != nil {

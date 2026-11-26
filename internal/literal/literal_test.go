@@ -179,3 +179,30 @@ func TestUnclearErrorHoldsNoValue(t *testing.T) {
 		t.Errorf("Value error = %v, want an error without the value", err)
 	}
 }
+
+func TestShellSingleQuoted(t *testing.T) {
+	tests := []struct {
+		file string
+		text string // the range is between « and »
+		want bool
+	}{
+		{"bin/run.sh", "PW='«dev-only-fake»'", true},
+		{"bin/run.bash", "export PW='a«dev-only-fake»'", true},
+		{"bin/run.KSH", "PW='x' Q='«dev-only-fake»'", true},
+		{"bin/run.sh", `PW="«dev-only-fake»"`, false},
+		{"bin/run.sh", `PW="it's «dev-only-fake»"`, false},
+		{"bin/run.sh", "PW=«dev-only-fake»", false},
+		{"bin/run.sh", "PW='x' «dev-only-fake»", false},
+		{"bin/run.sh", "# PW='«dev-only-fake»'", false},
+		{"bin/run.sh", "PW=$'«dev-only-fake»'", false},
+		{"bin/run.sh", "A=1\nPW='«dev-only-fake»'", true},
+		{"conf/app.properties", "pw='«dev-only-fake»'", false},
+		{"conf/app.yml", "pw: '«dev-only-fake»'", false},
+	}
+	for _, tt := range tests {
+		text, sp := marked(t, tt.text)
+		if got := literal.ShellSingleQuoted(tt.file, text, sp); got != tt.want {
+			t.Errorf("ShellSingleQuoted(%q, %q) = %v, want %v", tt.file, tt.text, got, tt.want)
+		}
+	}
+}
