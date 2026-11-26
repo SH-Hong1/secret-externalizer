@@ -438,11 +438,12 @@ func (p *prepared) block(b Blocker) {
 // prepare carries out the steps a check and an apply of j share, for phase.
 // The records the project's runs left open are reconciled with the disk
 // first, before anything is planned. A condition that keeps the project
-// from being applied becomes a blocker; for an apply, preparing stops at
-// the first stage that found one. A check whose every location turned out
-// skipped, with no applied value waiting for the manifest, is blocked as
-// nothing-to-apply; an apply in that state closes with what it skipped. The
-// caller closes the result.
+// from being applied becomes a blocker, and preparing stops before reading
+// a file once a stage found one, so that every location the plan would
+// change stays planned whichever condition blocked it. A check whose every
+// location turned out skipped, with no applied value waiting for the
+// manifest, is blocked as nothing-to-apply; an apply in that state closes
+// with what it skipped. The caller closes the result.
 func (r *Runner) prepare(ctx context.Context, j job.Job, phase job.Kind) (_ *prepared, err error) {
 	id := ID(j.ApplyID)
 	if err := r.store.StartApply(ctx, id, phase); err != nil {
@@ -482,7 +483,7 @@ func (r *Runner) prepare(ctx context.Context, j job.Job, phase job.Kind) (_ *pre
 	if err := r.readManifest(ctx, j, p); err != nil {
 		return nil, err
 	}
-	if !p.inspected || phase == job.KindApply && len(p.blockers) > 0 {
+	if !p.inspected || len(p.blockers) > 0 {
 		return p, nil
 	}
 
