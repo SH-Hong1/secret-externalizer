@@ -72,7 +72,7 @@ the view of the PDF document does not. */}}
 
 <section class="report-section">
 <h2 class="section-title">2. 외부화한 항목</h2>
-{{with .Externalized.Rows}}<div class="table-wrap">
+{{with .Externalized.Rows}}<div class="table-wrap" tabindex="0" role="region" aria-label="외부화한 항목">
 <table class="table report-table">
 <thead><tr><th>이름 · 저장 위치</th><th>분류 · 종류</th><th>자리</th><th>표시</th></tr></thead>
 <tbody>
@@ -91,7 +91,7 @@ the view of the PDF document does not. */}}
 
 <section class="report-section">
 <h2 class="section-title">3. 삭제·마스킹한 고객정보</h2>
-{{if .Redacted.Rows}}<div class="table-wrap">
+{{if .Redacted.Rows}}<div class="table-wrap" tabindex="0" role="region" aria-label="고객정보 종류별 합계">
 <table class="table report-table">
 <thead><tr><th>종류</th><th class="num">묶음</th><th class="num">위치</th><th class="num">파일</th></tr></thead>
 <tbody>
@@ -99,7 +99,7 @@ the view of the PDF document does not. */}}
 {{end}}</tbody>
 </table>
 </div>
-<div class="table-wrap">
+<div class="table-wrap" tabindex="0" role="region" aria-label="고객정보가 있던 파일">
 <table class="table report-table">
 <thead><tr><th>종류</th><th>파일</th><th class="num">묶음</th><th class="num">위치</th></tr></thead>
 <tbody>
@@ -118,17 +118,23 @@ the view of the PDF document does not. */}}
 
 <section class="report-section">
 <h2 class="section-title">4. 구조 변경이 필요한 항목</h2>
-{{template "report-lines" .Structure}}{{if not .Structure.Rows}}<p class="notice">구조 변경이 필요한 항목이 없습니다.</p>
+{{with .Structure.Rows}}<div class="table-wrap" tabindex="0" role="region" aria-label="구조 변경이 필요한 항목">
+{{template "report-lines" .}}</div>
+{{else}}<p class="notice">구조 변경이 필요한 항목이 없습니다.</p>
+{{end}}{{with .Structure.More}}<p class="report-more">{{.}}</p>
 {{end}}</section>
 
 <section class="report-section">
 <h2 class="section-title">5. 남은 항목</h2>
-{{template "report-lines" .Remaining}}{{if not .Remaining.Rows}}<p class="notice">남은 항목이 없습니다.</p>
+{{with .Remaining.Rows}}<div class="table-wrap" tabindex="0" role="region" aria-label="남은 항목">
+{{template "report-lines" .}}</div>
+{{else}}<p class="notice">남은 항목이 없습니다.</p>
+{{end}}{{with .Remaining.More}}<p class="report-more">{{.}}</p>
 {{end}}</section>
 
 <section class="report-section">
 <h2 class="section-title">6. 오탐으로 판정한 항목</h2>
-{{with .FalsePositive.Rows}}<div class="table-wrap">
+{{with .FalsePositive.Rows}}<div class="table-wrap" tabindex="0" role="region" aria-label="오탐으로 판정한 항목">
 <table class="table report-table">
 <thead><tr><th>분류 · 종류</th><th>첫 자리</th><th>수</th><th>사유</th><th>판정 시각</th></tr></thead>
 <tbody>
@@ -148,7 +154,7 @@ the view of the PDF document does not. */}}
 
 <section class="report-section">
 <h2 class="section-title">7. 판정 이력</h2>
-{{with .History.Rows}}<div class="table-wrap">
+{{with .History.Rows}}<div class="table-wrap" tabindex="0" role="region" aria-label="판정 이력">
 <table class="table report-table">
 <thead><tr><th>시각</th><th>사람</th><th>한 일</th><th>대상</th><th>이름 · 사유</th></tr></thead>
 <tbody>
@@ -167,10 +173,8 @@ the view of the PDF document does not. */}}
 {{end}}</section>
 </article>
 {{end}}
-{{/* The lines of section 4 or 5: a lineList, drawn as a table when it
-has lines. */}}
-{{define "report-lines"}}{{with .Rows}}<div class="table-wrap">
-<table class="table report-table">
+{{/* The rows of section 4 or 5, drawn as a table. */}}
+{{define "report-lines"}}<table class="table report-table">
 <thead><tr><th>분류 · 종류</th><th>첫 자리</th><th>수</th><th>상태</th><th>사유</th></tr></thead>
 <tbody>
 {{range .}}<tr>
@@ -182,6 +186,4 @@ has lines. */}}
 </tr>
 {{end}}</tbody>
 </table>
-</div>
-{{end}}{{with .More}}<p class="report-more">{{.}}</p>
-{{end}}{{end}}
+{{end}}
