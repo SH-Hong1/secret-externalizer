@@ -188,3 +188,63 @@ func TestHandle_CustomerDataFindingDropsFileContext(t *testing.T) {
 		}
 	}
 }
+
+func TestHandle_ContextMasksShortURLPartsElsewhere(t *testing.T) {
+	// The account sa and the port 22 are shorter than the four bytes a value
+	// needs to be masked wherever it occurs.
+	const (
+		url   = "jdbc:mysql://sa:dev-only-fake-url-pw@db.invalid:22/shop" //nolint:gosec // G101: an obviously fake fixture value
+		fileA = "conf/a.properties"
+		fileB = "conf/b.properties"
+	)
+	contentA := "db.url=" + url + "\n"
+	urlAt := func(t *testing.T, file, content string) scan.Raw {
+		t.Helper()
+		r := reportedAt(t, file, content, url)
+		r.Rule, r.Kind = "properties-url", finding.KindURL
+		return r
+	}
+	tests := []struct {
+		name  string
+		files map[string]string
+		raw   func(t *testing.T) scan.Raw
+		file  string
+		want  []string
+	}{
+		{
+			name:  "same URL in another file",
+			files: map[string]string{fileA: contentA, fileB: "# backup " + url + "\njdbc.password=" + password + "\n"},
+			raw:   func(t *testing.T) scan.Raw { return urlAt(t, fileA, contentA) },
+			file:  fileB,
+			want:  []string{"# backup jdbc:mysql://****:****@****:****/shop", "jdbc.password=****"},
+		},
+		{
+			name:  "same URL on another line of the same file",
+			files: map[string]string{fileA: contentA + "# backup " + url + "\njdbc.password=" + password + "\n"},
+			raw:   func(t *testing.T) scan.Raw { return urlAt(t, fileA, contentA) },
+			file:  fileA,
+			want:  []string{"db.url=jdbc:mysql://****:****@****:****/shop", "# backup jdbc:mysql://****:****@****:****/shop", "jdbc.password=****"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			e := newEnv(t, tt.files)
+			if err := e.handle(t.Context(), passwordOG(), onlyAt(tt.raw(t))); err != nil {
+				t.Fatalf("Handle() error = %v", err)
+			}
+			got := e.result(t)
+			var pw *finding.Finding
+			for i := range got.Findings {
+				if got.Findings[i].File == tt.file && got.Findings[i].Fingerprint == fingerprintOf(password) {
+					pw = &got.Findings[i]
+				}
+			}
+			if pw == nil {
+				t.Fatalf("Handle() findings = %+v, want the password in %s", got.Findings, tt.file)
+			}
+			if diff := cmp.Diff(tt.want, pw.Locations[0].Context); diff != "" {
+				t.Errorf("Handle() surrounding lines of the password in %s (-want +got):\n%s", tt.file, diff)
+			}
+		})
+	}
+}
