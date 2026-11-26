@@ -18,7 +18,7 @@
 |---|---|---|
 | `.java` | 문자열 리터럴 | 탐지, 치환(코드 수정 필요로 표시) |
 | Spring XML, `.properties`, `application*.yml` | dataSource 등 설정 값 | 탐지, 치환 |
-| `pom.xml`, `settings.xml`, `build.xml` | 저장소 계정, 배포 설정 | 탐지, 치환 |
+| `pom.xml`, `settings.xml`, `build.xml` | 저장소 계정, 프록시 계정, 배포 설정 | 탐지, 치환 |
 | `.sh` | `ssh`, `scp`, `sshpass` 인자, `SSHPASS=` | 탐지, 치환(`EXT_` 표기) |
 | 개인키, 인증서, 키 저장소 | 파일 전체 | 탐지, 파일 제거 |
 | JSP, JSPF, JS, HTML, HTM | 하드코딩된 토큰 | 탐지만(외부화할 수 없다) |

@@ -1,5 +1,6 @@
 # Passwords in build and deployment settings: a <password> and the
-# <username> beside it inside a <server> in Maven settings.xml, an element whose name contains passw in pom.xml, and
+# <username> beside it inside a <server> or a <proxy> in Maven settings.xml,
+# an element whose name contains passw in pom.xml, and
 # a password property or task attribute in an Ant build.xml. An Ant password
 # that signs in to another server, the password of a remote task such as
 # <scp> or of a property named after one, is an SSH credential. ${...} and
@@ -36,6 +37,42 @@ rules:
       kind: account
     patterns:
       - pattern-inside: <server>...</server>
+      - pattern: <username>$VALUE</username>
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: ^(?![$#]\{)\S
+      - focus-metavariable: $VALUE
+
+  # A proxy account lets a build reach the network through the proxy; it
+  # gives no access to a repository or a server, so it is an other secret.
+  - id: maven-settings-proxy-password
+    message: A proxy password is written in Maven settings.xml.
+    severity: WARNING
+    languages: [xml]
+    paths:
+      include: ["settings.xml"]
+    metadata:
+      category: other-secret
+      kind: password
+    patterns:
+      - pattern-inside: <proxy>...</proxy>
+      - pattern: <password>$VALUE</password>
+      - metavariable-regex:
+          metavariable: $VALUE
+          regex: ^(?![$#]\{)\S
+      - focus-metavariable: $VALUE
+
+  - id: maven-settings-proxy-username
+    message: A proxy user name is written in Maven settings.xml.
+    severity: WARNING
+    languages: [xml]
+    paths:
+      include: ["settings.xml"]
+    metadata:
+      category: other-secret
+      kind: account
+    patterns:
+      - pattern-inside: <proxy>...</proxy>
       - pattern: <username>$VALUE</username>
       - metavariable-regex:
           metavariable: $VALUE
