@@ -71,7 +71,7 @@ func (s *Store) Bundle(ctx context.Context, projectID project.ID, scanID scan.ID
 // sets b's category, kind and preview from the member with the lowest ID.
 func readMembers(ctx context.Context, tx pgx.Tx, scanID scan.ID, b *triage.Bundle) error {
 	rows, err := tx.Query(ctx, `
-		SELECT f.id, f.file_path, f.key, f.category, f.kind, f.preview, f.has_original,
+		SELECT f.id, f.file_path, f.key, f.category, f.kind, f.preview, f.has_original, f.shell,
 			`+locationColumns+`
 		FROM finding f JOIN location l ON l.finding_id = f.id
 		WHERE f.bundle_id = $1 AND l.scan_id = $2
@@ -88,7 +88,7 @@ func readMembers(ctx context.Context, tx pgx.Tx, scanID scan.ID, b *triage.Bundl
 			k       finding.Kind
 			preview string
 		)
-		dest := []any{&m.FindingID, &m.File, &m.Key, &c, &k, &preview, &m.HasOriginal}
+		dest := []any{&m.FindingID, &m.File, &m.Key, &c, &k, &preview, &m.HasOriginal, &m.Shell}
 		l, err := scanLocation(rows, dest...)
 		if err != nil {
 			return err
@@ -110,12 +110,6 @@ func readMembers(ctx context.Context, tx pgx.Tx, scanID scan.ID, b *triage.Bundl
 	return nil
 }
 
-// shellPatterns is an SQL array of a LIKE pattern for each of
-// triage.ShellExtensions: any path that ends in the extension. It is a
-// constant rather than a query parameter because the queries built on
-// scanBundles take different parameters.
-const shellPatterns = `'{%.sh,%.bash,%.ksh}'::text[]`
-
 // scanBundles starts a query with the common table expression scan_bundle:
 // one row per bundle of project $1 with a member that scan $2 found. Its
 // category, kind and preview are those of the member with the lowest ID; its
@@ -125,7 +119,7 @@ const shellPatterns = `'{%.sh,%.bash,%.ksh}'::text[]`
 // value.
 const scanBundles = `
 	WITH member AS (
-		SELECT f.id, f.bundle_id, f.file_path, f.key, f.category, f.kind, f.preview,
+		SELECT f.id, f.bundle_id, f.file_path, f.key, f.category, f.kind, f.preview, f.shell,
 			min(l.start_line) AS first_line, count(*) AS locations
 		FROM finding f JOIN location l ON l.finding_id = f.id
 		WHERE f.project_id = $1 AND l.scan_id = $2
@@ -139,7 +133,7 @@ const scanBundles = `
 			(array_agg(m.first_line ORDER BY m.file_path, m.first_line))[1] AS first_line,
 			(array_agg(m.key ORDER BY m.file_path, m.first_line))[1] AS key,
 			sum(m.locations)::int AS locations,
-			bool_and(lower(m.file_path) LIKE ANY (` + shellPatterns + `)) AS shell,
+			bool_and(m.shell) AS shell,
 			b.applied_at IS NOT NULL AS applied
 		FROM bundle b JOIN member m ON m.bundle_id = b.id
 		WHERE b.project_id = $1
@@ -389,12 +383,12 @@ func (s *Store) AppliedBundles(ctx context.Context, projectID project.ID, page i
 				) f ON true
 				LEFT JOIN LATERAL (
 					SELECT count(*)::int AS locations,
-						bool_or(lower(i.file_path) LIKE ANY (`+shellPatterns+`)) AS shell,
-						bool_or(NOT lower(i.file_path) LIKE ANY (`+shellPatterns+`)) AS config,
+						bool_or(fi.shell) AS shell,
+						bool_or(NOT fi.shell) AS config,
 						bool_or(i.code_change) AS code_change,
 						max(i.apply_id) AS last_run,
 						max(r.started_at) AS last_start
-					FROM apply_item i JOIN apply_run r ON r.id = i.apply_id
+					FROM apply_item i JOIN apply_run r ON r.id = i.apply_id JOIN finding fi ON fi.id = i.finding_id
 					WHERE i.bundle_id = b.id AND r.project_id = $1 AND i.status = 'applied'
 				) i ON true
 			WHERE b.project_id = $1 AND b.applied_at IS NOT NULL

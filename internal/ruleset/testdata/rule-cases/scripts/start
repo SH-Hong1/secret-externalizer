@@ -1,0 +1,3 @@
+#!/bin/sh
+# Restarts the example servers.
+sshpass -p 'dev-only-fake-shebang-password' ssh deploy@was13.example.invalid uptime

@@ -213,7 +213,7 @@ func TestTriageShellName(t *testing.T) {
 	shell := triage.Bundle{
 		ID: shellBundle, ProjectID: 1, Fingerprint: strings.Repeat("e", 64),
 		Category: finding.CategorySSH, Kind: finding.KindPassword, Preview: "dp!2****",
-		Members: []triage.Member{{FindingID: 1005, File: "deploy/release.sh", Locations: []finding.Location{{StartLine: 8, EndLine: 8}}}},
+		Members: []triage.Member{{FindingID: 1005, File: "deploy/release.sh", Shell: true, Locations: []finding.Location{{StartLine: 8, EndLine: 8}}}},
 	}
 	e.triage.putBundle(shell)
 	res := e.getTriage(t, url.Values{"sel": {"b104"}}, nil)
@@ -607,7 +607,7 @@ func TestTriage_ShellName(t *testing.T) {
 		ID: shellBundle, ProjectID: 1, Fingerprint: strings.Repeat("e", 64),
 		Category: finding.CategorySSH, Kind: finding.KindPassword, Preview: "dp!2****",
 		Decision: triage.Decision{Verdict: triage.VerdictExternalize, Name: "ssh.main.password"},
-		Members:  []triage.Member{{FindingID: 1005, File: "deploy/release.sh", Locations: []finding.Location{{StartLine: 8, EndLine: 8}}}},
+		Members:  []triage.Member{{FindingID: 1005, File: "deploy/release.sh", Shell: true, Locations: []finding.Location{{StartLine: 8, EndLine: 8}}}},
 	})
 	res := e.getTriage(t, url.Values{"status": {"externalize"}}, nil)
 	if res.status != http.StatusOK {

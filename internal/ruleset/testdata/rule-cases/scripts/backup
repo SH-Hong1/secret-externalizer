@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+export SSHPASS="dev-only-fake-shebang-env"
+sshpass -e scp -i /home/deploy/.ssh/dev_only_fake_key5 shop.war ops@was14.example.invalid:/opt/was/

@@ -1232,22 +1232,43 @@ func TestAppliedBundles(t *testing.T) {
 func TestEntries_Shell(t *testing.T) {
 	s := newMigratedStore(t)
 	pid := newProject(t, s, "shop")
+	// bin/start and bin/stop have no extension; the scan marks bin/start
+	// as a shell script by its first line.
+	start, stop := phone("bin/start"), phone("bin/stop")
+	start.Category, start.Kind, start.Fingerprint, start.Shell = finding.CategorySSH, finding.KindPassword, fpE, true
+	stop.Category, stop.Kind, stop.Fingerprint = finding.CategorySSH, finding.KindPassword, fpG
 	sid := save(t, s, pid, password("bin/run.sh"), password("deploy/start.SH"), host("bin/run.sh"), host("conf/a.yml"),
-		host("bin/backup.ksh"))
-	page, err := s.Entries(t.Context(), pid, sid, triage.Filter{Status: triage.StatusAll, Page: 1})
-	if err != nil {
-		t.Fatalf("Entries(%d) error = %v", sid, err)
-	}
-	shell := map[string]bool{}
-	for _, e := range page.Entries {
-		shell[string(e.Kind)+" "+e.File] = e.Shell
+		host("bin/backup.ksh"), start, stop)
+	entries := func(sid scan.ID) map[string]bool {
+		t.Helper()
+		page, err := s.Entries(t.Context(), pid, sid, triage.Filter{Status: triage.StatusAll, Page: 1})
+		if err != nil {
+			t.Fatalf("Entries(%d) error = %v", sid, err)
+		}
+		shell := map[string]bool{}
+		for _, e := range page.Entries {
+			shell[string(e.Kind)+" "+e.File] = e.Shell
+		}
+		return shell
 	}
 	want := map[string]bool{
 		"password bin/run.sh": true, "host bin/run.sh": true, "host conf/a.yml": false,
-		"host bin/backup.ksh": true,
+		"host bin/backup.ksh": true, "password bin/start": true, "password bin/stop": false,
 	}
-	if diff := cmp.Diff(want, shell); diff != "" {
+	if diff := cmp.Diff(want, entries(sid)); diff != "" {
 		t.Errorf("Entries(%d) shell by line (-want +got):\n%s", sid, diff)
+	}
+	b, err := s.Bundle(t.Context(), pid, sid, bundleOf(t, s, pid, fpE, "bin/start"))
+	if err != nil || len(b.Members) != 1 || !b.Members[0].Shell {
+		t.Errorf("Bundle(bin/start, %d) = %+v, %v; want one member marked as a shell script", sid, b.Members, err)
+	}
+
+	// A later scan reads bin/start without its shebang and bin/stop with one.
+	start.Shell, stop.Shell = false, true
+	again := save(t, s, pid, start, stop)
+	want = map[string]bool{"password bin/start": false, "password bin/stop": true}
+	if diff := cmp.Diff(want, entries(again)); diff != "" {
+		t.Errorf("Entries(%d) shell by line after the first lines changed (-want +got):\n%s", again, diff)
 	}
 }
 

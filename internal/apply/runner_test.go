@@ -305,7 +305,9 @@ func (f *fixture) secret(name, val string, files ...string) []string {
 		Decision: triage.Decision{Verdict: triage.VerdictExternalize, Name: triage.Name(name)},
 	}
 	for _, file := range files {
-		b.Members = append(b.Members, triage.Member{File: file, Locations: []finding.Location{f.locate(file, val)}})
+		b.Members = append(b.Members, triage.Member{
+			File: file, Shell: triage.ShellFile(file, read(f.t, f.dir, file)), Locations: []finding.Location{f.locate(file, val)},
+		})
 	}
 	f.values = append(f.values, val)
 	return f.add(b)

@@ -43,9 +43,10 @@ const (
 	syntaxJSON
 )
 
-// syntaxOf returns the syntax of file, by its extension, ignoring case.
-func syntaxOf(file string) syntax {
-	if triage.ShellFile(file) {
+// syntaxOf returns the syntax of file, whose content is text: shell for a
+// triage.ShellFile, and otherwise by its extension, ignoring case.
+func syntaxOf(file string, text []byte) syntax {
+	if triage.ShellFile(file, text) {
 		return syntaxShell
 	}
 	switch strings.ToLower(path.Ext(file)) {
@@ -76,7 +77,7 @@ func Value(file string, text []byte, sp finding.Span) ([]byte, error) {
 		return nil, errors.New("range outside the text")
 	}
 	raw := text[sp.Start:sp.End]
-	s := syntaxOf(file)
+	s := syntaxOf(file, text)
 	if s == syntaxOther {
 		return clone(raw), nil
 	}
@@ -721,7 +722,7 @@ func json(line, raw []byte) ([]byte, error) {
 // placeholder such as ${EXT_NAME}. The string is read from the line of the
 // range, as Value reads it.
 func ShellSingleQuoted(file string, text []byte, sp finding.Span) bool {
-	if syntaxOf(file) != syntaxShell || sp.Start < 0 || sp.Start > len(text) {
+	if syntaxOf(file, text) != syntaxShell || sp.Start < 0 || sp.Start > len(text) {
 		return false
 	}
 	line := text[bytes.LastIndexByte(text[:sp.Start], '\n')+1 : sp.Start]

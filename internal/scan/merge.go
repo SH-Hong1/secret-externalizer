@@ -6,6 +6,7 @@ import (
 	"slices"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 // classified is a detection together with the category and kind its rule
@@ -146,6 +147,7 @@ func newFinding(pf *placedFile, fk findingKey, mls []*mergedLocation, spans []fi
 		Kind:        kind,
 		Preview:     finding.Preview(category, kind, string(mls[0].spot.value)),
 		HasOriginal: category != finding.CategoryCustomerData,
+		Shell:       triage.ShellFile(pf.rel, pf.file.Text),
 	}
 	if category == finding.CategoryCustomerData {
 		f.Key = ""

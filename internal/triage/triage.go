@@ -5,9 +5,11 @@
 package triage
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
 	"path"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -62,12 +64,14 @@ type Decision struct {
 
 // Member is one finding of a bundle: the value in one file, with the
 // locations of one scan. Key is the configuration key the value is assigned
-// to, or empty when the scan found none.
+// to, or empty when the scan found none. Shell reports that the file is a
+// shell script (see ShellFile).
 type Member struct {
 	FindingID   finding.ID
 	File        string
 	Key         string
 	HasOriginal bool
+	Shell       bool
 	Locations   []finding.Location
 }
 
@@ -307,15 +311,26 @@ type Group struct {
 }
 
 // ShellExtensions returns the extensions, lower-case and with their dot,
-// of the files ShellFile reports. They are the extensions the shell rules
-// of the scanner read. The caller may change the slice it gets.
+// of the files ShellFile reports by name. They are the extensions the shell
+// rules of the scanner read. The caller may change the slice it gets.
 func ShellExtensions() []string {
 	return []string{".sh", ".bash", ".ksh"}
 }
 
-// ShellFile reports whether file is a shell script, whose placeholder takes
-// the shell form: whether its extension, with case ignored, is one of
-// ShellExtensions.
-func ShellFile(file string) bool {
-	return slices.Contains(ShellExtensions(), strings.ToLower(path.Ext(file)))
+// shebang matches the first line of a script that sh, bash or ksh runs,
+// named by its path or through env with options. ShellShebang in
+// rules/opengrep/shell.yml is the same test over a whole file.
+var shebang = regexp.MustCompile(`^#![ \t]*(?:[^\s/]*/)*(?:env[ \t]+(?:-\S*[ \t]+)*(?:[^\s/]*/)*)?(?:ba|k)?sh(?:[ \t]|$)`)
+
+// ShellFile reports whether file, whose decoded content is text, is a shell
+// script, whose placeholder takes the shell form: whether its extension,
+// with case ignored, is one of ShellExtensions, or its first line, without
+// a carriage return at its end, is a shebang naming sh, bash or ksh. text
+// may be nil to judge by the name alone.
+func ShellFile(file string, text []byte) bool {
+	if slices.Contains(ShellExtensions(), strings.ToLower(path.Ext(file))) {
+		return true
+	}
+	line, _, _ := bytes.Cut(text, []byte("\n"))
+	return shebang.Match(bytes.TrimSuffix(line, []byte("\r")))
 }

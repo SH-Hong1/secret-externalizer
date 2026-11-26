@@ -229,7 +229,7 @@ func newNameField(b triage.Bundle, s triage.Suggestion) *nameField {
 	}
 	shells := 0
 	for _, m := range b.Members {
-		if triage.ShellFile(m.File) {
+		if m.Shell {
 			shells++
 		}
 	}

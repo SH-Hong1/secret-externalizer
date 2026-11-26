@@ -659,7 +659,9 @@ func TestReport_FrontendAndShell(t *testing.T) {
 	stopSh := fnd(fpE, "bin/stop.sh", finding.CategoryStorage, finding.KindPassword, 5)
 	yml := fnd(fpG, "conf/a.yml", finding.CategoryStorage, finding.KindPassword, 6)
 	jspPhone := fnd(fpC, "web/list.jsp", finding.CategoryCustomerData, finding.KindPhone, 7)
-	sid := saveAt(t, s, pid, minute(0), jsp, runSh, stopSh, yml, jspPhone)
+	start := fnd(fpH, "bin/start", finding.CategoryStorage, finding.KindPassword, 8)
+	start.Shell = true
+	sid := saveAt(t, s, pid, minute(0), jsp, runSh, stopSh, yml, jspPhone, start)
 
 	d := readReport(t, s, sid)
 	type flags struct {
@@ -675,6 +677,7 @@ func TestReport_FrontendAndShell(t *testing.T) {
 		"bin/run.sh":    {2, false, true, false},
 		"conf/a.yml":    {1, false, false, false},
 		"web/list.jsp":  {1, false, false, true},
+		"bin/start":     {1, false, true, false},
 	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Report(%d) lines by first file (-want +got):\n%s", sid, diff)

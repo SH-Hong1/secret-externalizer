@@ -62,14 +62,15 @@ func frontendPatterns() []string {
 // found is one row per bundle with such a member, as scanBundles has it:
 // category and kind are those of the member with the lowest ID, file and
 // first_line the first file and the first line in it, files the file of each member, frontend whether one of
-// them is a triage.Frontend file, and locations the number of locations;
+// them is a triage.Frontend file, shell whether all of them are shell
+// scripts, and locations the number of locations;
 // before and after say whether an applied item of the bundle is in a run
 // before the scan, or in a run after it. It reads no preview.
 const reportFound = `
 	WITH sc AS (
 		SELECT requested_at, apply_id FROM scan WHERE id = $2
 	), member AS (
-		SELECT f.id, f.bundle_id, f.file_path, f.category, f.kind,
+		SELECT f.id, f.bundle_id, f.file_path, f.category, f.kind, f.shell,
 			min(l.start_line) AS first_line, count(*) AS locations
 		FROM finding f JOIN location l ON l.finding_id = f.id
 		WHERE f.project_id = $1 AND l.scan_id = $2
@@ -87,11 +88,12 @@ const reportFound = `
 	), summed AS (
 		SELECT bundle_id, array_agg(file_path) AS files,
 			bool_or(` + frontendFile + `) AS frontend,
+			bool_and(shell) AS shell,
 			sum(locations)::int AS locations
 		FROM member GROUP BY bundle_id
 	), grouped AS (
 		SELECT b.id, b.verdict, b.hold_reason, b.note, b.name, b.decided_at,
-			lo.category, lo.kind, h.file, h.first_line, su.files, su.frontend, su.locations
+			lo.category, lo.kind, h.file, h.first_line, su.files, su.frontend, su.shell, su.locations
 		FROM bundle b
 		JOIN summed su ON su.bundle_id = b.id
 		JOIN lowest lo ON lo.bundle_id = b.id
@@ -263,12 +265,12 @@ const (
 // numbers of the lists, and $7 is frontendPatterns.
 const reportLines = reportFound + `, line AS (
 		SELECT id AS bundle, category, kind, name, verdict, hold_reason, note, decided_at, file, first_line,
-			files, 1 AS bundles, locations, before, after, frontend
+			files, 1 AS bundles, locations, before, after, frontend, shell
 		FROM found WHERE category <> 'customer-data'
 		UNION ALL
 		SELECT 0, f.category, f.kind, NULL, f.verdict, f.hold_reason, f.note, max(f.decided_at), f.file,
 			min(f.first_line), array_agg(DISTINCT m.file_path), count(DISTINCT f.id)::int, sum(m.locations)::int,
-			f.before AND NOT f.after, f.after, false
+			f.before AND NOT f.after, f.after, false, false
 		FROM found f JOIN member m ON m.bundle_id = f.id
 		WHERE f.category = 'customer-data'
 		GROUP BY f.category, f.file, f.kind, f.verdict, f.hold_reason, f.note, f.before AND NOT f.after, f.after
@@ -289,15 +291,15 @@ const reportLines = reportFound + `, line AS (
 		FROM sectioned
 	)
 	SELECT section, total, bundle, category, kind, name, verdict, hold_reason, note, decided_at, file, first_line,
-		files, bundles, locations, before, after, frontend
+		files, bundles, locations, before, after, frontend, shell
 	FROM ranked WHERE n <= $6
 	ORDER BY section, n`
 
 // readLines fills the three lists of what scan id found, as report.Data
 // describes them. A line is a secret bundle, or the customer data of one
 // first file, kind, verdict, hold reason, note and report.Applied state,
-// whose Files counts the files of its members. Shell follows triage.ShellFile over the files of a
-// secret bundle's members.
+// whose Files counts the files of its members. Shell is true for a secret
+// bundle whose members are all shell scripts.
 func readLines(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID, d *report.Data) error {
 	rows, err := tx.Query(ctx, reportLines,
 		projectID, id, sectionStructure, sectionRemaining, sectionFalsePositives, report.MaxRows, frontendPatterns())
@@ -314,7 +316,7 @@ func readLines(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID,
 	)
 	_, err = pgx.ForEachRow(rows, []any{
 		&section, &total, &l.Bundle, &l.Category, &l.Kind, &name, &l.Verdict, &l.Reason, &l.Note, &decidedAt,
-		&l.File, &l.FirstLine, &files, &l.Bundles, &l.Locations, &before, &after, &l.Frontend,
+		&l.File, &l.FirstLine, &files, &l.Bundles, &l.Locations, &before, &after, &l.Frontend, &l.Shell,
 	}, func() error {
 		line := l
 		if name != nil {
@@ -323,8 +325,6 @@ func readLines(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID,
 		line.DecidedAt = timeOf(decidedAt)
 		slices.Sort(files)
 		line.Files = len(slices.Compact(files))
-		line.Shell = line.Bundle != 0 && len(files) > 0 &&
-			!slices.ContainsFunc(files, func(f string) bool { return !triage.ShellFile(f) })
 		line.Applied = appliedOf(before, after)
 		list := &d.Remaining
 		switch section {
