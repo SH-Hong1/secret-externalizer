@@ -375,6 +375,7 @@ func TestHandleReportPDF_Document(t *testing.T) {
 	e := newTestEnv(t)
 	d := fullReport()
 	d.Remaining.Rows[0].File = file
+	d.Project.Name = "결제 <b>서비스</b>"
 	e.reports.put(d)
 	if res := e.getReportPDF(t); res.status != http.StatusOK {
 		t.Fatalf("GET /scans/7/report.pdf status = %d, want 200; body:\n%s", res.status, res.body)
@@ -385,13 +386,9 @@ func TestHandleReportPDF_Document(t *testing.T) {
 	wantIn(t, "the PDF page", index, reportSections...)
 	wantIn(t, "the PDF page", index, `href="app.css"`, `<body class="print">`, `lang="ko"`, "&lt;img src=x onerror=alert(1)&gt;.yml")
 	wantNotIn(t, "the PDF page", index, "/static/", "<script", "<form", "<nav", "****", "<img src=x", "PDF로 내보내기")
-	wantIn(t, "the PDF footer", footer, "scan #7", `class="pageNumber"`, `class="totalPages"`)
-	for i, r := range footer {
-		if r > 0x7f {
-			t.Errorf("the PDF footer has the non-ASCII %q at byte %d, want ASCII only", r, i)
-			break
-		}
-	}
+	wantIn(t, "the PDF footer", footer, `lang="ko"`, "secret-externalizer", "결제 &lt;b&gt;서비스&lt;/b&gt;", "scan #7",
+		`class="pageNumber"`, `class="totalPages"`, `"Noto Sans CJK KR"`, "justify-content: flex-end", "text-overflow: ellipsis")
+	wantNotIn(t, "the PDF footer", footer, "<b>")
 
 	var names []string
 	for _, f := range doc.Files {
