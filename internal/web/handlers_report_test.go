@@ -203,6 +203,21 @@ func TestHandleReport_RequiresLogin(t *testing.T) {
 	}
 }
 
+// TestHandleReport_HistoryWords pins the boxes the printed history keeps
+// whole: the person and the name of a verdict are one word each, so a login
+// does not break at its hyphen and a name does not break mid-word.
+func TestHandleReport_HistoryWords(t *testing.T) {
+	e := newTestEnv(t)
+	d := fullReport()
+	d.Events[0].Actor.Name = "dev-admin"
+	e.reports.put(d)
+	res := e.getReport(t)
+	wantIn(t, "GET /scans/7/report with a verdict by dev-admin", res.body,
+		`<td><span class="report-user">dev-admin</span></td>`,
+		`<td class="report-note"><span class="mono report-name">ext.db.main.password</span></td>`,
+	)
+}
+
 func TestHandleReport_OlderScan(t *testing.T) {
 	e := newTestEnv(t)
 	d := emptyReport()
