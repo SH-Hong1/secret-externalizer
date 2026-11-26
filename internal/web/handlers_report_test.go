@@ -3,7 +3,9 @@ package web_test
 import (
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"regexp"
 	"slices"
 	"strconv"
@@ -598,4 +600,36 @@ func TestHandleReport_PDFButton(t *testing.T) {
 	e.reports.put(fullReport())
 	res := e.getReport(t)
 	wantIn(t, "GET /scans/7/report", res.body, `href="/scans/7/report.pdf"`, "PDF로 내보내기")
+}
+
+func TestHandleReportPDF_OutlastsServerWriteTimeout(t *testing.T) {
+	e := newTestEnvWith(t, web.Limits{Store: time.Second, PDF: 5 * time.Second, Write: time.Second}, nil)
+	e.reports.put(fullReport())
+	e.converter.delay = 300 * time.Millisecond
+	srv := httptest.NewUnstartedServer(e.handler)
+	srv.Config.WriteTimeout = 100 * time.Millisecond
+	srv.Start()
+	t.Cleanup(srv.Close)
+
+	c := e.user(t)
+	req, err := http.NewRequestWithContext(t.Context(), http.MethodGet, srv.URL+"/scans/7/report.pdf", nil)
+	if err != nil {
+		t.Fatalf("http.NewRequestWithContext: %v", err)
+	}
+	req.Header.Add("Cookie", c.name+"="+c.value)
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("GET /scans/7/report.pdf with a conversion longer than the server's WriteTimeout: %v, want a response", err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("reading GET /scans/7/report.pdf: %v, want the whole PDF", err)
+	}
+	if err := resp.Body.Close(); err != nil {
+		t.Errorf("closing GET /scans/7/report.pdf: %v", err)
+	}
+	if resp.StatusCode != http.StatusOK || string(body) != string(e.converter.out) {
+		t.Errorf("GET /scans/7/report.pdf with a conversion longer than the server's WriteTimeout = %d %q, want 200 %q",
+			resp.StatusCode, body, e.converter.out)
+	}
 }

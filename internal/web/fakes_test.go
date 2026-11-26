@@ -1198,11 +1198,13 @@ func (f *fakeReports) put(d report.Data) {
 // is true it waits until the context ends and returns its error wrapped in
 // pdf.ErrUnavailable, as the real client does. When hold is not nil, the
 // first call sends on entered and then waits until hold is closed, whatever
-// its context says.
+// its context says. When delay is set, each call takes that long before it
+// answers, or returns early with the context's error.
 type fakeConverter struct {
 	out     []byte
 	err     error
 	wait    bool
+	delay   time.Duration
 	hold    chan struct{}
 	entered chan struct{}
 
@@ -1221,6 +1223,15 @@ func (f *fakeConverter) Convert(ctx context.Context, doc pdf.Document) ([]byte, 
 	if f.hold != nil && first {
 		f.entered <- struct{}{}
 		<-f.hold
+	}
+	if f.delay > 0 {
+		timer := time.NewTimer(f.delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-ctx.Done():
+			return nil, fmt.Errorf("%w: %w", pdf.ErrUnavailable, ctx.Err())
+		}
 	}
 	if f.wait {
 		<-ctx.Done()

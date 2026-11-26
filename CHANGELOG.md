@@ -6,6 +6,7 @@
 
 ### 변경
 
+- PDF 내보내기가 handler를 시작한 때부터 DB 5초, 변환 20초, 보내기 10초 동안 응답을 쓸 수 있다. 전에는 web의 `WriteTimeout` 30초가 요청이 도착한 때부터 세션 읽기까지 함께 세어, DB와 변환이 둘 다 제한 가까이 걸리면 PDF를 다 만들고도 연결이 끊겨 브라우저가 오류 화면 없이 끊긴 연결을 보았다(`docs/adr/0125-pdf-export-moves-its-write-deadline.md`)
 - 확장자가 없어도 첫 줄이 sh, bash, ksh를 실행하는 shebang(`#!/bin/sh`, `#!/usr/bin/env bash`)인 파일을 셸 스크립트로 본다. 스캐너의 셸 규칙이 이 파일의 `sshpass`, `SSHPASS=`, ssh 계정·호스트·키 파일을 찾고, 적용이 값을 `${EXT_DB_MAIN_PASSWORD}` 형식으로 바꾸며(작은따옴표 안이면 따옴표를 닫는다), 판정 화면, 적용 목록, 리포트가 셸 표시를 한다. 스캔이 파일마다 셸 스크립트인지 저장하고, 이미 저장된 항목은 확장자로 채운다. 전에는 `bin/start` 같은 스크립트의 값이 셸이 펼치지 못하는 `${ext.db.main.password}`로 바뀌었다. 규칙 버전이 바뀌어 다시 스캔하면 이런 파일의 항목이 늘 수 있다(`docs/adr/0124-shebang-marks-a-shell-script.md`)
 - 리포트와 PDF의 외부화 항목이 이름의 형식과 상관없이 이름 순서로 보이고, 한 이름의 설정 형식(`ext.db.main.password`) 바로 뒤에 셸 형식(`EXT_DB_MAIN_PASSWORD`)이 온다. 항목의 분류, 종류, 저장 경로는 그 항목 자리 대다수의 것이다. 전에는 셸 형식이 대문자라서 모두 목록 앞에 모였고, 분류와 종류는 파일 이름 순서로 첫 자리의 것이었다(`docs/adr/0123-externalized-entries-sort-by-name-and-take-most-places.md`)
 - 로그와 샘플 데이터에서 하이픈 없이 붙여 쓴 지역 전화번호(`0212345678`, `03112345678`)도 고객정보 전화번호로 보고한다. 전에는 붙여 쓴 번호는 휴대전화(`01012345678`)만 보고했다. 규칙 버전이 바뀌어 다시 스캔하면 고객정보 항목이 늘 수 있다(`docs/adr/0122-hyphenless-landline-numbers-are-phones.md`)

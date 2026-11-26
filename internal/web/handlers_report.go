@@ -63,8 +63,18 @@ func handleReport(logger *slog.Logger, rd *renderer, reports ReportStore, now fu
 // printed document links nowhere, because a link in it would point into the
 // folder the converter prints from. The PDF is written only once the converter has returned all
 // of it; otherwise the browser gets an error page and no partial file.
+//
+// The handler moves the connection's write deadline to the sum of the three
+// limits from the moment it starts. The server's WriteTimeout runs from the
+// request's arrival and also covers reading the session, so a slow store and
+// a slow conversion together would otherwise close the connection before
+// the response is written.
 func handleReportPDF(logger *slog.Logger, rd *renderer, reports ReportStore, p printer, limits Limits, now func() time.Time) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		deadline := time.Now().Add(limits.Store + limits.PDF + limits.Write)
+		if err := http.NewResponseController(w).SetWriteDeadline(deadline); err != nil && !errors.Is(err, http.ErrNotSupported) {
+			logger.WarnContext(r.Context(), "extending the write deadline", "error", err)
+		}
 		storeCtx, cancel := context.WithTimeout(r.Context(), limits.Store)
 		d, ok := readReport(w, r.WithContext(storeCtx), logger, rd, reports)
 		cancel()
