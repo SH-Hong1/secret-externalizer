@@ -28,4 +28,5 @@
   -->
   <!-- <property name="password" value="${db.password}"/> <property name="password" value=""/> -->
   <!-- Set the password property of the data source to the vault reference. -->
+  <!-- <bean id="oldReport" class="com.example.shop.ReportSource" p:dbPassword="dev-only-fake-commented-p-db-password" p:adminPasswd="dev-only-fake-commented-p-admin-passwd"/> -->
 </beans>

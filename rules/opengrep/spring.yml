@@ -100,6 +100,27 @@ rules:
           regex: ^(?![$#]\{)\S
       - focus-metavariable: $VALUE
 
+  # Any other p: attribute of a bean whose name ends in password or passwd in
+  # any case (p:dbPassword, p:adminPasswd), which spring-xml-password cannot
+  # name because an XML pattern matches attribute names literally. The tag is
+  # read as text: a quoted value may hold > and the tag may span lines.
+  # p:password itself is left to spring-xml-password, and a tag inside a
+  # comment is left to spring-xml-comment-password.
+  - id: spring-xml-p-password
+    message: A password is written in a p namespace attribute of a Spring XML bean.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["*.xml"]
+    metadata:
+      category: storage-credential
+      kind: password
+    patterns:
+      - pattern-regex: <bean\b(?:[^>"']|"[^"]*"|'[^']*')*>
+      - pattern-regex: \sp:(?!password\s*=)(?i:[\w.-]*passw(?:or)?d)\s*=\s*(?|"(?![$#]\{)(?P<VALUE>[^"\s][^"]*)"|'(?![$#]\{)([^'\s][^']*)')
+      - pattern-not-regex: (?s)<!--.*?-->
+      - focus-metavariable: $VALUE
+
   # Lines in .properties files where the last part of the key names a
   # password, a user name, a host, or a URL whose value is a JDBC URL. The key
   # and the value are separated by =, by :, or by white space alone. A
