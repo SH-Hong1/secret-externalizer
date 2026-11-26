@@ -200,6 +200,9 @@ type needleScanner struct {
 	// droppedFiles are the files of the dropped results the scanner can
 	// name; they count towards dropped.
 	droppedFiles []string
+	// dropsIn, when set, tells for which scanned folders the scanner reports
+	// its dropped results; when nil it reports them for every folder.
+	dropsIn func(dir string) bool
 	// errors is the number of files the scanner says it analysed only in
 	// part.
 	errors int
@@ -269,7 +272,11 @@ func (s *needleScanner) ScanWithCounts(ctx context.Context, dir string, excludes
 	if err != nil {
 		return nil, scan.Counts{}, err
 	}
-	return append(raws, s.extra...), scan.Counts{Dropped: s.dropped, DroppedFiles: slices.Clone(s.droppedFiles), Errors: s.errors}, nil
+	counts := scan.Counts{Errors: s.errors}
+	if s.dropsIn == nil || s.dropsIn(dir) {
+		counts.Dropped, counts.DroppedFiles = s.dropped, slices.Clone(s.droppedFiles)
+	}
+	return append(raws, s.extra...), counts, nil
 }
 
 // scannedDirs returns the folders the scanner was run on.
