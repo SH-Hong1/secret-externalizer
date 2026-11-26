@@ -204,7 +204,8 @@ rules:
 
   # A password written as a block scalar: the key ends in > or |, and the
   # value is the one line below it, indented more than the key. A block of
-  # two or more lines is not reported.
+  # two or more lines is not reported, counting a line that follows blank
+  # lines, so that an apply never replaces only part of a value.
   - id: yaml-block-password
     message: A password is written as a block scalar in a Spring Boot YAML file.
     severity: WARNING
@@ -215,7 +216,24 @@ rules:
       category: storage-credential
       kind: password
     patterns:
-      - pattern-regex: (?mi)^(?P<INDENT>[ \t]*)(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)[ \t]*:[ \t]+[>|][+-]?[ \t]*\r?\n(?P=INDENT)[ \t]+(?![$#]\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$(?!\n(?P=INDENT)[ \t]+\S)
+      - pattern-regex: (?mi)^(?P<INDENT>[ \t]*)(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)[ \t]*:[ \t]+[>|][+-]?[ \t]*\r?\n(?P=INDENT)[ \t]+(?![$#]\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$(?!(?:\r?\n[ \t]*)*\r?\n(?P=INDENT)[ \t]+\S)
+      - focus-metavariable: $VALUE
+
+  # The same block scalar as the key of a list item (- password: >). The
+  # key's column is the indent, the dash, and the gap after it, so the value
+  # line is indented by one more than all three, and a later line indented
+  # that far continues the block.
+  - id: yaml-list-block-password
+    message: A password is written as a block scalar in a list item of a Spring Boot YAML file.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["application*.yml", "application*.yaml"]
+    metadata:
+      category: storage-credential
+      kind: password
+    patterns:
+      - pattern-regex: (?mi)^(?P<INDENT>[ \t]*)-(?P<GAP>[ \t]+)(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)[ \t]*:[ \t]+[>|][+-]?[ \t]*\r?\n(?P=INDENT)[ \t](?P=GAP)[ \t]+(?![$#]\{)(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$(?!(?:\r?\n[ \t]*)*\r?\n(?P=INDENT)[ \t](?P=GAP)[ \t]+\S)
       - focus-metavariable: $VALUE
 
   - id: yaml-username

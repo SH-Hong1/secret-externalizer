@@ -12,3 +12,26 @@ ext:
       second line of two
   spel:
     password: "#{systemProperties['ext.password']}"
+  gap:
+    password: |
+      first part before a blank line
+
+      second part after a blank line
+  servers:
+    - password: >-
+        dev-only-fake-list-folded-password
+      name: primary
+    -   pass: |
+          dev-only-fake-list-wide-dash-password
+    - name: secondary
+      password: |
+        dev-only-fake-list-second-key-password
+    - password: |
+        first list line of two
+        second list line of two
+    - password: >
+        first list part before a blank line
+
+        second list part after a blank line
+    - password: |
+        ${LIST_PASSWORD}
