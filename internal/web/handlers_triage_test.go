@@ -475,6 +475,31 @@ func TestTriageEscapes(t *testing.T) {
 	wantIn(t, "triage page", res.body, "&lt;script&gt;alert(1)&lt;/script&gt;", "conf/&lt;script&gt;x()&lt;/script&gt;.yml")
 }
 
+func TestTriageShowsHiddenCharacters(t *testing.T) {
+	e := triageEnv(t)
+	const file = "conf/a\u202egnp.yml"
+	e.triage.setScan(scan.Scan{ID: 12, ProjectID: 1, Status: scan.StatusSucceeded}, map[triage.Verdict]int{"": 1},
+		triage.Entry{Bundle: 105, Category: finding.CategoryOther, Kind: finding.KindOther, File: file, FirstLine: 1, Count: 1, Bundles: 1})
+	e.triage.putBundle(triage.Bundle{
+		ID: 105, ProjectID: 1, Category: finding.CategoryOther, Kind: finding.KindOther, Preview: "****",
+		Members: []triage.Member{{FindingID: 1007, File: file, Locations: []finding.Location{{
+			StartLine: 1, EndLine: 2, ContextFirstLine: 1,
+			Context: []string{"token = ****\u2028", "\tuser\u200b = ****\u2029\u0007"},
+		}}}},
+	})
+	res := e.getTriage(t, nil, nil)
+	if res.status != http.StatusOK {
+		t.Fatalf("GET triage status = %d, want 200", res.status)
+	}
+	wantNotIn(t, "triage page", res.body, "\u202e", "\u200b", "\u2028", "\u2029", "\u0007")
+	wantIn(t, "triage list", section(res.body, "nav", "list"), "conf/a&lt;U&#43;202E&gt;gnp.yml:1")
+	wantIn(t, "triage detail", section(res.body, "section", "detail"),
+		"conf/a&lt;U&#43;202E&gt;gnp.yml:1",
+		"token = ****&lt;U&#43;2028&gt;",
+		"\tuser&lt;U&#43;200B&gt; = ****&lt;U&#43;2029&gt;&lt;U&#43;0007&gt;",
+	)
+}
+
 func TestTriageRequiresLogin(t *testing.T) {
 	e := triageEnv(t)
 	res := e.do(t, http.MethodGet, "/projects/1/triage?status=all", nil)

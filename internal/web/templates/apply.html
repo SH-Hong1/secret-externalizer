@@ -103,7 +103,7 @@
 <div class="skips-body">
 {{with .Action}}<p class="text-2">{{.}}</p>
 {{end}}<ul class="skips-list">
-{{range .Items}}<li>{{.File}}:{{.Line}} · {{.Kind}}{{with .Name}} · {{.}}{{end}}</li>
+{{range .Items}}<li>{{visible .File}}:{{.Line}} · {{.Kind}}{{with .Name}} · {{.}}{{end}}</li>
 {{end}}</ul>
 {{if .More}}<p class="muted">처음 {{len .Items}}곳만 보여 줍니다. 외 {{.More}}곳.</p>
 {{end}}</div>
@@ -113,7 +113,7 @@
 <h2 class="section-title mb-0" id="irreversible-title">복구 불가</h2>
 <p>git이 추적하지 않는 파일의 고객정보는 가린 뒤 되돌릴 수 없습니다. 동의하면 여기 보인 파일만 가립니다. 동의하지 않으면 이 파일들은 건너뛰고 그대로 둡니다.</p>
 <ul class="skips-list">
-{{range .}}<li>{{.File}} · {{.N}}곳</li>
+{{range .}}<li>{{visible .File}} · {{.N}}곳</li>
 {{end}}</ul>
 {{if $.Digest}}<label class="consent"><input type="checkbox" name="irreversible" value="on" form="apply-form"> 위 파일의 고객정보를 되돌릴 수 없게 가리는 데 동의합니다.</label>
 {{end}}</section>

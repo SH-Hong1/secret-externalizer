@@ -186,3 +186,27 @@ func newTestRequest(t *testing.T) *http.Request {
 	t.Helper()
 	return httptest.NewRequestWithContext(t.Context(), http.MethodGet, "/", nil)
 }
+
+func TestVisible(t *testing.T) {
+	tests := []struct {
+		name, in, want string
+	}{
+		{"empty", "", ""},
+		{"ascii path", "src/main/resources/application.yml", "src/main/resources/application.yml"},
+		{"hangul path", "설정/비밀.yml", "설정/비밀.yml"},
+		{"tab kept", "\tpassword: ****", "\tpassword: ****"},
+		{"direction override", "a\u202egnp.yml", "a<U+202E>gnp.yml"},
+		{"zero width space and BOM", "a\u200bb\ufeff", "a<U+200B>b<U+FEFF>"},
+		{"line and paragraph separators", "a\u2028b\u2029", "a<U+2028>b<U+2029>"},
+		{"control characters", "a\rb\x7f", "a<U+000D>b<U+007F>"},
+		{"tag character", "\U000e0041", "<U+E0041>"},
+		{"replacement character kept", "a\ufffdb", "a\ufffdb"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := visible(tt.in); got != tt.want {
+				t.Errorf("visible(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+}
