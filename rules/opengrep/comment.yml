@@ -59,8 +59,8 @@ rules:
 
   # A password in a comment, whatever bean it belongs to, as in spring.yml: a
   # property or a constructor argument whose name ends in password or passwd
-  # in any case, given as an attribute or a <value> child, or a p:password
-  # attribute.
+  # in any case, given as an attribute or a <value> child, or a p: attribute
+  # whose name ends the same way (p:password, p:dbPassword).
   - id: spring-xml-comment-password
     message: A password is written in a commented-out Spring XML element.
     severity: WARNING
@@ -75,7 +75,9 @@ rules:
       - pattern-either:
           - pattern-regex: <(?:property|constructor-arg)\s+name\s*=\s*["'](?i:[\w.-]*passw(?:or)?d)["']\s+value\s*=\s*(?|"(?![$#]\{)(?P<VALUE>[^"\s][^"]*)"|'(?![$#]\{)([^'\s][^']*)')
           - pattern-regex: <(?:property|constructor-arg)\s+name\s*=\s*["'](?i:[\w.-]*passw(?:or)?d)["']\s*>\s*<value>(?![$#]\{)(?P<VALUE>[^<\s](?:[^<]*[^<\s])?)\s*</value>
-          - pattern-regex: <bean\b[^>]*?\sp:password\s*=\s*(?|"(?![$#]\{)(?P<VALUE>[^"\s][^"]*)"|'(?![$#]\{)([^'\s][^']*)')
+          - patterns:
+              - pattern-regex: <bean\b(?:[^>"']|"[^"]*"|'[^']*')*>
+              - pattern-regex: \sp:(?i:[\w.-]*passw(?:or)?d)\s*=\s*(?|"(?![$#]\{)(?P<VALUE>[^"\s][^"]*)"|'(?![$#]\{)([^'\s][^']*)')
       - focus-metavariable: $VALUE
 
   # Comment lines of .properties files that hold a key and a value in the
