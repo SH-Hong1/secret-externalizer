@@ -1,0 +1,20 @@
+{{define "checks"}}<dl class="facts facts-list">
+{{range .}}<div class="check-row">
+<dt>{{.Label}}</dt>
+<dd><span class="badge badge-{{.Status.Class}}">{{.Status.Label}}</span></dd>
+{{with .Failures}}<dd class="check-detail">{{range .}}<p>{{.Label}}{{with .Code}} <span class="mono">{{.}}</span>{{end}}{{with .Action}} <span class="text-2">{{.}}</span>{{end}}</p>
+{{end}}</dd>
+{{end}}</div>
+{{end}}</dl>
+{{end}}
+{{define "dirty"}}<details class="skips" open>
+<summary>커밋되지 않은 변경 {{.Count}}개</summary>
+<div class="skips-body">
+<p class="text-2">변경을 커밋하거나 stash한 뒤 다시 점검해 주세요.</p>
+<ul class="skips-list">
+{{range .Files}}<li>{{.}}</li>
+{{end}}</ul>
+{{if .More}}<p class="muted">처음 {{len .Files}}개만 보여 줍니다. 외 {{.More}}개.</p>
+{{end}}</div>
+</details>
+{{end}}

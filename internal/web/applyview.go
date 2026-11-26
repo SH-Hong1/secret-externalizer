@@ -25,7 +25,7 @@ const (
 // constants. Error is a refusal shown above everything else. Changes are
 // the bundles the plan changes and Kept those it leaves alone. DBChecks are
 // the conditions the database shows before a check; Checks are those of
-// the shown run. Stale tells that the verdicts or the scan changed after
+// the shown run, and Dirty the uncommitted changes that blocked it. Stale tells that the verdicts or the scan changed after
 // the newest check, and StaleScan that it was the scan. CheckFailure is why the newest check failed, set only
 // when it failed before anyone confirmed it. Digest is set only when the
 // page offers the apply form.
@@ -53,8 +53,7 @@ type applyPage struct {
 	RequestedAt  string
 	CheckedAt    string
 	Checks       []applyCheck
-	Dirty        []string
-	DirtyMore    int
+	Dirty        *dirtyView
 	Unchecked    int
 	Planned      []applyActionCount
 	PlannedTotal int
@@ -62,6 +61,26 @@ type applyPage struct {
 	Irreversible []irreversibleFile
 	Digest       string
 	Blocked      string
+}
+
+// dirtyView is the uncommitted changes that blocked a run: Count of them,
+// the first Files, and More that are not shown.
+type dirtyView struct {
+	Count int
+	Files []string
+	More  int
+}
+
+// dirtyOf returns the uncommitted changes that blocked run, or nil when it
+// recorded none.
+func dirtyOf(run apply.Run) *dirtyView {
+	if run.DirtyCount == 0 {
+		return nil
+	}
+	return &dirtyView{
+		Count: run.DirtyCount, Files: slices.Clone(run.DirtyFiles),
+		More: max(0, run.DirtyCount-len(run.DirtyFiles)),
+	}
 }
 
 // applyCountRow is one line of the table of bundles: a verdict, a category

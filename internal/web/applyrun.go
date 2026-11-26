@@ -33,6 +33,9 @@ const statusApplied = "applied"
 // place of the run failed because the run stopped while changing its file.
 // Untouched are the places a finished run never reached, and CodeChanges
 // counts the changed places whose code has to read the value elsewhere.
+// Refused tells that the run failed for conditions it checked again before
+// changing anything; Checks are those conditions and Dirty the uncommitted
+// changes among them.
 type applyRunPage struct {
 	NoWorker     bool
 	User         auth.User
@@ -48,6 +51,9 @@ type applyRunPage struct {
 	FinishedAt   string
 	Irreversible string
 	Failure      *blockerView
+	Refused      bool
+	Checks       []applyCheck
+	Dirty        *dirtyView
 	Applied      int
 	Skipped      int
 	Failed       int
@@ -315,6 +321,9 @@ func newApplyRunPage(p project.Project, run apply.Run) applyRunPage {
 	if run.State == apply.StateFailed {
 		f := failureOf(run.FailureReason)
 		page.Failure = &f
+		if len(run.Blockers) > 0 {
+			page.Refused, page.Checks, page.Dirty = true, runChecks(run.Blockers), dirtyOf(run)
+		}
 	}
 	return page
 }

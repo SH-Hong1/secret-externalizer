@@ -632,7 +632,9 @@ func (s *Store) FinishApply(ctx context.Context, jobID int64, workerID string, i
 // transaction, and the run with it: a checking run's apply-check job, or a
 // queued or running run's apply job. The run keeps reason, which must be
 // one of the fixed failure reasons (knownFailureReason), and blockers.
-// items, which only an apply may give, are merged into the run's items as
+// When dirty is not empty, the run keeps its count and its first
+// apply.MaxDirtyShown paths in place of those its check found, as SaveCheck
+// keeps them. items, which only an apply may give, are merged into the run's items as
 // FinishApply merges them; the run's other items and its file records stay
 // as they are. A run that may have changed a file before it failed (it has
 // an applied or a writing item) gets its confirmation scan in the same
@@ -640,7 +642,7 @@ func (s *Store) FinishApply(ctx context.Context, jobID int64, workerID string, i
 // nothing, when the worker does not hold the job, and ErrNotFound when the
 // run is in no state a job works on.
 func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id apply.ID, reason string,
-	blockers []apply.Blocker, items []apply.Item,
+	blockers []apply.Blocker, dirty []string, items []apply.Item,
 ) error {
 	if !knownFailureReason(reason) {
 		return fmt.Errorf("failing apply %d: the reason is not one of the fixed failure reasons", id)
@@ -679,6 +681,13 @@ func (s *Store) FailApply(ctx context.Context, jobID int64, workerID string, id 
 		}
 		if err := finishRun(ctx, tx, id, from, apply.StateFailed, reason, blockers); err != nil {
 			return err
+		}
+		if len(dirty) > 0 {
+			shown := dirty[:min(len(dirty), apply.MaxDirtyShown)]
+			if _, err := tx.Exec(ctx, "UPDATE apply_run SET dirty_count = $2, dirty_files = $3 WHERE id = $1",
+				id, len(dirty), shown); err != nil {
+				return fmt.Errorf("recording uncommitted changes of apply %d: %w", id, err)
+			}
 		}
 		return requestRescan(ctx, tx, id)
 	})

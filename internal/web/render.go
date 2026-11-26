@@ -62,15 +62,19 @@ func newRenderer(a *assets) *renderer {
 // reveal also renders on its own from original.html. The pages of a scan
 // and of an apply run both tell what a confirmation scan found, and
 // that a queued request waits for no worker. The apply page tells the
-// latter while a check waits.
+// latter while a check waits. The apply page and the page of an apply run
+// both list the conditions of a run and the uncommitted changes that
+// blocked it.
 func partialsOf(name string) []string {
 	switch name {
 	case "triage.html":
 		return []string{"templates/original.html"}
-	case "scan.html", "apply_run.html":
+	case "scan.html":
 		return []string{"templates/confirmation.html", "templates/noworker.html"}
+	case "apply_run.html":
+		return []string{"templates/confirmation.html", "templates/noworker.html", "templates/checks.html"}
 	case "apply.html":
-		return []string{"templates/noworker.html"}
+		return []string{"templates/noworker.html", "templates/checks.html"}
 	}
 	return nil
 }

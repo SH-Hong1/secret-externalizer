@@ -544,6 +544,9 @@ func TestApply_DirtyTreeRefused(t *testing.T) {
 		!slices.Contains(f.store.failed.Blockers, apply.BlockerDirty) {
 		t.Errorf("FailApply = %+v, want reason %q with blocker dirty", f.store.failed, apply.FailureDirty)
 	}
+	if f.store.failed != nil && !slices.Contains(f.store.failed.Dirty, "pom.xml") {
+		t.Errorf("FailApply dirty = %q, want it to hold pom.xml", f.store.failed.Dirty)
+	}
 	f.assertNoValue(err)
 }
 
