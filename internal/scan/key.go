@@ -182,16 +182,26 @@ func yamlPieces(text []byte, ls, at int) []finding.Span {
 // is the leaf only when the value is the tag's value attribute or its text,
 // as in <property name="password" value="…"/>. A value in any other
 // attribute takes that attribute's name, because there the name attribute
-// names the element, not the value.
+// names the element, not the value. For an element other than a bean, that
+// name then goes before the leaf, split at each slash, so that
+// <Resource name="jdbc/live" password="…"/> has the key jdbc.live.password
+// and two resources of one file get different keys. A bean is named by its
+// id instead.
 func xmlPieces(text []byte, ls, at int) []finding.Span {
 	lt := ownTag(text, at)
 	leaf, ok := finding.Span{}, false
 	if s, sym, found := leafPiece(text, ls, at); found && sym == '=' {
 		leaf, ok = s, true
 	}
-	if lt >= 0 && (!ok || string(text[leaf.Start:leaf.End]) == "value") {
-		if s, found := xmlAttr(text, lt, at, "name"); found {
-			leaf, ok = s, true
+	var named []finding.Span
+	if lt >= 0 {
+		name, found := xmlAttr(text, lt, at, "name")
+		switch {
+		case !found:
+		case !ok || string(text[leaf.Start:leaf.End]) == "value":
+			leaf, ok = name, true
+		case !isBeanTag(text, lt+len("<")):
+			named = nameSpans(text, name)
 		}
 	}
 	if !ok && lt >= 0 && at > ls && text[at-1] == '>' {
@@ -208,14 +218,40 @@ func xmlPieces(text []byte, ls, at int) []finding.Span {
 		return nil
 	}
 
+	spans := make([]finding.Span, 0, len(named)+2)
+	spans = append(spans, named...)
+	spans = append(spans, leaf)
 	b, tagEnd, found := openBean(text, at)
 	if !found {
-		return []finding.Span{leaf}
+		return spans
 	}
 	if id, found := xmlAttr(text, b, tagEnd, "id"); found {
-		return []finding.Span{id, leaf}
+		return slices.Insert(spans, 0, id)
 	}
-	return []finding.Span{leaf}
+	return spans
+}
+
+// nameSpans splits the name attribute value at s into its slash-separated
+// pieces, so that a JNDI name such as jdbc/live gives the pieces jdbc and
+// live. It returns nil when a piece is empty or holds a byte that is not a
+// key character, and the key then goes without the name.
+func nameSpans(text []byte, s finding.Span) []finding.Span {
+	var spans []finding.Span
+	start := s.Start
+	for i := s.Start; i <= s.End; i++ {
+		if i < s.End && text[i] != '/' {
+			if !isKeyChar(text[i]) {
+				return nil
+			}
+			continue
+		}
+		if i == start {
+			return nil
+		}
+		spans = append(spans, finding.Span{Start: start, End: i})
+		start = i + 1
+	}
+	return spans
 }
 
 // ownTag returns the offset of the '<' of the tag that holds byte at, or
