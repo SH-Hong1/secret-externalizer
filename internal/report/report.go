@@ -99,8 +99,11 @@ type Event struct {
 // Remaining. Each list is ordered by file, first line and bundle, and holds
 // its first MaxRows rows next to the number of all of them. Externalized is
 // the applied replace and remove-file items of the runs before the scan,
-// one entry per bundle and name, ordered by name and bundle, cut the same
-// way; the places of an entry are ordered by file and line. Redactions
+// one entry per bundle and name, cut the same way. Entries are ordered by
+// the name whichever form it was written in, the config form before the
+// shell form, then by bundle; an entry's category, kind and store path are
+// those most of its places have. The places of an entry are ordered by file
+// and line. Redactions
 // holds one row per kind, file and tracked state, so a file can appear twice
 // for a kind. Latest is the project's newest succeeded scan and Previous the
 // succeeded scan before Scan, zero when there is none. Events holds the

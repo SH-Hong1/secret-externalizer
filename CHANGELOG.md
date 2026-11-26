@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 리포트와 PDF의 외부화 항목이 이름의 형식과 상관없이 이름 순서로 보이고, 한 이름의 설정 형식(`ext.db.main.password`) 바로 뒤에 셸 형식(`EXT_DB_MAIN_PASSWORD`)이 온다. 항목의 분류, 종류, 저장 경로는 그 항목 자리 대다수의 것이다. 전에는 셸 형식이 대문자라서 모두 목록 앞에 모였고, 분류와 종류는 파일 이름 순서로 첫 자리의 것이었다(`docs/adr/0123-externalized-entries-sort-by-name-and-take-most-places.md`)
 - 로그와 샘플 데이터에서 하이픈 없이 붙여 쓴 지역 전화번호(`0212345678`, `03112345678`)도 고객정보 전화번호로 보고한다. 전에는 붙여 쓴 번호는 휴대전화(`01012345678`)만 보고했다. 규칙 버전이 바뀌어 다시 스캔하면 고객정보 항목이 늘 수 있다(`docs/adr/0122-hyphenless-landline-numbers-are-phones.md`)
 - 셸 스크립트의 작은따옴표 안에 있는 값을 외부화하면, 적용이 그 자리에 `'"${EXT_DB_MAIN_PASSWORD}"'`를 써서 작은따옴표를 닫고 큰따옴표 안에서 placeholder가 펼쳐지게 한다(`sshpass -p ''"${EXT_DEPLOY_SSH_PASSWORD}"''`). 전에는 `sshpass -p '${EXT_DEPLOY_SSH_PASSWORD}'`가 되어 셸이 비밀번호 대신 그 글자를 넘겼고, 적용은 이를 알리지 않았다(`docs/adr/0121-single-quoted-shell-placeholder-closes-the-quote.md`)
 - 저장소의 객체 폴더(`.git/objects`)나 그 `objects/info/alternates`가 가리키는 객체 폴더가 작업 공간 밖에 있으면, 적용 점검이 "git 작업본이 아님"으로 막히고 스캔 기록에 커밋 해시를 남기지 않는다. 막힘 안내는 빌려 쓰는 clone을 푸는 방법을 적는다. 전에는 git 폴더만 보아, `git clone --shared`로 작업 공간 밖의 저장소를 빌려 쓴 작업본도 밖의 객체를 읽으며 점검되었다(`docs/adr/0120-object-stores-must-lie-under-the-workspace.md`)

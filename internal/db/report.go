@@ -345,7 +345,11 @@ func readLines(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID,
 // readExternalized returns the applied replace and remove-file items of the
 // project's runs before scan id as entries, from the items' own columns:
 // the first report.MaxRows entries, each with its first report.MaxPlaces
-// places, and the number of all entries. An entry reappeared when the scan
+// places, and the number of all entries. Entries are ordered by the name
+// they hold, whichever form it was written in, so the config and shell forms
+// of one name stand together, the config form first. An entry's category,
+// kind and store path are those that most of its places have, the smallest
+// in byte order on a tie. An entry reappeared when the scan
 // found its bundle as a secret and no run after the scan applied an item of
 // the bundle.
 func readExternalized(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID) (report.List[report.Entry], error) {
@@ -358,9 +362,18 @@ func readExternalized(ctx context.Context, tx pgx.Tx, projectID project.ID, id s
 			`+reportItems+` AND i.action IN ('replace', 'remove-file')
 		), entry AS (
 			SELECT bundle_id, name, count(*)::int AS places, bool_or(code_change) AS any_code_change,
-				row_number() OVER (ORDER BY name COLLATE "C", bundle_id) AS entry,
+				row_number() OVER (
+					ORDER BY lower(replace(name, '_', '.')) COLLATE "C", name <> lower(name), bundle_id
+				) AS entry,
 				count(*) OVER ()::int AS entries
 			FROM item GROUP BY bundle_id, name
+		), label AS (
+			SELECT DISTINCT ON (i.bundle_id, i.name) i.bundle_id, i.name, i.category, i.kind, i.store_path
+			FROM item i JOIN entry e ON e.bundle_id = i.bundle_id AND e.name = i.name
+			WHERE e.entry <= $3
+			GROUP BY i.bundle_id, i.name, i.category, i.kind, i.store_path
+			ORDER BY i.bundle_id, i.name, count(*) DESC,
+				i.category COLLATE "C", i.kind COLLATE "C", i.store_path COLLATE "C"
 		), shown AS (
 			SELECT * FROM (
 				SELECT e.entry, e.entries, e.places, e.any_code_change, i.*,
@@ -380,10 +393,11 @@ func readExternalized(ctx context.Context, tx pgx.Tx, projectID project.ID, id s
 			WHERE r.project_id = $1 AND i.status = 'applied' AND `+runAfter+`
 				AND i.bundle_id IN (SELECT bundle_id FROM shown)
 		)
-		SELECT s.place, s.bundle_id, s.name, s.category, s.kind, s.store_path, s.places, s.any_code_change,
+		SELECT s.place, s.bundle_id, s.name, b.category, b.kind, b.store_path, s.places, s.any_code_change,
 			coalesce(a.secret, false) AND l.bundle_id IS NULL, s.file_path, s.line, s.action = 'remove-file', s.run,
 			s.entries
 		FROM shown s
+		JOIN label b ON b.bundle_id = s.bundle_id AND b.name = s.name
 		LEFT JOIN again a ON a.bundle_id = s.bundle_id
 		LEFT JOIN later l ON l.bundle_id = s.bundle_id
 		ORDER BY s.entry, s.place`, projectID, id, report.MaxRows, report.MaxPlaces)
