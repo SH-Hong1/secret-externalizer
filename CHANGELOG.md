@@ -6,6 +6,7 @@
 
 ### 변경
 
+- worker가 작업을 돌려주어 다시 대기 중인 적용 실행이 이미 바꾼 위치를, 지난 스캔의 리포트가 "이후 적용됨"으로 보인다. 전에는 그 실행이 다시 시작할 때까지 파일은 이미 바뀌었는데 리포트에 적용 표시가 없었다(`docs/adr/0118-requeued-apply-run-counts-as-after-every-scan.md`)
 - 리포트와 PDF 요약의 "이전 스캔보다" 증감이 묶음 수와 함께 위치 수의 증감도 보인다(`-2개 · 위치 -5곳`). 전에는 묶음 수의 증감만 보여, 묶음 수는 같고 위치가 늘거나 준 변화가 보이지 않았다
 - 리포트에서 한 파일의 같은 종류, 같은 판정인 고객정보가 적용 상태(이전에 적용됨, 이후 적용됨, 아직 적용 안 됨)로도 나뉘어 줄마다 보인다. 전에는 그 가운데 한 묶음만 적용되어도 줄 전체가 "이후 적용됨"이나 "적용됨 · 다시 발견"으로 보여 나머지 묶음의 판정과 보류 사유가 가려졌다(`docs/adr/0117-customer-data-lines-split-by-applied-state.md`)
 - YAML 목록 안의 값도 목록 위의 경로를 설정 키로 받고, 목록 항목에 `name`이나 `id`가 있으면 그 값이 목록 키 뒤에 붙는다. 한 파일의 `servers: - name: dev password: …`와 `- name: live password: …`가 이제 `servers.dev.password`, `servers.live.password`로 나뉜다. 전에는 둘 다 `password`여서 값이 같으면 한 항목이 되었다. `name`과 `id`가 없는 항목은 `servers.password`다. 키가 바뀐 자리는 다음 스캔에서 새 항목이 되어 판정을 이어받지 않는다(`docs/adr/0116-yaml-list-item-key-keeps-the-list-path-and-item-name.md`)

@@ -435,7 +435,8 @@ func TestReport_AppliedAsOf(t *testing.T) {
 	second := saveAt(t, s, pid, minute(30), pw, other, queued)
 
 	// A run released after its first attempt and queued again: it has
-	// neither time, so it is neither before nor after a scan.
+	// neither time, and no scan can be requested while it waits, so it is
+	// after every scan.
 	again := runAt(t, s, pid, second, apply.StateQueued, nil, nil)
 	insertItems(t, s, again, itemOf(t, s, pid, queued, "db.other.password", apply.StatusApplied))
 
@@ -447,7 +448,7 @@ func TestReport_AppliedAsOf(t *testing.T) {
 	want := map[triage.BundleID]report.Applied{
 		pwBundle:                               report.AppliedBefore,
 		bundleOf(t, s, pid, fpE, "conf/c.yml"): "",
-		bundleOf(t, s, pid, fpG, "conf/d.yml"): "",
+		bundleOf(t, s, pid, fpG, "conf/d.yml"): report.AppliedAfter,
 	}
 	if diff := cmp.Diff(want, applies); diff != "" {
 		t.Errorf("Report(second) Applied by bundle (-want +got):\n%s", diff)
