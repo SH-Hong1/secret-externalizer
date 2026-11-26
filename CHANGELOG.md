@@ -6,6 +6,7 @@
 
 ### 변경
 
+- `application*.yml`에서 목록 항목의 첫 키로 쓴 블록 스칼라 비밀번호(`- password: >`, `- password: |`)를 한 줄일 때 보고한다. 새 규칙 `yaml-list-block-password`가 보고하고, placeholder는 보고하지 않는다. 또 블록 스칼라 비밀번호의 블록 안에 빈 줄이 있으면 두 줄 이상인 블록으로 보고 보고하지 않는다. 전에는 빈 줄 앞의 첫 줄만 값으로 보고해 적용이 값의 일부만 바꿀 수 있었다(`docs/adr/0103-yaml-list-block-scalar-passwords.md`)
 - Maven `settings.xml`의 `<proxy>` 안 `<username>`과 `<password>`를 기타 비밀 값(`other-secret`)의 계정과 비밀번호로 보고한다. 새 규칙 `maven-settings-proxy-username`, `maven-settings-proxy-password`가 보고하고, placeholder와 빈 값은 보고하지 않는다. 전에는 `<server>` 안만 찾아 프록시 계정과 비밀번호가 빠졌다(`docs/adr/0102-maven-proxy-credentials-are-other-secrets.md`)
 - Spring XML bean의 `p:` 속성 가운데 이름이 password나 passwd로 끝나는 것(`p:dbPassword`, `p:adminPasswd`)의 값을 비밀번호로 보고한다. 새 규칙 `spring-xml-p-password`가 보고하고, `p:password`는 지금처럼 `spring-xml-password`가 보고한다. 주석 안의 bean도 같은 이름을 `spring-xml-comment-password`가 보고한다. 전에는 `p:password`만 찾아, 같은 값을 `<property name="dbPassword">`로 쓰면 항목이 되고 `p:dbPassword`로 쓰면 빠졌다(`docs/adr/0101-p-namespace-password-attributes.md`)
 - bean이 아닌 XML 요소에서 값이 `value`가 아닌 속성에 있으면, 그 요소의 `name`을 `/`에서 나눠 설정 키 앞에 붙인다. 한 파일의 Tomcat `<Resource name="jdbc/dev" password=…>`와 `<Resource name="jdbc/live" password=…>`가 이제 `jdbc.dev.password`, `jdbc.live.password`로 나뉜다. 전에는 둘 다 `password`였다. `name`에 키 밖의 글자가 있으면 지금처럼 `password`다. 키가 바뀐 자리는 다음 스캔에서 새 항목이 되어 판정을 이어받지 않는다(`docs/adr/0100-xml-element-name-goes-before-attribute-key.md`)
