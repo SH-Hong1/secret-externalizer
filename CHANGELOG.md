@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 리포트에서 한 파일의 같은 종류, 같은 판정인 고객정보가 적용 상태(이전에 적용됨, 이후 적용됨, 아직 적용 안 됨)로도 나뉘어 줄마다 보인다. 전에는 그 가운데 한 묶음만 적용되어도 줄 전체가 "이후 적용됨"이나 "적용됨 · 다시 발견"으로 보여 나머지 묶음의 판정과 보류 사유가 가려졌다(`docs/adr/0117-customer-data-lines-split-by-applied-state.md`)
 - YAML 목록 안의 값도 목록 위의 경로를 설정 키로 받고, 목록 항목에 `name`이나 `id`가 있으면 그 값이 목록 키 뒤에 붙는다. 한 파일의 `servers: - name: dev password: …`와 `- name: live password: …`가 이제 `servers.dev.password`, `servers.live.password`로 나뉜다. 전에는 둘 다 `password`여서 값이 같으면 한 항목이 되었다. `name`과 `id`가 없는 항목은 `servers.password`다. 키가 바뀐 자리는 다음 스캔에서 새 항목이 되어 판정을 이어받지 않는다(`docs/adr/0116-yaml-list-item-key-keeps-the-list-path-and-item-name.md`)
 - 780px보다 좁은 화면에서 대시보드 추이 차트가 오른쪽 끝, 곧 가장 새 막대부터 보인다. 차트와 표처럼 가로로 스크롤되는 틀은 Tab으로 초점을 받아 화살표 키로 스크롤할 수 있고, 화면 낭독기에 틀의 이름(예: "남은 항목 추이 차트", "판정 이력")을 알린다. 전에는 가장 오래된 막대부터 보였고 틀에 키보드로 갈 수 없었다(`docs/adr/0115-scroll-frames-open-on-newest-and-take-focus.md`)
 - 적용이 대기 중에 다시 점검한 조건(커밋되지 않은 변경 등)에 막혀 실패하면, 적용 결과 화면이 실패 사유 아래에 조건 목록과 커밋되지 않은 변경 파일(처음 50개)을 적용 화면처럼 보인다. 그 실행의 "처리하지 않음" 위치는 "조건을 통과하지 못해 이 위치는 바꾸지 않았습니다"로 설명한다. 전에는 실패 사유만 보여 다시 점검해야 어느 조건이 어느 파일에서 막혔는지 알 수 있었고, 변경 목록은 저장되지 않았다(`docs/adr/0114-refused-apply-keeps-its-blockers-and-dirty-files.md`)

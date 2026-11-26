@@ -265,10 +265,10 @@ const reportLines = reportFound + `, line AS (
 		UNION ALL
 		SELECT 0, f.category, f.kind, NULL, f.verdict, f.hold_reason, f.note, max(f.decided_at), f.file,
 			min(f.first_line), array_agg(DISTINCT m.file_path), count(DISTINCT f.id)::int, sum(m.locations)::int,
-			bool_or(f.before), bool_or(f.after), false
+			f.before AND NOT f.after, f.after, false
 		FROM found f JOIN member m ON m.bundle_id = f.id
 		WHERE f.category = 'customer-data'
-		GROUP BY f.category, f.file, f.kind, f.verdict, f.hold_reason, f.note
+		GROUP BY f.category, f.file, f.kind, f.verdict, f.hold_reason, f.note, f.before AND NOT f.after, f.after
 	), sectioned AS (
 		SELECT *, CASE
 				WHEN verdict = 'false-positive' THEN $5::int
@@ -280,7 +280,7 @@ const reportLines = reportFound + `, line AS (
 		SELECT *,
 			row_number() OVER (
 				PARTITION BY section
-				ORDER BY file COLLATE "C", first_line, bundle, kind, verdict, hold_reason, note
+				ORDER BY file COLLATE "C", first_line, bundle, kind, verdict, hold_reason, note, after, before
 			) AS n,
 			count(*) OVER (PARTITION BY section)::int AS total
 		FROM sectioned
@@ -292,8 +292,8 @@ const reportLines = reportFound + `, line AS (
 
 // readLines fills the three lists of what scan id found, as report.Data
 // describes them. A line is a secret bundle, or the customer data of one
-// first file, kind, verdict, hold reason and note, whose Files counts the
-// files of its members. Shell follows triage.ShellFile over the files of a
+// first file, kind, verdict, hold reason, note and report.Applied state,
+// whose Files counts the files of its members. Shell follows triage.ShellFile over the files of a
 // secret bundle's members.
 func readLines(ctx context.Context, tx pgx.Tx, projectID project.ID, id scan.ID, d *report.Data) error {
 	rows, err := tx.Query(ctx, reportLines,

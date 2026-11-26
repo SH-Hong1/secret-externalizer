@@ -370,6 +370,37 @@ func TestReport_CustomerDataGrouped(t *testing.T) {
 	}
 }
 
+func TestReport_CustomerDataSplitByApplied(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	found := phones("logs/app.log", 4)
+	first := saveAt(t, s, pid, minute(0), found...)
+	ids := bundlesOf(t, s, pid, found)
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictRedact}, ids...)
+
+	// A run before the second scan redacts the first phone number, which
+	// the second scan finds again; a run after it redacts the second.
+	before := runAt(t, s, pid, first, apply.StateSucceeded, minute(10), minute(11))
+	insertItems(t, s, before, itemOf(t, s, pid, found[0], "", apply.StatusApplied))
+	second := saveAt(t, s, pid, minute(20), found...)
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldLater}, ids...)
+	after := runAt(t, s, pid, second, apply.StateSucceeded, minute(30), minute(31))
+	insertItems(t, s, after, itemOf(t, s, pid, found[1], "", apply.StatusApplied))
+
+	d := readReport(t, s, second)
+	got := map[report.Applied]int{}
+	for _, l := range linesOf(d) {
+		got[l.Applied] += l.Bundles
+	}
+	want := map[report.Applied]int{report.AppliedBefore: 1, report.AppliedAfter: 1, "": 2}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Report(%d) bundles of one customer-data line by Applied (-want +got):\n%s", second, diff)
+	}
+	if n := len(linesOf(d)); n != 3 {
+		t.Errorf("Report(%d) has %d lines, want 3: one for each applied state", second, n)
+	}
+}
+
 func TestReport_AppliedAsOf(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()
