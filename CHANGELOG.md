@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 셸 스크립트의 ssh 키 파일 규칙(`shell-ssh-identity`)이 ssh의 인자를 옵션, 목적지, 옵션 차례로 읽어, 원격 명령이 시작된 뒤의 `-i`를 키 파일로 보고하지 않는다. 전에는 따옴표와 `user@` 없이 쓴 `ssh host sed -i s/a/b/ 파일`의 `s/a/b/`와 `ssh-keygen -i -f 파일`의 `-f`가 키 파일로 보고되었다. `ssh host -i 키`처럼 목적지 뒤의 ssh 옵션은 지금처럼 보고한다(`docs/adr/0106-ssh-identity-reads-ssh-arguments-in-order.md`)
 - `.properties` 파일에서 비밀번호 키의 값에 한글이 있으면(글자 그대로이거나 한글 영역의 `\uXXXX` 이스케이프) 비밀번호로 보고하지 않는다. 주석 처리한 줄도 같다. 전에는 메시지 묶음의 `label.password=비밀번호`, `changePassword=비밀번호 변경` 같은 줄이 비밀번호로 보고되었다(`docs/adr/0105-hangul-property-values-are-messages.md`)
 - Spring XML bean의 `url`, `URL`, `jdbcUrl`, `driverUrl`(`p:url`, `p:jdbcUrl` 포함) 값이 `jdbc:`로 시작하면 bean 이름과 상관없이 데이터 소스 URL로 보고하고, 그 bean의 `user`, `username`도 데이터 소스 계정으로 보고한다. 전에는 `orderPool`처럼 이름에 `pool`만 있고 알려진 데이터 소스 이름이 없는 bean의 URL과 계정이 빠졌다. 스레드 풀처럼 `jdbc:` URL이 없는 bean은 지금처럼 보고하지 않는다(`docs/adr/0104-jdbc-url-makes-a-bean-a-data-source.md`)
 - `application*.yml`에서 목록 항목의 첫 키로 쓴 블록 스칼라 비밀번호(`- password: >`, `- password: |`)를 한 줄일 때 보고한다. 새 규칙 `yaml-list-block-password`가 보고하고, placeholder는 보고하지 않는다. 또 블록 스칼라 비밀번호의 블록 안에 빈 줄이 있으면 두 줄 이상인 블록으로 보고 보고하지 않는다. 전에는 빈 줄 앞의 첫 줄만 값으로 보고해 적용이 값의 일부만 바꿀 수 있었다(`docs/adr/0103-yaml-list-block-scalar-passwords.md`)
