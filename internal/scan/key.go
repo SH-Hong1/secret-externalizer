@@ -240,7 +240,7 @@ func ownTag(text []byte, at int) int {
 // attribute value does not end a tag, and a tag inside a comment
 // (<!-- ... -->) that ends before at is not counted. It returns the offset of the
 // start tag's '<' and of its '>', or of the end of text when the tag is not
-// closed. A prefixed element such as <beans:bean> is not a bean here.
+// closed. A bean may carry a namespace prefix, as in <beans:bean>.
 func openBean(text []byte, at int) (start, tagEnd int, ok bool) {
 	depth := 0
 	commentEnd := bytes.LastIndex(text[:at], []byte("-->"))
@@ -262,9 +262,9 @@ func openBean(text []byte, at int) (start, tagEnd int, ok bool) {
 		}
 		pos = lt
 		switch {
-		case isTag(text, lt, "</bean"):
+		case lt+1 < len(text) && text[lt+1] == '/' && isBeanTag(text, lt+len("</")):
 			depth++
-		case isTag(text, lt, "<bean"):
+		case isBeanTag(text, lt+len("<")):
 			end := tagClose(text, lt)
 			if end < at && text[end-1] == '/' {
 				continue
@@ -298,11 +298,19 @@ func tagClose(text []byte, lt int) int {
 	return len(text)
 }
 
-// isTag reports whether text holds the tag opening name at byte i, followed
-// by a byte that ends an element name.
-func isTag(text []byte, i int, name string) bool {
-	after := i + len(name)
-	return bytes.HasPrefix(text[i:], []byte(name)) && after < len(text) && endsTagName(text[after])
+// isBeanTag reports whether the element name that starts at byte i of text
+// is bean, with or without a namespace prefix such as beans:, followed by a
+// byte that ends an element name.
+func isBeanTag(text []byte, i int) bool {
+	j := i
+	for j < len(text) && isKeyChar(text[j]) {
+		j++
+	}
+	if j < len(text) && text[j] == ':' && j > i {
+		i = j + 1
+	}
+	after := i + len("bean")
+	return bytes.HasPrefix(text[i:], []byte("bean")) && after < len(text) && endsTagName(text[after])
 }
 
 // xmlAttr finds the attribute name="value" in text[from:to] and returns the

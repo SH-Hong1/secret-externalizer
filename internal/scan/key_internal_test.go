@@ -56,7 +56,12 @@ func keyCases() []keyCase {
 		{"xml closed tag before on the line", "ctx.xml", "<a name=\"x\">1</a> pw=VALUE", "pw"},
 		{"xml nested open bean", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <property name=\"ds\">\n    <bean id=\"inner\" class=\"Y\">\n      <property name=\"password\" value=\"VALUE\"/>", "inner.password"},
 		{"xml nested open bean without id", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <property name=\"ds\">\n    <bean class=\"Y\">\n      <property name=\"password\" value=\"VALUE\"/>", "password"},
-		{"xml prefixed bean", "ctx.xml", "<beans:bean id=\"ds\" class=\"X\">\n  <beans:property name=\"password\" value=\"VALUE\"/>", "password"},
+		{"xml prefixed bean", "ctx.xml", "<beans:bean id=\"ds\" class=\"X\">\n  <beans:property name=\"password\" value=\"VALUE\"/>", "ds.password"},
+		{"xml prefixed bean closed", "ctx.xml", "<beans:bean id=\"a\" class=\"X\"></beans:bean>\n<beans:property name=\"password\" value=\"VALUE\"/>", "password"},
+		{"xml prefixed inner closed bean", "ctx.xml", "<beans:bean id=\"outer\" class=\"X\">\n  <beans:property name=\"a\"><beans:bean id=\"inner\"></beans:bean></beans:property>\n  <beans:property name=\"password\" value=\"VALUE\"/>", "outer.password"},
+		{"xml prefixed self-closed bean", "ctx.xml", "<beans:bean id=\"outer\" class=\"X\">\n  <beans:bean id=\"inner\" class=\"Y\"/>\n  <beans:property name=\"password\" value=\"VALUE\"/>", "outer.password"},
+		{"xml beans root is not a bean", "ctx.xml", "<beans:beans id=\"root\">\n  <beans:property name=\"password\" value=\"VALUE\"/>", "password"},
+		{"xml prefix only is not a bean", "ctx.xml", "<x:beanx id=\"root\">\n  <property name=\"password\" value=\"VALUE\"/>", "password"},
 		{"xml attribute", "build.xml", `<scp user="deploy" password="VALUE"/>`, "password"},
 		{"xml namespace", "ctx.xml", `<bean id="ds" p:password="VALUE"/>`, "ds.password"},
 		{"xml element text", "settings.xml", "<password>VALUE</password>", "password"},
@@ -139,6 +144,7 @@ func FuzzConfigKey(f *testing.F) {
 	}
 	f.Add("a.yml", []byte("a:\n b:"), -1)
 	f.Add("a.xml", []byte("<bean id="), 1000)
+	f.Add("a.xml", []byte("<bean id=\"a\">x=VALUE <"), 15)
 	f.Fuzz(func(t *testing.T, rel string, text []byte, at int) {
 		key, spans := configKey(rel, text, at)
 		if len(key) > maxKeyBytes {
