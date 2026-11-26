@@ -6,6 +6,7 @@
 
 ### 변경
 
+- Maven `settings.xml`의 `<proxy>` 안 `<username>`과 `<password>`를 기타 비밀 값(`other-secret`)의 계정과 비밀번호로 보고한다. 새 규칙 `maven-settings-proxy-username`, `maven-settings-proxy-password`가 보고하고, placeholder와 빈 값은 보고하지 않는다. 전에는 `<server>` 안만 찾아 프록시 계정과 비밀번호가 빠졌다(`docs/adr/0102-maven-proxy-credentials-are-other-secrets.md`)
 - Spring XML bean의 `p:` 속성 가운데 이름이 password나 passwd로 끝나는 것(`p:dbPassword`, `p:adminPasswd`)의 값을 비밀번호로 보고한다. 새 규칙 `spring-xml-p-password`가 보고하고, `p:password`는 지금처럼 `spring-xml-password`가 보고한다. 주석 안의 bean도 같은 이름을 `spring-xml-comment-password`가 보고한다. 전에는 `p:password`만 찾아, 같은 값을 `<property name="dbPassword">`로 쓰면 항목이 되고 `p:dbPassword`로 쓰면 빠졌다(`docs/adr/0101-p-namespace-password-attributes.md`)
 - bean이 아닌 XML 요소에서 값이 `value`가 아닌 속성에 있으면, 그 요소의 `name`을 `/`에서 나눠 설정 키 앞에 붙인다. 한 파일의 Tomcat `<Resource name="jdbc/dev" password=…>`와 `<Resource name="jdbc/live" password=…>`가 이제 `jdbc.dev.password`, `jdbc.live.password`로 나뉜다. 전에는 둘 다 `password`였다. `name`에 키 밖의 글자가 있으면 지금처럼 `password`다. 키가 바뀐 자리는 다음 스캔에서 새 항목이 되어 판정을 이어받지 않는다(`docs/adr/0100-xml-element-name-goes-before-attribute-key.md`)
 - `<beans:bean id="ds">`처럼 이름공간 접두사가 붙은 bean의 `id`도 설정 키 앞에 붙는다. 전에는 접두사가 붙은 bean을 bean으로 보지 않아 그 안의 값이 `ds.password`가 아니라 `password`를 받았다. 키가 바뀐 자리는 다음 스캔에서 새 항목이 되어 판정을 이어받지 않는다(`docs/adr/0099-prefixed-bean-is-a-bean.md`)

@@ -24,6 +24,8 @@
   {"file": "logs/members.log", "line": 1, "category": "customer-data", "kind": "rrn", "value": "000000-5000000"},
   {"file": "maven/settings.xml", "line": 6, "category": "storage-credential", "kind": "account", "value": "dev-only-nexus-user"},
   {"file": "maven/settings.xml", "line": 7, "category": "storage-credential", "kind": "password", "value": "dev-only-fake-releases-password"},
+  {"file": "maven/settings.xml", "line": 22, "category": "other-secret", "kind": "account", "value": "dev-only-proxy-user"},
+  {"file": "maven/settings.xml", "line": 23, "category": "other-secret", "kind": "password", "value": "dev-only-fake-proxy-password"},
   {"file": "scripts/remote.sh", "line": 2, "category": "ssh-credential", "kind": "password", "value": "dev-only-fake-sshpass-env"},
   {"file": "scripts/remote.sh", "line": 3, "category": "ssh-credential", "kind": "account", "value": "deploy"},
   {"file": "scripts/remote.sh", "line": 3, "category": "ssh-credential", "kind": "host", "value": "was5.example.invalid"},
