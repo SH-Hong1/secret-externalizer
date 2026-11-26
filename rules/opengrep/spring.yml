@@ -9,9 +9,11 @@ rules:
   # Connection settings of a connection pool or data source bean: a bean
   # whose id or class contains datasource, jdbc, hikari, c3p0, dbcp, druid,
   # bonecp, or proxool (BasicDataSource, HikariConfig, ComboPooledDataSource,
-  # ...). The URL and the user name are credentials only there; a mail
-  # sender's username or a thread pool's url is not reported. A value is a <property name="..." value="..."/> or a
-  # p: namespace attribute on the bean.
+  # ...), or any bean whose url, jdbcUrl, or driverUrl is a jdbc: URL (a
+  # company's own OrderPool). The URL and the user name are credentials only
+  # there; a mail sender's username or a thread pool's url is not reported.
+  # A value is a <property name="..." value="..."/> or a p: namespace
+  # attribute on the bean.
   - id: spring-xml-datasource-url
     message: A data source URL is written in a Spring XML context.
     severity: WARNING
@@ -23,19 +25,34 @@ rules:
       - pattern-either:
           - patterns:
               - pattern-either:
-                  - pattern-inside: <bean id="$BEAN" ...>...</bean>
-                  - pattern-inside: <bean class="$BEAN" ...>...</bean>
-              - pattern: <property name="$NAME" value="$VALUE"/>
+                  - patterns:
+                      - pattern-either:
+                          - pattern-inside: <bean id="$BEAN" ...>...</bean>
+                          - pattern-inside: <bean class="$BEAN" ...>...</bean>
+                      - pattern: <property name="$NAME" value="$VALUE"/>
+                      - metavariable-regex:
+                          metavariable: $NAME
+                          regex: ^(url|URL|jdbcUrl|driverUrl)$
+                  - pattern: <bean id="$BEAN" p:url="$VALUE"/>
+                  - pattern: <bean class="$BEAN" p:url="$VALUE"/>
+                  - pattern: <bean id="$BEAN" p:jdbcUrl="$VALUE"/>
+                  - pattern: <bean class="$BEAN" p:jdbcUrl="$VALUE"/>
               - metavariable-regex:
-                  metavariable: $NAME
-                  regex: ^(url|URL|jdbcUrl|driverUrl)$
-          - pattern: <bean id="$BEAN" p:url="$VALUE"/>
-          - pattern: <bean class="$BEAN" p:url="$VALUE"/>
-          - pattern: <bean id="$BEAN" p:jdbcUrl="$VALUE"/>
-          - pattern: <bean class="$BEAN" p:jdbcUrl="$VALUE"/>
-      - metavariable-regex:
-          metavariable: $BEAN
-          regex: (?i).*(datasource|jdbc|hikari|c3p0|dbcp|druid|bonecp|proxool).*
+                  metavariable: $BEAN
+                  regex: (?i).*(datasource|jdbc|hikari|c3p0|dbcp|druid|bonecp|proxool).*
+          - patterns:
+              - pattern-either:
+                  - patterns:
+                      - pattern-inside: <bean ...>...</bean>
+                      - pattern: <property name="$NAME" value="$VALUE"/>
+                      - metavariable-regex:
+                          metavariable: $NAME
+                          regex: ^(url|URL|jdbcUrl|driverUrl)$
+                  - pattern: <bean p:url="$VALUE"/>
+                  - pattern: <bean p:jdbcUrl="$VALUE"/>
+              - metavariable-regex:
+                  metavariable: $VALUE
+                  regex: "^jdbc:"
       - metavariable-regex:
           metavariable: $VALUE
           regex: ^(?![$#]\{)\S
@@ -52,19 +69,39 @@ rules:
       - pattern-either:
           - patterns:
               - pattern-either:
-                  - pattern-inside: <bean id="$BEAN" ...>...</bean>
-                  - pattern-inside: <bean class="$BEAN" ...>...</bean>
-              - pattern: <property name="$NAME" value="$VALUE"/>
+                  - patterns:
+                      - pattern-either:
+                          - pattern-inside: <bean id="$BEAN" ...>...</bean>
+                          - pattern-inside: <bean class="$BEAN" ...>...</bean>
+                      - pattern: <property name="$NAME" value="$VALUE"/>
+                      - metavariable-regex:
+                          metavariable: $NAME
+                          regex: ^(username|user)$
+                  - pattern: <bean id="$BEAN" p:username="$VALUE"/>
+                  - pattern: <bean class="$BEAN" p:username="$VALUE"/>
+                  - pattern: <bean id="$BEAN" p:user="$VALUE"/>
+                  - pattern: <bean class="$BEAN" p:user="$VALUE"/>
               - metavariable-regex:
-                  metavariable: $NAME
-                  regex: ^(username|user)$
-          - pattern: <bean id="$BEAN" p:username="$VALUE"/>
-          - pattern: <bean class="$BEAN" p:username="$VALUE"/>
-          - pattern: <bean id="$BEAN" p:user="$VALUE"/>
-          - pattern: <bean class="$BEAN" p:user="$VALUE"/>
-      - metavariable-regex:
-          metavariable: $BEAN
-          regex: (?i).*(datasource|jdbc|hikari|c3p0|dbcp|druid|bonecp|proxool).*
+                  metavariable: $BEAN
+                  regex: (?i).*(datasource|jdbc|hikari|c3p0|dbcp|druid|bonecp|proxool).*
+          - patterns:
+              - pattern-either:
+                  - patterns:
+                      - pattern-inside: <bean ...>...<property name="$URLNAME" value="$JDBC"/>...</bean>
+                      - metavariable-regex:
+                          metavariable: $URLNAME
+                          regex: ^(url|URL|jdbcUrl|driverUrl)$
+                      - pattern: <property name="$NAME" value="$VALUE"/>
+                      - metavariable-regex:
+                          metavariable: $NAME
+                          regex: ^(username|user)$
+                  - pattern: <bean p:url="$JDBC" p:username="$VALUE"/>
+                  - pattern: <bean p:url="$JDBC" p:user="$VALUE"/>
+                  - pattern: <bean p:jdbcUrl="$JDBC" p:username="$VALUE"/>
+                  - pattern: <bean p:jdbcUrl="$JDBC" p:user="$VALUE"/>
+              - metavariable-regex:
+                  metavariable: $JDBC
+                  regex: "^jdbc:"
       - metavariable-regex:
           metavariable: $VALUE
           regex: ^(?![$#]\{)\S
