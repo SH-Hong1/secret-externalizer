@@ -952,8 +952,8 @@ func TestApply_SingleQuotedShellValue(t *testing.T) {
 			t.Errorf("Apply() changed %s to %q, want %q", file, got, tt[1])
 		}
 	}
-	if string(f.vault.value("ext.quoted.password")) != value {
-		t.Errorf("Apply() did not store the value of the scripts under ext.quoted.password")
+	if got := f.vault.value("ext.quoted.password"); string(got) != value {
+		t.Errorf("after Apply(), vault path ext.quoted.password holds %d bytes, want the %d bytes of the value in the scripts", len(got), len(value))
 	}
 }
 
