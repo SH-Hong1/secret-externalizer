@@ -176,11 +176,11 @@ type Converter interface {
 
 // Limits bounds the calls one request makes: Store the database and the
 // secret store, PDF one conversion together with its wait for a free
-// conversion. Conversions is how many conversions run at one time; a value
-// below one means one.
+// conversion, and Write the sending of a finished PDF. Conversions is how
+// many conversions run at one time; a value below one means one.
 type Limits struct {
-	Store, PDF  time.Duration
-	Conversions int
+	Store, PDF, Write time.Duration
+	Conversions       int
 }
 
 // printer is what the PDF export needs: the converter, the files every

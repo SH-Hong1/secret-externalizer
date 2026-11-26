@@ -374,7 +374,7 @@ entries:
 
 - web이 화면과 같은 템플릿에 인쇄용 스타일을 더해 글꼴(woff2), 스타일시트를 포함한 HTML을 완성하고, pdf 서비스로 보내 PDF를 돌려받는다. 변환기는 web에 접속하지 않고 외부 자원을 받지 않는다(ADR 0006, 0043).
 - 변환기는 JavaScript를 끄고, 요청 폴더 바로 아래의 `file://`만 열며, 모든 사설·공인 IP를 거부하고, 메모리 1GB, 요청 15초, 본문 32MB로 제한한다(ADR 0043).
-- web은 변환을 한 번에 하나만 보낸다. 자리가 없으면 변환 제한 20초 안에서 기다리고, 끝내 자리가 나지 않으면 503 "다른 PDF를 만드는 중입니다"를 보인다. 시간 순서는 Gotenberg 15초 < 변환 20초 < 클라이언트 25초 < web `WriteTimeout` 30초다(ADR 0043, 0050).
+- web은 변환을 한 번에 하나만 보낸다. 자리가 없으면 변환 제한 20초 안에서 기다리고, 끝내 자리가 나지 않으면 503 "다른 PDF를 만드는 중입니다"를 보인다. 시간 순서는 Gotenberg 15초 < 변환 20초 < 클라이언트 25초다. PDF 내보내기는 handler가 시작한 때부터 DB 5초, 변환 20초, 보내기 10초를 더한 35초로 쓰기 기한을 옮기므로, 세션 읽기와 DB와 변환이 모두 제한까지 걸려도 web `WriteTimeout` 30초에 끊기지 않는다(ADR 0043, 0050, 0125).
 - 인쇄용 문서에는 다른 화면으로 가는 링크를 넣지 않는다. 실제 변환기가 만든 PDF에 링크 주석이 없는지 테스트가 본다(ADR 0050).
 
 #### 대시보드
@@ -421,7 +421,7 @@ entries:
 
 | 서비스 | 호스트 포트 | 비고 |
 |---|---|---|
-| web | 8080 | `ReadHeaderTimeout` 5초, `ReadTimeout` 15초, `WriteTimeout` 30초, `IdleTimeout` 120초 |
+| web | 8080 | `ReadHeaderTimeout` 5초, `ReadTimeout` 15초, `WriteTimeout` 30초(PDF 내보내기는 handler가 35초로 옮긴다), `IdleTimeout` 120초 |
 | keycloak | 8081 | 브라우저와 토큰의 발급자는 `localhost:8081`, web은 `keycloak:8080`에서 discovery를 읽는다 |
 | postgres | 15432 | 통합 테스트용 |
 | worker | 없음 | `WORKER_JOBS=scan`, `/workspace` 읽기 전용, tmpfs `/tmp` |

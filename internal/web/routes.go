@@ -12,7 +12,8 @@ import (
 // signed-in user read the session, so /healthz answers and logout works even
 // when the session store is down. The routes that call the stores or the
 // originals get a deadline of limits.Store. The PDF export sets its own
-// deadlines, one for reading the store and one for the conversion. The
+// deadlines, one for reading the store and one for the conversion, and
+// moves its write deadline to cover both and the sending. The
 // static files need no session.
 func addRoutes(mux *http.ServeMux, logger *slog.Logger, rd *renderer, a *assets, authn Authenticator, sessions SessionStore,
 	attempts AttemptStore, stores Stores, suggester Suggester, originals Originals, p printer, limits Limits,
