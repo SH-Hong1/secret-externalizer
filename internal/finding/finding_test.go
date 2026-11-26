@@ -37,6 +37,7 @@ func TestPreview_Table(t *testing.T) {
 		{"phone seoul", finding.CategoryCustomerData, finding.KindPhone, "02-000-0000", "02-***-****"},
 		{"phone country code", finding.CategoryCustomerData, finding.KindPhone, "+82-10-0000-0000", "+82-**-****-****"},
 		{"phone without separators", finding.CategoryCustomerData, finding.KindPhone, "01000000000", "010********"},
+		{"seoul phone without separators", finding.CategoryCustomerData, finding.KindPhone, "0200000000", "020*******"},
 		{"phone with newline", finding.CategoryCustomerData, finding.KindPhone, "010-0000\n0000", "010-*********"},
 		{"rrn", finding.CategoryCustomerData, finding.KindRRN, "000000-0000000", "******-*******"},
 		{"rrn ignores input", finding.CategoryCustomerData, finding.KindRRN, "anything", "******-*******"},
