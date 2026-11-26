@@ -14,12 +14,13 @@ useDefault = true
 # narrow; the address pattern in particular misses many addresses and
 # reports some text that is not one.
 
-# A phone number is written with hyphens, or, for a mobile number only,
-# as ten or eleven digits in a row that are not part of a longer number.
+# A phone number is written with hyphens, or as its digits in a row that are
+# not part of a longer number: ten or eleven for a mobile number or a
+# regional landline, and nine or ten for a Seoul landline (02).
 [[rules]]
 id = "customer-phone"
 description = "Korean mobile or landline phone number"
-regex = '''\b(0(?:1[016789]|2|[3-6][1-5])-[0-9]{3,4}-[0-9]{4}|01[016789][0-9]{7,8})\b'''
+regex = '''\b(0(?:1[016789]|2|[3-6][1-5])-[0-9]{3,4}-[0-9]{4}|0(?:1[016789]|2|[3-6][1-5])[0-9]{7,8})\b'''
 secretGroup = 1
 path = '''(?i)(?:\.(?:(?:log|out)(?:[.\-_][0-9][^/]*|\.old|\.bak)?|csv|tsv|txt|sql|dat|json)$|(?:^|/)(?:logs?|samples?|data|dump)/)'''
 tags = ["category:customer-data", "kind:phone"]
