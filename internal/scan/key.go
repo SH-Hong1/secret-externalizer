@@ -184,10 +184,7 @@ func yamlPieces(text []byte, ls, at int) []finding.Span {
 // attribute takes that attribute's name, because there the name attribute
 // names the element, not the value.
 func xmlPieces(text []byte, ls, at int) []finding.Span {
-	lt := -1
-	if i := bytes.LastIndexByte(text[ls:at], '<'); i >= 0 {
-		lt = ls + i
-	}
+	lt := ownTag(text, at)
 	leaf, ok := finding.Span{}, false
 	if s, sym, found := leafPiece(text, ls, at); found && sym == '=' {
 		leaf, ok = s, true
@@ -221,20 +218,47 @@ func xmlPieces(text []byte, ls, at int) []finding.Span {
 	return []finding.Span{leaf}
 }
 
+// ownTag returns the offset of the '<' of the tag that holds byte at, or
+// that ends right before at so that the value is its element's text. The
+// tag may start on an earlier line. It returns -1 when there is no such tag.
+func ownTag(text []byte, at int) int {
+	lt := bytes.LastIndexByte(text[:at], '<')
+	if lt < 0 {
+		return -1
+	}
+	if end := tagClose(text, lt); end < at && end != at-1 {
+		return -1
+	}
+	return lt
+}
+
 // openBean finds the nearest bean element that is still open at byte at:
 // the start tag that holds at, or else the last start tag before at whose
 // element has not been closed by then. It walks the tags backwards,
 // counting each </bean> against the next start tag, and passes over a
 // self-closed <bean .../> that ends before at. A '>' inside a quoted
-// attribute value does not end a tag. It returns the offset of the
+// attribute value does not end a tag, and a tag inside a comment
+// (<!-- ... -->) that ends before at is not counted. It returns the offset of the
 // start tag's '<' and of its '>', or of the end of text when the tag is not
 // closed. A prefixed element such as <beans:bean> is not a bean here.
 func openBean(text []byte, at int) (start, tagEnd int, ok bool) {
 	depth := 0
+	commentEnd := bytes.LastIndex(text[:at], []byte("-->"))
 	for pos := at; pos > 0; {
 		lt := bytes.LastIndexByte(text[:pos], '<')
 		if lt < 0 {
 			break
+		}
+		if commentEnd > lt {
+			// The tags between lt and the comment's end are inside the
+			// comment: go on from the comment's start.
+			c := bytes.LastIndex(text[:commentEnd], []byte("<!--"))
+			commentEnd = -1
+			if c >= 0 {
+				pos = c
+				commentEnd = bytes.LastIndex(text[:c], []byte("-->"))
+			}
+			continue
 		}
 		pos = lt
 		switch {
