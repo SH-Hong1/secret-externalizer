@@ -17,7 +17,8 @@ import (
 
 // runTime is the time of the apply run r: its start, or its finish when it
 // has no start time, which happens when a worker gave the run back and it
-// closed without starting again. It is NULL for a run that has neither.
+// closed without starting again. It is NULL for a run that has neither: a
+// run that a worker gave back and that waits to start again.
 const runTime = `coalesce(r.started_at, r.finished_at)`
 
 // runBefore is true when the apply run r counts as before the scan sc: its
@@ -26,9 +27,11 @@ const runTime = `coalesce(r.started_at, r.finished_at)`
 // transaction that closes it, so the two times are equal.
 const runBefore = `(coalesce(` + runTime + ` < sc.requested_at, false) OR r.id IS NOT DISTINCT FROM sc.apply_id)`
 
-// runAfter is true when the apply run r has a time and does not count as
-// before the scan sc.
-const runAfter = `(` + runTime + ` IS NOT NULL AND NOT ` + runBefore + `)`
+// runAfter is true when the apply run r does not count as before the scan
+// sc. A run without a time is after every scan: it is waiting to start
+// again, and a scan cannot be requested while an apply waits or runs, so
+// every scan was requested before it.
+const runAfter = `(NOT ` + runBefore + `)`
 
 // reportItems is the FROM and WHERE of the applied apply items of project
 // $1 in runs before scan $2, as i, with their run r.
