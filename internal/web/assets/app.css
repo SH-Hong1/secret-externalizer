@@ -1635,6 +1635,25 @@
   .print .report-table td:has(> .report-name) {
     min-width: 160px;
   }
+  /* A name and a person are one word each: the box asks its column for the
+     whole word, up to a width that leaves room for the path, and only a
+     longer word breaks inside it. Without this a name breaks mid-word and a
+     login breaks at its hyphen. The history has five columns, so its name
+     gets less room than the name of an externalized entry. */
+  .print .report-table .report-name,
+  .print .report-table .report-user {
+    display: block;
+    width: max-content;
+  }
+  .print .report-table .report-name {
+    max-width: 36ch;
+  }
+  .print .report-table .report-note > .report-name {
+    max-width: 28ch;
+  }
+  .print .report-table .report-user {
+    max-width: 8em;
+  }
   .print .report-table tr,
   .print .tile,
   .print .facts > div,

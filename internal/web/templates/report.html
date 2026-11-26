@@ -154,10 +154,10 @@ the view of the PDF document does not. */}}
 <tbody>
 {{range .}}<tr>
 <td class="mono report-time">{{.At}}</td>
-<td class="report-user">{{.User}}</td>
+<td><span class="report-user">{{.User}}</span></td>
 <td>{{if .RunHref}}<a class="badge badge-{{.ActionClass}}" href="{{.RunHref}}">{{.ActionLabel}}</a>{{else}}<span class="badge badge-{{.ActionClass}}">{{.ActionLabel}}</span>{{end}}</td>
 <td class="report-path">{{visible .Target}}</td>
-<td class="report-note">{{with .Name}}<span class="mono">{{.}}</span> {{end}}{{with .Reason}}<span class="report-sub">{{.}}</span>{{end}}{{with .Note}}<span class="report-sub">{{.}}</span>{{end}}</td>
+<td class="report-note">{{with .Name}}<span class="mono report-name">{{.}}</span>{{end}}{{with .Reason}}<span class="report-sub">{{.}}</span>{{end}}{{with .Note}}<span class="report-sub">{{.}}</span>{{end}}</td>
 </tr>
 {{end}}</tbody>
 </table>
