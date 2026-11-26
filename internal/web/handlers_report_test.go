@@ -73,7 +73,7 @@ func fullReport() report.Data {
 		Redacted:      report.Count{Bundles: 2, Locations: 5},
 	}
 	d.PreviousTotals = d.Totals
-	d.PreviousTotals.Found = report.Count{Bundles: 82, Locations: 101}
+	d.PreviousTotals.Found = report.Count{Bundles: 82, Locations: 121}
 	d.Externalized = report.List[report.Entry]{Total: 2, Rows: []report.Entry{
 		{
 			Bundle: 12, Name: "EXT_SSH_DEPLOY_KEY", Category: finding.CategorySSH, Kind: finding.KindKeyFile,
@@ -154,7 +154,8 @@ func TestHandleReport_OK(t *testing.T) {
 		"다시 발견",
 		"복구 불가",
 		"12개 · 위치 31곳",
-		"-70",
+		`이전 스캔보다 <span class="delta">-70개 · 위치 -90곳</span>`,
+		`이전 스캔보다 <span class="delta">0개 · 위치 0곳</span>`,
 		"보류 · 확인 필요",
 		"적용됨 · 다시 발견",
 		"dev-only-fake-note",
@@ -239,7 +240,7 @@ func TestHandleReport_NoPrevious(t *testing.T) {
 	e.reports.put(d)
 	res := e.getReport(t)
 	wantIn(t, "GET /scans/7/report without a previous scan", res.body, "이전 스캔 없음")
-	wantNotIn(t, "GET /scans/7/report without a previous scan", res.body, "-70", `class="delta"`)
+	wantNotIn(t, "GET /scans/7/report without a previous scan", res.body, "-70", "-90", `class="delta"`)
 }
 
 func TestHandleReport_Empty(t *testing.T) {

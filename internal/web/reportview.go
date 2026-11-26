@@ -48,7 +48,7 @@ type reportView struct {
 }
 
 // summaryTile is one number of the summary: its label, the bundles and
-// locations it counts, and the change in bundles since the previous scan.
+// locations it counts, and the change in both since the previous scan.
 type summaryTile struct {
 	Label string
 	Class string
@@ -227,7 +227,7 @@ func summaryTiles(t, delta report.Totals, previous bool) []summaryTile {
 	tile := func(label, class string, c, d report.Count) summaryTile {
 		s := summaryTile{Label: label, Class: class, Count: countText(c)}
 		if previous {
-			s.Delta = signed(d.Bundles)
+			s.Delta = signed(d.Bundles) + "개 · 위치 " + signed(d.Locations) + "곳"
 		}
 		return s
 	}
