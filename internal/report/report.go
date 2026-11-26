@@ -49,7 +49,7 @@ const (
 
 // Line is one line of what a scan found: a secret bundle (Bundles is 1),
 // or the customer data of one kind in one file with one verdict, hold
-// reason and note (Bundle is zero).
+// reason, note and Applied (Bundle is zero).
 type Line struct {
 	Bundle    triage.BundleID
 	Category  finding.Category
