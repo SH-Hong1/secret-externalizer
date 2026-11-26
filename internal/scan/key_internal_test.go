@@ -35,8 +35,25 @@ func keyCases() []keyCase {
 		{"yaml blank and comment", "a.yml", "db:\n\n  # note\n  live:\n    password: VALUE\n", "db.live.password"},
 		{"yaml sibling skipped", "a.yml", "db:\n  dev:\n    password: x\n  live:\n    password: VALUE\n", "db.live.password"},
 		{"yaml tab", "a.yml", "db:\n\tpassword: VALUE\n", "db.password"},
-		{"yaml list item", "a.yml", "servers:\n  - name: a\n    password: VALUE\n", "password"},
-		{"yaml inline list item", "a.yml", "servers:\n  - password: VALUE\n", "password"},
+		{"yaml list item", "a.yml", "servers:\n  - name: a\n    password: VALUE\n", "servers.a.password"},
+		{"yaml inline list item", "a.yml", "servers:\n  - password: VALUE\n", "servers.password"},
+		{"yaml list item without a name", "a.yml", "servers:\n  - host: h\n    password: VALUE\n", "servers.password"},
+		{"yaml list second item", "a.yml", "servers:\n  - name: dev\n    password: x\n  - name: live\n    password: VALUE\n", "servers.live.password"},
+		{"yaml list name after the value", "a.yml", "servers:\n  - password: VALUE\n    name: live\n", "servers.live.password"},
+		{"yaml list id", "a.yml", "servers:\n  - id: live\n    password: VALUE\n", "servers.live.password"},
+		{"yaml list quoted name", "a.yml", "servers:\n  - name: \"live\"\n    password: VALUE\n", "servers.live.password"},
+		{"yaml list name with a comment", "a.yml", "servers:\n  - name: live # main\n    password: VALUE\n", "servers.live.password"},
+		{"yaml list name with a space", "a.yml", "servers:\n  - name: live db\n    password: VALUE\n", "servers.password"},
+		{"yaml list name of the next item", "a.yml", "servers:\n  - password: VALUE\n  - name: live\n", "servers.password"},
+		{"yaml list name deeper in the item", "a.yml", "servers:\n  - db:\n      name: inner\n      password: VALUE\n", "servers.db.password"},
+		{"yaml list name is the value", "a.yml", "servers:\n  - name: VALUE\n", "servers.name"},
+		{"yaml list at the parent indent", "a.yml", "spring:\n  servers:\n  - name: dev\n    password: x\n  - name: live\n    password: VALUE\n", "spring.servers.live.password"},
+		{"yaml list item key as parent", "a.yml", "servers:\n  - name: live\n    db:\n      password: VALUE\n", "servers.live.db.password"},
+		{"yaml list dash key as parent", "a.yml", "servers:\n  - db:\n      password: VALUE\n", "servers.db.password"},
+		{"yaml list bare dash", "a.yml", "servers:\n  -\n    name: live\n    password: VALUE\n", "servers.live.password"},
+		{"yaml list in a list", "a.yml", "a:\n  - name: x\n    b:\n      - name: y\n        password: VALUE\n", "a.x.b.y.password"},
+		{"yaml kubernetes env", "a.yml", "env:\n  - name: DB_PASSWORD\n    value: VALUE\n", "env.DB_PASSWORD.value"},
+		{"yaml top-level list", "a.yml", "- name: live\n  password: VALUE\n", "live.password"},
 		{"yaml quoted", "a.yml", "db:\n  password: \"VALUE\"\n", "db.password"},
 		{"xml property", "ctx.xml", "<bean id=\"liveDataSource\" class=\"X\">\n  <property name=\"password\" value=\"VALUE\"/>\n</bean>", "liveDataSource.password"},
 		{"xml closed bean", "ctx.xml", "<bean id=\"a\" class=\"X\"></bean>\n<property name=\"password\" value=\"VALUE\"/>", "password"},
@@ -126,7 +143,7 @@ func TestURLStart(t *testing.T) {
 }
 
 func TestConfigKey_Spans(t *testing.T) {
-	for _, name := range []string{"properties", "yaml nested", "xml property", "xml name beside a plain attribute"} {
+	for _, name := range []string{"properties", "yaml nested", "yaml list name after the value", "xml property", "xml name beside a plain attribute"} {
 		t.Run(name, func(t *testing.T) {
 			for _, tc := range keyCases() {
 				if tc.name != name {
