@@ -583,6 +583,10 @@ func TestIntegration_ScanApplyRescan(t *testing.T) {
 		t.Errorf("ApplyRun(%d) after the confirming scan = state %q, blockers %v; want blocked with only %q",
 			again, rechecked.State, rechecked.Blockers, apply.BlockerNothingToApply)
 	}
+
+	// The dashboard page over each period, last because it moves the ends
+	// of both scans back.
+	checkDashboardPeriods(t, store, admin, schema, projectID, scanID, done.RescanID, rep.Totals.Externalized.Bundles)
 }
 
 // bundlesByPlace returns the bundle of every finding of the project.
