@@ -84,7 +84,7 @@ func (r *Runner) detect(ctx context.Context, dir, copies string, excludes []stri
 			kept, inSkipped := files.keep(raws, i == 1)
 			d.raws = append(d.raws, kept...)
 			d.inSkipped += inSkipped
-			d.dropped.add(counts)
+			d.dropped.add(files.keepDrops(counts, i == 1))
 			d.errors[s.Name()] += counts.Errors
 		}
 	}
@@ -99,6 +99,30 @@ func scanFolder(ctx context.Context, s Scanner, dir string, excludes []string) (
 	}
 	raws, err := s.Scan(ctx, dir, excludes)
 	return raws, Counts{}, err
+}
+
+// keepDrops returns c without the dropped results whose results keep would
+// leave out because they repeat a result from the other folder: a result
+// the project folder's run dropped in an EUC-KR file. That run's results
+// for the file are at EUC-KR offsets and are never used, so such a drop
+// says nothing about where the file's values are, and it is neither
+// counted nor allowed to hide the file's surrounding lines. fromCopy tells
+// whether c comes from the folder of copies. A scanner drops only results
+// it found in lines, never a whole-file result.
+func (fl fileList) keepDrops(c Counts, fromCopy bool) Counts {
+	if fromCopy {
+		return c
+	}
+	kept := c
+	kept.DroppedFiles = nil
+	for _, rel := range c.DroppedFiles {
+		if f, listed := fl.files[rel]; listed && f.text && f.encoding == textfile.EUCKR {
+			kept.Dropped--
+			continue
+		}
+		kept.DroppedFiles = append(kept.DroppedFiles, rel)
+	}
+	return kept
 }
 
 // keep returns the results that the scan uses, and the number of results it
