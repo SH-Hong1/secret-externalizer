@@ -1,6 +1,7 @@
 package web
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -186,13 +187,15 @@ func handleApplyRun(logger *slog.Logger, rd *renderer, projects ProjectStore, sc
 			page.setOutcomes(items)
 		}
 		if run.RescanID != 0 {
-			c, err := readConfirmation(r, scans, applies, run.RescanID, run.ID, p.ID)
+			sc, err := scans.Scan(ctx, run.RescanID)
+			if err != nil {
+				rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("reading confirmation scan: %w", err))
+				return
+			}
+			c, err := readConfirmation(ctx, applies, sc, run.ID, p.ID)
 			if err != nil {
 				rd.fail(w, r, logger, http.StatusInternalServerError, err)
 				return
-			}
-			if page.Unsure > 0 && (c.Kind == "gone" || c.Kind == "partial") {
-				c.Kind = "unsure"
 			}
 			page.Rescan = c
 		}
@@ -227,25 +230,32 @@ func scanAfter(r *http.Request, scans ScanStore, pid project.ID, run apply.Run) 
 	return 0, nil
 }
 
-// readConfirmation reads scan id, which confirms run, and what it found
-// again.
-func readConfirmation(r *http.Request, scans ScanStore, applies ApplyStore, id scan.ID, run apply.ID, pid project.ID) (*confirmationView, error) {
-	sc, err := scans.Scan(r.Context(), id)
+// readConfirmation reads what scan sc, which confirms run of project pid,
+// found again and, when it found nothing, how many files run stopped
+// while changing. The page of the run and the page of the scan both use
+// it, so they say the same about one scan.
+func readConfirmation(ctx context.Context, applies ApplyStore, sc scan.Scan, run apply.ID, pid project.ID) (*confirmationView, error) {
+	if sc.Status != scan.StatusSucceeded {
+		return newConfirmation(sc, run, pid, 0, 0), nil
+	}
+	n, err := applies.Reappeared(ctx, sc.ID)
 	if err != nil {
-		return nil, fmt.Errorf("reading confirmation scan: %w", err)
+		return nil, fmt.Errorf("counting reappeared values: %w", err)
 	}
-	n := 0
-	if sc.Status == scan.StatusSucceeded {
-		if n, err = applies.Reappeared(r.Context(), id); err != nil {
-			return nil, fmt.Errorf("counting reappeared values: %w", err)
-		}
+	if n > 0 {
+		return newConfirmation(sc, run, pid, n, 0), nil
 	}
-	return newConfirmation(sc, run, pid, n), nil
+	items, err := applies.ApplyItems(ctx, run)
+	if err != nil {
+		return nil, fmt.Errorf("reading apply items: %w", err)
+	}
+	return newConfirmation(sc, run, pid, 0, stoppedFiles(items)), nil
 }
 
-// newConfirmation describes scan sc, which confirms run of project pid and
-// found n findings of applied bundles again.
-func newConfirmation(sc scan.Scan, run apply.ID, pid project.ID, n int) *confirmationView {
+// newConfirmation describes scan sc, which confirms run of project pid,
+// found n findings of applied bundles again, and was taken after run
+// stopped while changing stopped files whose places are not applied.
+func newConfirmation(sc scan.Scan, run apply.ID, pid project.ID, n, stopped int) *confirmationView {
 	c := &confirmationView{
 		ScanID: sc.ID, ScanHref: scanPath(sc.ID), RunID: run, RunHref: runPath(run), Reappeared: n,
 		UncheckedHref: scanPath(sc.ID) + "#unchecked",
@@ -261,6 +271,8 @@ func newConfirmation(sc scan.Scan, run apply.ID, pid project.ID, n int) *confirm
 		c.Kind = "failed"
 	case n > 0:
 		c.Kind = "again"
+	case stopped > 0:
+		c.Kind = "unsure"
 	case leftUnchecked(sc):
 		c.Kind = "partial"
 	default:
@@ -311,7 +323,7 @@ func newApplyRunPage(p project.Project, run apply.Run) applyRunPage {
 // items: the applied places by bundle, the skipped and failed ones by
 // reason, the ones left writing, and the ones never reached.
 func (p *applyRunPage) setOutcomes(items []apply.Item) {
-	changed, unsure := map[string]bool{}, map[string]bool{}
+	changed := map[string]bool{}
 	bundles := map[triage.BundleID]*runBundle{}
 	var order []triage.BundleID
 	skips := map[apply.Reason]*skipGroup{}
@@ -357,18 +369,13 @@ func (p *applyRunPage) setOutcomes(items []apply.Item) {
 			p.Interrupted = p.Interrupted || it.Reason == apply.ReasonInterrupted
 			group(failures, &failOrder, it)
 		case apply.StatusWriting:
-			unsure[it.File] = true
 			p.Writing = append(p.Writing, lineOf(it))
 		case apply.StatusPlanned:
 			p.Untouched = append(p.Untouched, lineOf(it))
 		}
 	}
 	p.Changed = len(changed)
-	for f := range unsure {
-		if !changed[f] {
-			p.Unsure++
-		}
-	}
+	p.Unsure = stoppedFiles(items)
 	for _, id := range order {
 		p.Bundles = append(p.Bundles, *bundles[id])
 	}
@@ -442,4 +449,26 @@ func newApplyRows(runs []apply.Run) ([]applyRow, *activeApply) {
 		rows = append(rows, row)
 	}
 	return rows, active
+}
+
+// stoppedFiles counts the files a run stopped while changing: those with a
+// place left writing and no place applied.
+func stoppedFiles(items []apply.Item) int {
+	changed, writing := map[string]bool{}, map[string]bool{}
+	for _, it := range items {
+		switch it.Status {
+		case apply.StatusApplied:
+			changed[it.File] = true
+		case apply.StatusWriting:
+			writing[it.File] = true
+		case apply.StatusPlanned, apply.StatusSkipped, apply.StatusFailed:
+		}
+	}
+	n := 0
+	for f := range writing {
+		if !changed[f] {
+			n++
+		}
+	}
+	return n
 }

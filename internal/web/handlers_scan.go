@@ -82,14 +82,10 @@ func handleScan(logger *slog.Logger, rd *renderer, projects ProjectStore, scans 
 			}
 		}
 		if sc.ApplyID != 0 {
-			n := 0
-			if sc.Status == scan.StatusSucceeded {
-				if n, err = applies.Reappeared(r.Context(), sc.ID); err != nil {
-					rd.fail(w, r, logger, http.StatusInternalServerError, fmt.Errorf("counting reappeared values: %w", err))
-					return
-				}
+			if page.Confirmation, err = readConfirmation(r.Context(), applies, sc, apply.ID(sc.ApplyID), p.ID); err != nil {
+				rd.fail(w, r, logger, http.StatusInternalServerError, err)
+				return
 			}
-			page.Confirmation = newConfirmation(sc, apply.ID(sc.ApplyID), p.ID, n)
 		}
 		if sc.Status == scan.StatusFailed {
 			rd.page(w, r, logger, http.StatusOK, "scan.html", page)
