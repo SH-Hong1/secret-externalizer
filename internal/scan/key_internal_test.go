@@ -52,7 +52,7 @@ func keyCases() []keyCase {
 		{"xml unclosed comment", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <!-- <bean id=\"a\">\n  <property name=\"password\" value=\"VALUE\"/>", "a.password"},
 		{"xml property over lines", "ctx.xml", "<bean id=\"ds\" class=\"X\">\n  <property name=\"password\"\n            value=\"VALUE\"/>\n</bean>", "ds.password"},
 		{"xml bean id on another line", "ctx.xml", "<bean class=\"X\"\n      id=\"ds\">\n  <property name=\"password\" value=\"VALUE\"/>\n</bean>", "ds.password"},
-		{"xml attribute over lines", "server.xml", "<Resource name=\"jdbc/live\"\n   password=\"VALUE\"/>", "password"},
+		{"xml attribute over lines", "server.xml", "<Resource name=\"jdbc/live\"\n   password=\"VALUE\"/>", "jdbc.live.password"},
 		{"xml closed tag before on the line", "ctx.xml", "<a name=\"x\">1</a> pw=VALUE", "pw"},
 		{"xml nested open bean", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <property name=\"ds\">\n    <bean id=\"inner\" class=\"Y\">\n      <property name=\"password\" value=\"VALUE\"/>", "inner.password"},
 		{"xml nested open bean without id", "ctx.xml", "<bean id=\"outer\" class=\"X\">\n  <property name=\"ds\">\n    <bean class=\"Y\">\n      <property name=\"password\" value=\"VALUE\"/>", "password"},
@@ -66,7 +66,18 @@ func keyCases() []keyCase {
 		{"xml namespace", "ctx.xml", `<bean id="ds" p:password="VALUE"/>`, "ds.password"},
 		{"xml element text", "settings.xml", "<password>VALUE</password>", "password"},
 		{"xml name beside a namespaced value", "ctx.xml", `<bean id="ds" name="alias" p:password="VALUE"/>`, "ds.password"},
-		{"xml name beside a plain attribute", "server.xml", `<Resource name="jdbc/live" password="VALUE"/>`, "password"},
+		{"xml name beside a plain attribute", "server.xml", `<Resource name="jdbc/live" password="VALUE"/>`, "jdbc.live.password"},
+		{"xml second resource", "server.xml", "<Resource name=\"jdbc/dev\" password=\"x\"/>\n<Resource name=\"jdbc/live\" password=\"VALUE\"/>", "jdbc.live.password"},
+		{"xml name without slash", "server.xml", `<Resource name="live" password="VALUE"/>`, "live.password"},
+		{"xml name beside a prefixed attribute", "server.xml", `<Resource name="jdbc/live" x:password="VALUE"/>`, "jdbc.live.password"},
+		{"xml name with a space", "server.xml", `<Resource name="jdbc live" password="VALUE"/>`, "password"},
+		{"xml name with an empty piece", "server.xml", `<Resource name="jdbc//live" password="VALUE"/>`, "password"},
+		{"xml name ending in slash", "server.xml", `<Resource name="jdbc/" password="VALUE"/>`, "password"},
+		{"xml empty name", "server.xml", `<Resource name="" password="VALUE"/>`, "password"},
+		{"xml name after the value", "server.xml", `<Resource password="VALUE" name="jdbc/live"/>`, "password"},
+		{"xml prefixed bean name beside a value", "ctx.xml", `<beans:bean id="ds" name="alias" p:password="VALUE"/>`, "ds.password"},
+		{"xml bean without id keeps no name", "ctx.xml", `<bean name="alias" p:password="VALUE"/>`, "password"},
+		{"xml resource in a bean", "ctx.xml", "<bean id=\"ds\" class=\"X\">\n  <Resource name=\"jdbc/live\" password=\"VALUE\"/>", "ds.jdbc.live.password"},
 		{"xml name with element text", "ctx.xml", `<property name="password">VALUE</property>`, "password"},
 		{"at zero", "c.properties", "VALUE", ""},
 	}
@@ -115,7 +126,7 @@ func TestURLStart(t *testing.T) {
 }
 
 func TestConfigKey_Spans(t *testing.T) {
-	for _, name := range []string{"properties", "yaml nested", "xml property"} {
+	for _, name := range []string{"properties", "yaml nested", "xml property", "xml name beside a plain attribute"} {
 		t.Run(name, func(t *testing.T) {
 			for _, tc := range keyCases() {
 				if tc.name != name {
