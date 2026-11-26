@@ -17,6 +17,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -29,8 +30,8 @@ import (
 
 var (
 	// ErrNotRepository means the folder is not in a git work tree whose
-	// work tree root, git folder, and common git folder all lie under the
-	// workspace root.
+	// work tree root, git folder, common git folder, and object stores all
+	// lie under the workspace root.
 	ErrNotRepository = errors.New("folder is not in a git work tree under the workspace root")
 	// ErrNoCommit means the repository holding the folder has no commit.
 	ErrNoCommit = errors.New("repository has no commit")
@@ -51,6 +52,11 @@ const (
 	waitDelay = time.Second
 	// maxOutput is the most standard output one git call may write.
 	maxOutput = 64 << 20
+	// maxAlternates is the largest alternates file that is read.
+	maxAlternates = 64 << 10
+	// maxAlternateDepth is how many alternates files deep a chain may go,
+	// counting the repository's own. git itself stops at five.
+	maxAlternateDepth = 5
 )
 
 // baseArgs returns the arguments that come before the folder and command of
@@ -191,8 +197,8 @@ type repository struct {
 }
 
 // locate finds the work tree holding dir, checks that its work tree root,
-// git folder and common git folder resolve to places under root, and reads
-// HEAD. root is already resolved.
+// git folder, common git folder and object stores resolve to places under
+// root, and reads HEAD. root is already resolved.
 func locate(ctx context.Context, git, root, dir string) (repository, error) {
 	out, err := run(ctx, git, root, dir, "rev-parse",
 		"--is-inside-work-tree", "--show-prefix", "--absolute-git-dir", "--git-common-dir", "--show-toplevel")
@@ -221,6 +227,13 @@ func locate(ctx context.Context, git, root, dir string) (repository, error) {
 		if !inside {
 			return repository{}, ErrNotRepository
 		}
+	}
+	inside, err := objectsUnder(root, filepath.Join(commonDir, "objects"), 1)
+	if err != nil {
+		return repository{}, err
+	}
+	if !inside {
+		return repository{}, ErrNotRepository
 	}
 
 	out, err = run(ctx, git, root, dir, "rev-parse", "--verify", "--quiet", "HEAD")
@@ -252,6 +265,70 @@ func under(root, p string) (bool, error) {
 		return false, nil //nolint:nilerr // a path that cannot be made relative to root is not under it
 	}
 	return filepath.IsLocal(rel) || rel == ".", nil
+}
+
+// objectsUnder reports whether the object folder objects, and every object
+// folder its alternates file names, directly or through further alternates
+// files, resolve to places under root. git reads objects from each of them.
+// depth is how deep objects lies in the chain, starting at one. A chain
+// deeper than maxAlternateDepth, an alternates file larger than
+// maxAlternates, a quoted entry, and an entry naming a folder that does not
+// exist are not under root. root is already resolved.
+func objectsUnder(root, objects string, depth int) (bool, error) {
+	inside, err := under(root, objects)
+	if err != nil || !inside {
+		return false, err
+	}
+	resolved, err := filepath.EvalSymlinks(objects)
+	if err != nil {
+		return false, fmt.Errorf("resolving an object folder: %w", err)
+	}
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil {
+		return false, fmt.Errorf("resolving an object folder: %w", err)
+	}
+	// Opening through root refuses an alternates file that is a link to a
+	// place outside root.
+	name := filepath.Join(rel, "info", "alternates")
+	f, err := os.OpenInRoot(root, name)
+	if errors.Is(err, fs.ErrNotExist) {
+		return true, nil
+	}
+	if err != nil {
+		inside, uerr := under(root, filepath.Join(root, name))
+		if uerr != nil || !inside {
+			return false, uerr
+		}
+		return false, fmt.Errorf("opening the alternates file: %w", err)
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxAlternates+1))
+	// The file was only read, so closing it cannot lose data.
+	_ = f.Close()
+	if err != nil {
+		return false, fmt.Errorf("reading the alternates file: %w", err)
+	}
+	if len(data) > maxAlternates {
+		return false, nil
+	}
+	for line := range strings.SplitSeq(string(data), "\n") {
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		// git unquotes a line that starts with a double quote; such a line
+		// is refused rather than unquoted here.
+		if depth >= maxAlternateDepth || strings.HasPrefix(line, `"`) {
+			return false, nil
+		}
+		alt := line
+		if !filepath.IsAbs(alt) {
+			alt = filepath.Join(objects, alt)
+		}
+		inside, err := objectsUnder(root, alt, depth+1)
+		if err != nil || !inside {
+			return false, err
+		}
+	}
+	return true, nil
 }
 
 // isHash reports whether s is a full lower-case SHA-1 or SHA-256 object name.
@@ -292,8 +369,9 @@ func checkConfig(ctx context.Context, git, root, dir string) error {
 // under root. It changes nothing in the repository.
 //
 // It fails with ErrNotRepository when dir is not in a work tree whose work
-// tree root, git folder and common git folder all resolve to places under
-// root, with ErrNoCommit when the repository has no commit, and with
+// tree root, git folder, common git folder and object stores (the objects
+// folder and every alternate it names) all resolve to places under root,
+// with ErrNoCommit when the repository has no commit, and with
 // ErrUnsafeConfig when its configuration sets a clean or process filter, a
 // hook, or core.worktree, and with ErrUnsafePath when git reports a tracked
 // path that is not inside dir or has a .git component. Other errors name the

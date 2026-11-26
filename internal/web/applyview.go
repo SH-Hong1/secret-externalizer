@@ -221,8 +221,8 @@ func blockerOf(b apply.Blocker) blockerView {
 		}
 	case apply.BlockerNotRepository:
 		return blockerView{
-			Label:  "프로젝트 폴더가 git 작업본이 아니거나, 저장소의 git 폴더가 작업 공간 밖에 있습니다.",
-			Action: "프로젝트 폴더를 작업 공간 안의 git 저장소로 두고 커밋한 뒤 다시 점검해 주세요.",
+			Label:  "프로젝트 폴더가 git 작업본이 아니거나, 저장소의 git 폴더나 객체 저장소(alternates)가 작업 공간 밖에 있습니다.",
+			Action: "프로젝트 폴더를 작업 공간 안의 git 저장소로 두고 커밋한 뒤 다시 점검해 주세요. 다른 저장소의 객체를 빌려 쓰는 clone(--shared, --reference)은 git repack -a -d로 객체를 가져오고 .git/objects/info/alternates를 지워 주세요.",
 		}
 	case apply.BlockerNoCommit:
 		return blockerView{
