@@ -252,8 +252,11 @@ func keyFileName(file string) bool {
 // sourceFileName reports whether file is a source, configuration or page
 // file, which a key in it does not make removable. Case is ignored.
 func sourceFileName(file string) bool {
+	if triage.ShellFile(file) {
+		return true
+	}
 	switch strings.ToLower(path.Ext(file)) {
-	case ".java", ".xml", ".properties", ".yml", ".yaml", ".sh", ".jsp", ".jspf", ".js", ".html", ".htm":
+	case ".java", ".xml", ".properties", ".yml", ".yaml", ".jsp", ".jspf", ".js", ".html", ".htm":
 		return true
 	}
 	return false

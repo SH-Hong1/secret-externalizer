@@ -110,6 +110,12 @@ func readMembers(ctx context.Context, tx pgx.Tx, scanID scan.ID, b *triage.Bundl
 	return nil
 }
 
+// shellPatterns is an SQL array of a LIKE pattern for each of
+// triage.ShellExtensions: any path that ends in the extension. It is a
+// constant rather than a query parameter because the queries built on
+// scanBundles take different parameters.
+const shellPatterns = `'{%.sh,%.bash,%.ksh}'::text[]`
+
 // scanBundles starts a query with the common table expression scan_bundle:
 // one row per bundle of project $1 with a member that scan $2 found. Its
 // category, kind and preview are those of the member with the lowest ID; its
@@ -133,7 +139,7 @@ const scanBundles = `
 			(array_agg(m.first_line ORDER BY m.file_path, m.first_line))[1] AS first_line,
 			(array_agg(m.key ORDER BY m.file_path, m.first_line))[1] AS key,
 			sum(m.locations)::int AS locations,
-			bool_and(lower(m.file_path) LIKE '%.sh') AS shell,
+			bool_and(lower(m.file_path) LIKE ANY (` + shellPatterns + `)) AS shell,
 			b.applied_at IS NOT NULL AS applied
 		FROM bundle b JOIN member m ON m.bundle_id = b.id
 		WHERE b.project_id = $1
@@ -383,8 +389,8 @@ func (s *Store) AppliedBundles(ctx context.Context, projectID project.ID, page i
 				) f ON true
 				LEFT JOIN LATERAL (
 					SELECT count(*)::int AS locations,
-						bool_or(lower(i.file_path) LIKE '%.sh') AS shell,
-						bool_or(lower(i.file_path) NOT LIKE '%.sh') AS config,
+						bool_or(lower(i.file_path) LIKE ANY (`+shellPatterns+`)) AS shell,
+						bool_or(NOT lower(i.file_path) LIKE ANY (`+shellPatterns+`)) AS config,
 						bool_or(i.code_change) AS code_change,
 						max(i.apply_id) AS last_run,
 						max(r.started_at) AS last_start

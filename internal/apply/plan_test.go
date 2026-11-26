@@ -230,6 +230,8 @@ func TestPlan_Text(t *testing.T) {
 		{"bin/deploy", "${ext.db.main.password}", "ext.db.main.password", false},
 		{"bin/deploy.sh", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false},
 		{"bin/DEPLOY.SH", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false},
+		{"bin/deploy.bash", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false},
+		{"bin/deploy.ksh", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
@@ -311,6 +313,8 @@ func TestPlan_KeyFile(t *testing.T) {
 		{"conf/application.yml", false, false},
 		{"src/Keys.java", false, false},
 		{"bin/run.sh", false, false},
+		{"bin/run.bash", false, false},
+		{"bin/run.ksh", false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
