@@ -24,4 +24,15 @@
   <bean id="reportSource" class="com.example.shop.ReportSource"
         p:filter="a > b" p:dbPassword="dev-only-fake-p-db-password"/>
   <property name="note" p:dbPassword="dev-only-not-a-bean"/>
+  <bean id="orderPool" class="com.example.shop.OrderPool">
+    <property name="user" value="order_app"/>
+    <property name="maxSize" value="10"/>
+    <property name="url" value="jdbc:postgresql://order.example.invalid:5432/order"/>
+  </bean>
+  <bean id="stockPool" class="com.example.shop.StockPool">
+    <property name="jdbcUrl" value="jdbc:mysql://stock.example.invalid/stock"/>
+    <property name="username" value="stock_app"/>
+  </bean>
+  <bean id="legacyPool" class="com.example.shop.LegacyPool" p:user="legacy_app" p:url="jdbc:oracle:thin:@legacy.example.invalid:1521:LEG"/>
+  <bean id="cachePool" class="com.example.shop.CachePool" p:username="cache" p:url="redis://cache.example.invalid:6379"/>
 </beans>
