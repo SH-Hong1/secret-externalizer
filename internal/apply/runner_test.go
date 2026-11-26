@@ -562,6 +562,46 @@ func TestCheck_Blockers(t *testing.T) {
 	}
 }
 
+// TestCheck_BlockedReadsNoFile checks that a check a condition blocks keeps
+// every location the plan would change as planned, without reading a file
+// or OpenBao, whichever condition blocked it, so that the page counts the
+// same locations as not checked.
+func TestCheck_BlockedReadsNoFile(t *testing.T) {
+	tests := []struct {
+		name   string
+		layout layout
+		setup  func(f *fixture)
+		want   apply.Blocker
+	}{
+		{"newer scan", inRepository, func(f *fixture) { f.newest = testScan + 1 }, apply.BlockerScanNotLatest},
+		{"dirty tree", inRepository, func(f *fixture) { write(t, f.dir, "pom.xml", "<project/>\n") }, apply.BlockerDirty},
+		{"not a repository", noRepository, func(*fixture) {}, apply.BlockerNotRepository},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newShop(t, tt.layout)
+			keys := f.secret("db.yaml.password", ymlValue, ymlFile)
+			keys = append(keys, f.secret("db.vendor.password", vendorValue, vendorFile)...)
+			tt.setup(f)
+
+			saved := f.mustCheck()
+
+			if !slices.Contains(saved.Blockers, tt.want) {
+				t.Fatalf("SaveCheck blockers = %v, want %q among them", saved.Blockers, tt.want)
+			}
+			got := outcomes(saved.Items)
+			for _, k := range keys {
+				if got[k] != planned {
+					t.Errorf("SaveCheck outcome of %s = %q, want %q", k, got[k], planned)
+				}
+			}
+			if len(f.vault.seen) != 0 {
+				t.Errorf("Fingerprints got %d values, want none", len(f.vault.seen))
+			}
+		})
+	}
+}
+
 // TestCheck_NothingPlanned checks that a check whose every location turns
 // out skipped once the files are read is blocked like one with no verdict
 // to apply, and that customer data in an untracked file, which an apply
