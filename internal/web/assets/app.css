@@ -1515,11 +1515,15 @@
   }
   /* The chart never shrinks below the width at which its labels stay
      readable: 13 units of a 960-unit viewBox are about 10.5px at 780px.
-     A narrower box scrolls the chart inside itself. */
+     A narrower box scrolls the chart inside itself. The box lays out right
+     to left, so that it opens on its right end, where the newest scans
+     are; the chart inside it reads left to right. */
   .chart-scroll {
     overflow-x: auto;
+    direction: rtl;
   }
   .chart {
+    direction: ltr;
     display: block;
     width: 100%;
     min-width: 780px;

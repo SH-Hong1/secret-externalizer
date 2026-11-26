@@ -199,6 +199,42 @@ func TestNoInlineScriptOrStyle(t *testing.T) {
 	}
 }
 
+// scrollFrame matches the opening tag of a box that scrolls its content
+// sideways on a narrow screen.
+var scrollFrame = regexp.MustCompile(`<div class="(?:table-wrap|chart-scroll)[^"]*"[^>]*>`)
+
+// A box that scrolls sideways takes keyboard focus, so that the arrow keys
+// can scroll it, and is a named region, so that a screen reader says what
+// the focus is on.
+func TestScrollFrameFocus(t *testing.T) {
+	templates := os.DirFS("templates")
+	files, err := fs.Glob(templates, "*.html")
+	if err != nil || len(files) == 0 {
+		t.Fatalf("Glob(templates/*.html) = %v, %v, want template files", files, err)
+	}
+	frames := 0
+	for _, file := range files {
+		b, err := fs.ReadFile(templates, file)
+		if err != nil {
+			t.Fatalf("ReadFile(%q) error = %v", file, err)
+		}
+		for _, tag := range scrollFrame.FindAllString(string(b), -1) {
+			frames++
+			for _, want := range []string{`tabindex="0"`, `role="region"`, `aria-label="`} {
+				if !strings.Contains(tag, want) {
+					t.Errorf("%s: %s lacks %s", file, tag, want)
+				}
+			}
+			if strings.Contains(tag, `aria-label=""`) {
+				t.Errorf("%s: %s has an empty aria-label", file, tag)
+			}
+		}
+	}
+	if frames == 0 {
+		t.Errorf("templates hold no scroll frame, want at least one")
+	}
+}
+
 func TestNoInlineScriptOrStyle_Pattern(t *testing.T) {
 	tests := []struct {
 		in   string
@@ -263,6 +299,16 @@ func TestStaticCSS_NarrowScreen(t *testing.T) {
 	for _, want := range []string{".chart-scroll", "min-width:780px"} {
 		if !strings.Contains(compact, want) {
 			t.Errorf("app.css lacks %q", want)
+		}
+	}
+	// The chart box lays out right to left, so a narrow screen opens on the
+	// newest bars at the right; the chart itself stays left to right.
+	for _, rule := range []struct{ sel, decl string }{
+		{".chart-scroll", `direction:\s*rtl`},
+		{".chart", `direction:\s*ltr`},
+	} {
+		if !regexp.MustCompile(`(?s)(?:^|[,}\s])` + regexp.QuoteMeta(rule.sel) + `\s*\{[^}]*` + rule.decl).MatchString(css) {
+			t.Errorf("app.css: no rule for %q sets %s", rule.sel, rule.decl)
 		}
 	}
 	for _, sel := range []string{".table-nowrap th", ".table-nowrap .num"} {

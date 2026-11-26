@@ -271,14 +271,14 @@ func TestHandleDashboard_ScrollsInsideWrappers(t *testing.T) {
 	if res.status != http.StatusOK {
 		t.Fatalf("GET /dashboard status = %d, want 200", res.status)
 	}
-	if got, want := strings.Count(res.body, `<div class="chart-scroll">`), 1; got != want {
+	if got, want := strings.Count(res.body, `<div class="chart-scroll"`), 1; got != want {
 		t.Errorf("GET /dashboard has %d chart-scroll wrappers, want %d", got, want)
 	}
-	if !regexp.MustCompile(`(?s)<div class="chart-scroll">\s*<svg class="chart"`).MatchString(res.body) {
+	if !regexp.MustCompile(`(?s)<div class="chart-scroll"[^>]*>\s*<svg class="chart"`).MatchString(res.body) {
 		t.Errorf("GET /dashboard does not wrap the chart directly in chart-scroll")
 	}
 	tables := strings.Count(res.body, "<table")
-	wraps := strings.Count(res.body, `<div class="table-wrap">`)
+	wraps := strings.Count(res.body, `<div class="table-wrap"`)
 	if got := strings.Count(res.body, `<table class="table table-nowrap`); got != tables {
 		t.Errorf("GET /dashboard has %d table-nowrap tables, want %d", got, tables)
 	}

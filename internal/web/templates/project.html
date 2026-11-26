@@ -21,7 +21,7 @@
 {{end}}</section>
 {{end}}<section>
 <h2 class="section-title">스캔</h2>
-{{if .Scans}}<div class="table-wrap">
+{{if .Scans}}<div class="table-wrap" tabindex="0" role="region" aria-label="스캔">
 <table class="table min-w-[740px]">
 <thead><tr><th>번호</th><th>요청</th><th>상태</th><th>커밋</th><th class="num">항목</th><th>리포트</th></tr></thead>
 <tbody>
@@ -40,7 +40,7 @@
 {{end}}</section>
 {{with .Applies}}<section>
 <h2 class="section-title">적용 기록</h2>
-<div class="table-wrap">
+<div class="table-wrap" tabindex="0" role="region" aria-label="적용 기록">
 <table class="table min-w-[680px]">
 <thead><tr><th>번호</th><th>적용 확인</th><th>상태</th><th>위치</th></tr></thead>
 <tbody>
