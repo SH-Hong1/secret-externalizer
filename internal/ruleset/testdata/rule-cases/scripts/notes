@@ -1,0 +1,2 @@
+Run it like this:
+sshpass -p dev-only-fake-not-a-script ssh ops@was15.example.invalid uptime

@@ -254,9 +254,14 @@ func TestRules_ExpectedFindings(t *testing.T) {
 
 // The scanned folder's own path must not decide which rules apply: rules
 // limited to log and data folders or to file names such as build.xml and
-// *.sh look only at paths inside the project.
+// *.sh, or excluding *.sh, look only at paths inside the project.
 func TestRules_ParentFoldersDoNotMatter(t *testing.T) {
-	checkExpected(t, legacyShop, scanExample(t, legacyShop, "data/logs/samples/dump/build.xml/settings.xml/pom.xml/deploy.sh/app.properties/application.yml"))
+	const parent = "data/logs/samples/dump/build.xml/settings.xml/pom.xml/deploy.sh/app.properties/application.yml"
+	for _, project := range []string{legacyShop, ruleCases} {
+		t.Run(project, func(t *testing.T) {
+			checkExpected(t, project, scanExample(t, project, parent))
+		})
+	}
 }
 
 // boundary holds the bytes that may surround a value: white space and the

@@ -1,0 +1,2 @@
+#!/usr/bin/python
+sshpass -p dev-only-fake-python-tool ssh ops@was16.example.invalid uptime

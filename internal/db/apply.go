@@ -309,7 +309,7 @@ func applyBundles(ctx context.Context, tx pgx.Tx, projectID project.ID, scanID s
 	rows, err := tx.Query(ctx, `
 		SELECT b.id, b.fingerprint, b.verdict, b.hold_reason, b.name, b.note, b.decided_by, b.decided_at,
 			b.applied_at, b.store_path,
-			f.id, f.file_path, f.key, f.category, f.kind, f.preview, f.has_original,
+			f.id, f.file_path, f.key, f.category, f.kind, f.preview, f.has_original, f.shell,
 			`+locationColumns+`
 		FROM bundle b
 			JOIN finding f ON f.bundle_id = b.id
@@ -337,7 +337,7 @@ func applyBundles(ctx context.Context, tx pgx.Tx, projectID project.ID, scanID s
 		l, err := scanLocation(rows,
 			&b.ID, &b.Fingerprint, &b.Decision.Verdict, &b.Decision.Reason, &name, &b.Decision.Note, &b.DecidedBy, &decidedAt,
 			&appliedAt, &b.StorePath,
-			&m.FindingID, &m.File, &m.Key, &c, &k, &preview, &m.HasOriginal)
+			&m.FindingID, &m.File, &m.Key, &c, &k, &preview, &m.HasOriginal, &m.Shell)
 		if err != nil {
 			return nil, err
 		}

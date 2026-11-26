@@ -100,6 +100,39 @@ func TestHandle_SameValueTwoFiles(t *testing.T) {
 	}
 }
 
+func TestHandle_MarksShellScripts(t *testing.T) {
+	line := "PW=\"" + password + "\"\n"
+	plain := "#!/bin/sh\n# 배포\n" + line
+	eucKR, err := korean.EUCKR.NewEncoder().String(plain)
+	if err != nil {
+		t.Fatalf("EUC-KR NewEncoder().String(%q) error = %v, want nil", plain, err)
+	}
+	e := newEnv(t, map[string]string{
+		"bin/deploy.sh":      line,
+		"bin/start":          "#!/bin/sh\n" + line,
+		"bin/run":            "#!/usr/bin/env bash\r\n" + line,
+		"bin/euc":            eucKR,
+		"bin/bom":            "\xef\xbb\xbf#!/bin/sh\n" + line,
+		"bin/notes":          "see bin/start\n" + line,
+		"bin/python":         "#!/usr/bin/python\n" + line,
+		"conf/db.properties": "db.password=" + password + "\n",
+	})
+	if err := e.handle(t.Context(), passwordOG()); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := map[string]bool{}
+	for _, f := range e.result(t).Findings {
+		got[f.File] = f.Shell
+	}
+	want := map[string]bool{
+		"bin/deploy.sh": true, "bin/start": true, "bin/run": true, "bin/euc": true, "bin/bom": true,
+		"bin/notes": false, "bin/python": false, "conf/db.properties": false,
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Handle() Shell of each file's finding (-want +got):\n%s", diff)
+	}
+}
+
 func TestHandle_SameValueTwiceInFile(t *testing.T) {
 	e := newEnv(t, map[string]string{propsFile: "a=" + password + "\n#\na=" + password + "\n"})
 	if err := e.handle(t.Context(), passwordBL(), passwordOG()); err != nil {

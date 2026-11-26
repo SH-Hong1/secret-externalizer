@@ -20,9 +20,18 @@ func span(sl, sc, el, ec int) finding.Location {
 	return finding.Location{StartLine: sl, StartCol: sc, EndLine: el, EndCol: ec, FileHash: hashF}
 }
 
-// at returns a member in file whose finding ID is id, at the locations.
+// at returns a member in file whose finding ID is id, at the locations. It
+// is a shell script when its name makes it one.
 func at(id finding.ID, file string, locations ...finding.Location) triage.Member {
-	return triage.Member{FindingID: id, File: file, Locations: locations}
+	return triage.Member{FindingID: id, File: file, Shell: triage.ShellFile(file, nil), Locations: locations}
+}
+
+// shellAt returns the member at gives, marked as a shell script whatever
+// its name, as a scan marks a file whose first line is a shell shebang.
+func shellAt(id finding.ID, file string, locations ...finding.Location) triage.Member {
+	m := at(id, file, locations...)
+	m.Shell = true
+	return m
 }
 
 // externalized returns a password bundle externalized as db.main.password.
@@ -69,7 +78,7 @@ func planInput(bundles ...triage.Bundle) apply.Input {
 // replaceTarget returns the target that replaces the password of
 // externalized, bundle b, finding f, at l in file.
 func replaceTarget(b triage.BundleID, f finding.ID, file string, l finding.Location) apply.Target {
-	name := triage.Name("db.main.password").For(file)
+	name := triage.Name("db.main.password").For(triage.ShellFile(file, nil))
 	return apply.Target{
 		Item: apply.Item{
 			BundleID: b, FindingID: f, File: file, StartLine: l.StartLine, StartCol: l.StartCol,
@@ -105,7 +114,7 @@ func wholeTarget(b triage.BundleID, f finding.ID, file string, l finding.Locatio
 		Item: apply.Item{
 			BundleID: b, FindingID: f, File: file, StartLine: l.StartLine, StartCol: l.StartCol,
 			Action: apply.ActionRemoveFile, Category: finding.CategorySSH, Kind: finding.KindKeyFile,
-			Name: triage.Name("ssh.partner.key").For(file), StorePath: "secret/data/projects/7/ext.ssh.partner.key",
+			Name: triage.Name("ssh.partner.key").For(triage.ShellFile(file, nil)), StorePath: "secret/data/projects/7/ext.ssh.partner.key",
 			Status: apply.StatusPlanned,
 		},
 		Location:    l,
@@ -221,22 +230,28 @@ func TestPlan_Text(t *testing.T) {
 		text       string
 		name       string
 		codeChange bool
+		shell      bool
 	}{
-		{"conf/a.yml", "${ext.db.main.password}", "ext.db.main.password", false},
-		{"conf/b.XML", "${ext.db.main.password}", "ext.db.main.password", false},
-		{"src/C.java", "${ext.db.main.password}", "ext.db.main.password", true},
-		{"pom.xml", "${ext.db.main.password}", "ext.db.main.password", false},
-		{"conf/x.properties", "${ext.db.main.password}", "ext.db.main.password", false},
-		{"bin/deploy", "${ext.db.main.password}", "ext.db.main.password", false},
-		{"bin/deploy.sh", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false},
-		{"bin/DEPLOY.SH", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false},
-		{"bin/deploy.bash", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false},
-		{"bin/deploy.ksh", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false},
+		{"conf/a.yml", "${ext.db.main.password}", "ext.db.main.password", false, false},
+		{"conf/b.XML", "${ext.db.main.password}", "ext.db.main.password", false, false},
+		{"src/C.java", "${ext.db.main.password}", "ext.db.main.password", true, false},
+		{"pom.xml", "${ext.db.main.password}", "ext.db.main.password", false, false},
+		{"conf/x.properties", "${ext.db.main.password}", "ext.db.main.password", false, false},
+		{"bin/deploy", "${ext.db.main.password}", "ext.db.main.password", false, false},
+		{"bin/start", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false, true},
+		{"bin/deploy.sh", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false, false},
+		{"bin/DEPLOY.SH", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false, false},
+		{"bin/deploy.bash", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false, false},
+		{"bin/deploy.ksh", "${EXT_DB_MAIN_PASSWORD}", "EXT_DB_MAIN_PASSWORD", false, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.file, func(t *testing.T) {
 			loc := span(3, 12, 3, 30)
-			p := apply.NewPlan(planInput(externalized(1, at(11, tt.file, loc))))
+			m := at(11, tt.file, loc)
+			if tt.shell {
+				m = shellAt(11, tt.file, loc)
+			}
+			p := apply.NewPlan(planInput(externalized(1, m)))
 			want := []apply.Target{{
 				Item: apply.Item{
 					BundleID: 1, FindingID: 11, File: tt.file, StartLine: 3, StartCol: 12,
@@ -374,6 +389,20 @@ func TestPlan_KeyFile(t *testing.T) {
 			t.Errorf("NewPlan(key file and private key in one pem file) actions (-want +got):\n%s", diff)
 		}
 	})
+}
+
+func TestPlan_KeyFileInShellScriptWithoutExtension(t *testing.T) {
+	whole := span(1, 1, 20, 5)
+	p := apply.NewPlan(planInput(keyFile(1, shellAt(11, "bin/start", whole))))
+	want := wholeTarget(1, 11, "bin/start", whole, false)
+	want.Item.Name = triage.Name("ssh.partner.key").Shell()
+	want.Item.Status, want.Item.Reason = apply.StatusSkipped, apply.ReasonKeyInSourceFile
+	if len(p.Targets) != 0 || len(p.Skipped) != 1 {
+		t.Fatalf("NewPlan(key file in shell script bin/start) = %d targets, %d skipped; want 0 targets, 1 skipped", len(p.Targets), len(p.Skipped))
+	}
+	if diff := cmp.Diff(want.Item, p.Skipped[0]); diff != "" {
+		t.Errorf("NewPlan(key file in shell script bin/start).Skipped[0] (-want +got):\n%s", diff)
+	}
 }
 
 func TestPlan_KeyFileWithCustomerData(t *testing.T) {

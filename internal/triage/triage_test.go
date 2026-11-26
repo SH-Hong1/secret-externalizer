@@ -2,6 +2,7 @@ package triage_test
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -58,24 +59,45 @@ func TestNameForms(t *testing.T) {
 }
 
 func TestShellFile(t *testing.T) {
-	tests := map[string]bool{
-		"deploy.sh":        true,
-		"bin/DEPLOY.SH":    true,
-		"bin/run.Sh":       true,
-		"deploy":           false,
-		"conf/app.yml":     false,
-		"bin/run.sh.bak":   false,
-		"bin/sh":           false,
-		"bin/run.bash":     true,
-		"bin/run.KSH":      true,
-		"bin/run.zsh":      false,
-		"src/Shell.java":   false,
-		"scripts.sh/x.yml": false,
+	tests := []struct {
+		file, text string
+		want       bool
+	}{
+		{"deploy.sh", "", true},
+		{"bin/DEPLOY.SH", "", true},
+		{"bin/run.Sh", "", true},
+		{"deploy", "", false},
+		{"conf/app.yml", "", false},
+		{"bin/run.sh.bak", "", false},
+		{"bin/sh", "", false},
+		{"bin/run.bash", "", true},
+		{"bin/run.KSH", "", true},
+		{"bin/run.zsh", "", false},
+		{"src/Shell.java", "", false},
+		{"scripts.sh/x.yml", "", false},
+		{"bin/start", "#!/bin/sh\nexec java\n", true},
+		{"bin/start", "#!/bin/bash -e\n", true},
+		{"bin/start", "#!/bin/ksh", true},
+		{"bin/start", "#! /bin/sh\r\nexec java\r\n", true},
+		{"bin/start", "#!/bin/sh\r", true},
+		{"bin/start", "#!/usr/bin/env bash\n", true},
+		{"bin/start", "#!/usr/bin/env -S bash -e\n", true},
+		{"bin/start", "#!sh\n", true},
+		{"v1.2/run", "#!/bin/sh\n", true},
+		{"bin/start.txt", "#!/bin/sh\n", true},
+		{"bin/start", "#!/bin/zsh\n", false},
+		{"bin/start", "#!/bin/shell\n", false},
+		{"bin/start", "#!/usr/bin/python\n", false},
+		{"bin/start", "#!/usr/bin/env python\n", false},
+		{"bin/start", "#!/bin/sh\rexec\n", false},
+		{"bin/start", "# !/bin/sh\n", false},
+		{"bin/start", "\n#!/bin/sh\n", false},
+		{"bin/start", "exec java # #!/bin/sh\n", false},
 	}
-	for file, want := range tests {
-		t.Run(file, func(t *testing.T) {
-			if got := triage.ShellFile(file); got != want {
-				t.Errorf("ShellFile(%q) = %v, want %v", file, got, want)
+	for _, tt := range tests {
+		t.Run(tt.file+" "+tt.text, func(t *testing.T) {
+			if got := triage.ShellFile(tt.file, []byte(tt.text)); got != tt.want {
+				t.Errorf("ShellFile(%q, %q) = %v, want %v", tt.file, tt.text, got, tt.want)
 			}
 		})
 	}
@@ -83,17 +105,14 @@ func TestShellFile(t *testing.T) {
 
 func TestNameFor(t *testing.T) {
 	n := triage.Name("db.main.password")
-	tests := map[string]string{
-		"deploy.sh":            "EXT_DB_MAIN_PASSWORD",
-		"DEPLOY.SH":            "EXT_DB_MAIN_PASSWORD",
-		"conf/application.yml": "ext.db.main.password",
-		"src/Main.java":        "ext.db.main.password",
-		"deploy":               "ext.db.main.password",
+	tests := map[bool]string{
+		true:  "EXT_DB_MAIN_PASSWORD",
+		false: "ext.db.main.password",
 	}
-	for file, want := range tests {
-		t.Run(file, func(t *testing.T) {
-			if got := n.For(file); got != want {
-				t.Errorf("Name(%q).For(%q) = %q, want %q", n, file, got, want)
+	for shell, want := range tests {
+		t.Run(fmt.Sprint(shell), func(t *testing.T) {
+			if got := n.For(shell); got != want {
+				t.Errorf("Name(%q).For(%v) = %q, want %q", n, shell, got, want)
 			}
 		})
 	}
@@ -146,13 +165,13 @@ func TestShellExtensions(t *testing.T) {
 	}
 	for _, ext := range exts {
 		for _, file := range []string{"bin/a" + ext, "bin/A" + strings.ToUpper(ext)} {
-			if !triage.ShellFile(file) {
-				t.Errorf("ShellFile(%q) = false, want true for ShellExtensions() entry %q", file, ext)
+			if !triage.ShellFile(file, nil) {
+				t.Errorf("ShellFile(%q, nil) = false, want true for ShellExtensions() entry %q", file, ext)
 			}
 		}
 	}
 	exts[0] = ".yml"
-	if triage.ShellFile("conf/app.yml") || !triage.ShellFile("bin/run.sh") {
+	if triage.ShellFile("conf/app.yml", nil) || !triage.ShellFile("bin/run.sh", nil) {
 		t.Errorf("ShellExtensions() returned its own slice: changing it changed ShellFile")
 	}
 }

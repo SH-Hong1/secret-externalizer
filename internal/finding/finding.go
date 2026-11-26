@@ -135,7 +135,9 @@ type Location struct {
 type ID int64
 
 // Finding is a detected value, identified by its fingerprint. It never holds
-// the value itself. ID is zero until the finding is stored.
+// the value itself. ID is zero until the finding is stored. Shell reports
+// that the file is a shell script, as triage.ShellFile judges it from the
+// file's name and first line.
 type Finding struct {
 	ID          ID
 	Fingerprint string
@@ -147,6 +149,7 @@ type Finding struct {
 	Kind        Kind
 	Preview     string
 	HasOriginal bool
+	Shell       bool
 	Locations   []Location
 }
 

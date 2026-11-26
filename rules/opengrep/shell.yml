@@ -14,6 +14,13 @@
 # contain spaces. A (?|...) group numbers its alternatives' values alike, so
 # each is $VALUE.
 #
+# Each rule reads the files with a shell extension, and has a twin whose id
+# ends in -shebang for every other file whose first line is a shebang that
+# runs sh, bash or ksh, as triage.ShellFile judges it (a byte order mark
+# before it is allowed, as the scan reads the file without one). The twin's
+# first pattern matches such a file whole, so the others match only inside
+# it; it excludes the shell extensions, so no file is read by both.
+#
 # Every rule starts with "  - id:" and has its category and kind under
 # metadata, which the rule tests read line by line.
 rules:
@@ -81,6 +88,80 @@ rules:
       category: ssh-credential
       kind: key-file
     patterns:
+      - pattern-either:
+          - pattern-regex: (?m)^[^#\r\n]*?(?<![\w.-])ssh(?:[ \t]+-[46AaCfGgKkMNnqsTtVvXxYy]*(?:[BbcDEeFIJLlmOoPpQRSWw][ \t]*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s'"]+))?(?=\s))*(?:[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s'"#-][^\s'"]*)(?:[ \t]+-[46AaCfGgKkMNnqsTtVvXxYy]*(?:[BbcDEeFIJLlmOoPpQRSWw][ \t]*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s'"]+))?(?=\s))*)?[ \t]+-i[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)
+          - pattern-regex: (?m)^[^#\r\n]*?(?<![\w.-])(?:scp|sftp)(?=[ \t])(?:[^#\r\n'"@]|"[^"\r\n]*"|'[^'\r\n]*')*?[ \t]-i[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)
+      - focus-metavariable: $VALUE
+
+  - id: shell-sshpass-password-shebang
+    message: A password is passed to sshpass on the command line.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      exclude: ["*.sh", "*.bash", "*.ksh"]
+    metadata:
+      category: ssh-credential
+      kind: password
+    patterns:
+      - pattern-regex: (?s)\A\x{FEFF}?#![ \t]*(?:[^\s/]*/)*(?:env[ \t]+(?:-\S*[ \t]+)*(?:[^\s/]*/)*)?(?:ba|k)?sh(?:[ \t][^\r\n]*)?(?:\r?\n.*|\r)?\z
+      - pattern-regex: (?m)^[^#\r\n]*?\bsshpass\b(?:(?!\b(?:ssh|scp|sftp|rsync)\b)[^#\r\n])*?[ \t]-p[ \t]*(?|'(?P<VALUE>[^'\r\n]+)'|"([^"\r\n$]+)"|([^\s'"$][^\s'"]*))
+      - focus-metavariable: $VALUE
+
+  - id: shell-sshpass-env-password-shebang
+    message: A password is assigned to SSHPASS for sshpass -e.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      exclude: ["*.sh", "*.bash", "*.ksh"]
+    metadata:
+      category: ssh-credential
+      kind: password
+    patterns:
+      - pattern-regex: (?s)\A\x{FEFF}?#![ \t]*(?:[^\s/]*/)*(?:env[ \t]+(?:-\S*[ \t]+)*(?:[^\s/]*/)*)?(?:ba|k)?sh(?:[ \t][^\r\n]*)?(?:\r?\n.*|\r)?\z
+      - pattern-regex: (?m)^[^#\r\n]*?(?<![\w$])SSHPASS=(?|'(?P<VALUE>[^'\r\n]+)'|"([^"\r\n$]+)"|([^\s'"$;][^\s'";]*))
+      - focus-metavariable: $VALUE
+
+  - id: shell-ssh-user-shebang
+    message: An ssh user name is written in a shell script.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      exclude: ["*.sh", "*.bash", "*.ksh"]
+    metadata:
+      category: ssh-credential
+      kind: account
+    patterns:
+      - pattern-regex: (?s)\A\x{FEFF}?#![ \t]*(?:[^\s/]*/)*(?:env[ \t]+(?:-\S*[ \t]+)*(?:[^\s/]*/)*)?(?:ba|k)?sh(?:[ \t][^\r\n]*)?(?:\r?\n.*|\r)?\z
+      - pattern-regex: (?m)^[^#\r\n]*\b(?:ssh|scp|sftp|rsync)\b[^#\r\n]*
+      - pattern-regex: (?<![\w.@$-])(?P<USER>[A-Za-z_][\w.-]*)@(?P<HOST>[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)
+      - focus-metavariable: $USER
+
+  - id: shell-ssh-host-shebang
+    message: An ssh host is written in a shell script.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      exclude: ["*.sh", "*.bash", "*.ksh"]
+    metadata:
+      category: ssh-credential
+      kind: host
+    patterns:
+      - pattern-regex: (?s)\A\x{FEFF}?#![ \t]*(?:[^\s/]*/)*(?:env[ \t]+(?:-\S*[ \t]+)*(?:[^\s/]*/)*)?(?:ba|k)?sh(?:[ \t][^\r\n]*)?(?:\r?\n.*|\r)?\z
+      - pattern-regex: (?m)^[^#\r\n]*\b(?:ssh|scp|sftp|rsync)\b[^#\r\n]*
+      - pattern-regex: (?<![\w.@$-])(?P<USER>[A-Za-z_][\w.-]*)@(?P<HOST>[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?)
+      - focus-metavariable: $HOST
+
+  - id: shell-ssh-identity-shebang
+    message: An ssh key file is named in a shell script.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      exclude: ["*.sh", "*.bash", "*.ksh"]
+    metadata:
+      category: ssh-credential
+      kind: key-file
+    patterns:
+      - pattern-regex: (?s)\A\x{FEFF}?#![ \t]*(?:[^\s/]*/)*(?:env[ \t]+(?:-\S*[ \t]+)*(?:[^\s/]*/)*)?(?:ba|k)?sh(?:[ \t][^\r\n]*)?(?:\r?\n.*|\r)?\z
       - pattern-either:
           - pattern-regex: (?m)^[^#\r\n]*?(?<![\w.-])ssh(?:[ \t]+-[46AaCfGgKkMNnqsTtVvXxYy]*(?:[BbcDEeFIJLlmOoPpQRSWw][ \t]*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s'"]+))?(?=\s))*(?:[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s'"#-][^\s'"]*)(?:[ \t]+-[46AaCfGgKkMNnqsTtVvXxYy]*(?:[BbcDEeFIJLlmOoPpQRSWw][ \t]*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s'"]+))?(?=\s))*)?[ \t]+-i[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)
           - pattern-regex: (?m)^[^#\r\n]*?(?<![\w.-])(?:scp|sftp)(?=[ \t])(?:[^#\r\n'"@]|"[^"\r\n]*"|'[^'\r\n]*')*?[ \t]-i[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)

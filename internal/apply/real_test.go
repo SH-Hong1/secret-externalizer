@@ -263,7 +263,7 @@ func realFinding(fingerprint, file string, c finding.Category, k finding.Kind, v
 	l.Detections = []finding.Detection{{Tool: "betterleaks", Rule: "fake-rule"}}
 	return finding.Finding{
 		Fingerprint: fingerprint, File: file, Category: c, Kind: k,
-		Preview: finding.Preview(c, k, val), Locations: []finding.Location{l},
+		Preview: finding.Preview(c, k, val), Shell: triage.ShellFile(file, nil), Locations: []finding.Location{l},
 	}
 }
 

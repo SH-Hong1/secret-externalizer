@@ -195,7 +195,7 @@ func insertBundles(ctx context.Context, tx pgx.Tx, projectID int64, bundles []pl
 // as a statement takes them to unnest.
 type findingColumns struct {
 	fingerprints, files, keys, categories, kinds, previews []string
-	hasOriginal                                            []bool
+	hasOriginal, shell                                     []bool
 }
 
 // columnsOf returns the columns of the rows of rows that chunk indexes.
@@ -210,6 +210,7 @@ func columnsOf(rows []plannedRow, chunk []int) findingColumns {
 		c.kinds = append(c.kinds, string(f.Kind))
 		c.previews = append(c.previews, f.Preview)
 		c.hasOriginal = append(c.hasOriginal, f.HasOriginal)
+		c.shell = append(c.shell, f.Shell)
 	}
 	return c
 }
@@ -224,11 +225,11 @@ func updateFindings(ctx context.Context, tx pgx.Tx, id scan.ID, rows []plannedRo
 	c := columnsOf(rows, chunk)
 	_, err := tx.Exec(ctx, `
 		UPDATE finding f SET key = u.key, category = u.category, kind = u.kind, preview = u.preview,
-			has_original = u.has_original, last_scan_id = $1
-		FROM unnest($2::bigint[], $3::text[], $4::text[], $5::text[], $6::text[], $7::boolean[])
-			AS u (id, key, category, kind, preview, has_original)
+			has_original = u.has_original, shell = u.shell, last_scan_id = $1
+		FROM unnest($2::bigint[], $3::text[], $4::text[], $5::text[], $6::text[], $7::boolean[], $8::boolean[])
+			AS u (id, key, category, kind, preview, has_original, shell)
 		WHERE f.id = u.id`,
-		id, ids, c.keys, c.categories, c.kinds, c.previews, c.hasOriginal)
+		id, ids, c.keys, c.categories, c.kinds, c.previews, c.hasOriginal, c.shell)
 	if err != nil {
 		return fmt.Errorf("updating findings: %w", err)
 	}
@@ -253,13 +254,16 @@ func insertFindings(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID,
 	}
 	c := columnsOf(rows, chunk)
 	inserted, err := tx.Query(ctx, `
-		INSERT INTO finding (project_id, fingerprint, file_path, key, category, kind, preview, has_original,
+		INSERT INTO finding (project_id, fingerprint, file_path, key, category, kind, preview, has_original, shell,
 			first_scan_id, last_scan_id, bundle_id)
-		SELECT $1, u.fingerprint, u.file_path, u.key, u.category, u.kind, u.preview, u.has_original, $2, $2, u.bundle_id
-		FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::boolean[], $10::bigint[])
-			AS u (fingerprint, file_path, key, category, kind, preview, has_original, bundle_id)
+		SELECT $1, u.fingerprint, u.file_path, u.key, u.category, u.kind, u.preview, u.has_original, u.shell,
+			$2, $2, u.bundle_id
+		FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::boolean[],
+			$10::boolean[], $11::bigint[])
+			AS u (fingerprint, file_path, key, category, kind, preview, has_original, shell, bundle_id)
 		RETURNING id, fingerprint, file_path, key`,
-		projectID, id, c.fingerprints, c.files, c.keys, c.categories, c.kinds, c.previews, c.hasOriginal, bundles)
+		projectID, id, c.fingerprints, c.files, c.keys, c.categories, c.kinds, c.previews, c.hasOriginal, c.shell,
+		bundles)
 	if err != nil {
 		return fmt.Errorf("inserting findings: %w", err)
 	}
@@ -399,7 +403,7 @@ func scanLocation(rows pgx.Rows, dest ...any) (finding.Location, error) {
 // their first location; locations by line and column.
 func (s *Store) FindingsByScan(ctx context.Context, id scan.ID) ([]finding.Finding, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT f.id, f.fingerprint, f.file_path, f.key, f.category, f.kind, f.preview, f.has_original,
+		SELECT f.id, f.fingerprint, f.file_path, f.key, f.category, f.kind, f.preview, f.has_original, f.shell,
 			`+locationColumns+`
 		FROM location l JOIN finding f ON f.id = l.finding_id
 		WHERE l.scan_id = $1
@@ -413,7 +417,7 @@ func (s *Store) FindingsByScan(ctx context.Context, id scan.ID) ([]finding.Findi
 	index := map[finding.ID]int{}
 	for rows.Next() {
 		var f finding.Finding
-		l, err := scanLocation(rows, &f.ID, &f.Fingerprint, &f.File, &f.Key, &f.Category, &f.Kind, &f.Preview, &f.HasOriginal)
+		l, err := scanLocation(rows, &f.ID, &f.Fingerprint, &f.File, &f.Key, &f.Category, &f.Kind, &f.Preview, &f.HasOriginal, &f.Shell)
 		if err != nil {
 			return nil, err
 		}

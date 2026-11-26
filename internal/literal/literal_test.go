@@ -72,6 +72,8 @@ func TestValue(t *testing.T) {
 		{"shell comment", "deploy.sh", `# PASS="«$x»"`, `$x`},
 		{"shell hash inside word", "deploy.sh", `PASS=a#b; Q="«\$»"`, `$`},
 		{"shell upper case extension", "DEPLOY.SH", `P="«a\$»"`, `a$`},
+		{"shell shebang without extension", "bin/start", "#!/bin/sh\nPASS=\"«a\\$b»\"", `a$b`},
+		{"no shebang without extension", "bin/start", "PASS=\"«a\\$b»\"", `a\$b`},
 
 		{"json string", "config.json", `{"password": "«a\"b\\c\/d\né»"}`, "a\"b\\c/d\né"},
 		{"json surrogate pair", "config.json", `{"p": "«😀»"}`, "😀"},
@@ -196,6 +198,8 @@ func TestShellSingleQuoted(t *testing.T) {
 		{"bin/run.sh", "# PW='«dev-only-fake»'", false},
 		{"bin/run.sh", "PW=$'«dev-only-fake»'", false},
 		{"bin/run.sh", "A=1\nPW='«dev-only-fake»'", true},
+		{"bin/start", "#!/usr/bin/env bash\nPW='«dev-only-fake»'", true},
+		{"bin/start", "PW='«dev-only-fake»'", false},
 		{"conf/app.properties", "pw='«dev-only-fake»'", false},
 		{"conf/app.yml", "pw: '«dev-only-fake»'", false},
 	}

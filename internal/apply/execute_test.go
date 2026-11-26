@@ -145,7 +145,9 @@ func (f *fixture) valueBundle(c finding.Category, k finding.Kind, d triage.Decis
 	f.t.Helper()
 	b := triage.Bundle{Fingerprint: sha([]byte(val)), Category: c, Kind: k, Decision: d}
 	for _, file := range files {
-		b.Members = append(b.Members, triage.Member{File: file, Locations: []finding.Location{f.locate(file, val)}})
+		b.Members = append(b.Members, triage.Member{
+			File: file, Shell: triage.ShellFile(file, read(f.t, f.dir, file)), Locations: []finding.Location{f.locate(file, val)},
+		})
 	}
 	return f.add(b)
 }
@@ -927,6 +929,7 @@ func TestApply_SingleQuotedShellValue(t *testing.T) {
 		"bin/whole.sh": {"PW='" + value + "'\n", `PW=''"${EXT_QUOTED_PASSWORD}"''` + "\n"},
 		"bin/part.sh":  {"export X='a " + value + " b'\n", `export X='a '"${EXT_QUOTED_PASSWORD}"' b'` + "\n"},
 		"bin/plain.sh": {`PW="` + value + `"` + "\n", `PW="${EXT_QUOTED_PASSWORD}"` + "\n"},
+		"bin/start":    {"#!/bin/sh\nPW='" + value + "'\n", "#!/bin/sh\n" + `PW=''"${EXT_QUOTED_PASSWORD}"''` + "\n"},
 	}
 	f := newShop(t, inRepository)
 	for file, tt := range texts {
@@ -934,7 +937,7 @@ func TestApply_SingleQuotedShellValue(t *testing.T) {
 	}
 	f.commit()
 	want := map[string]string{}
-	for _, k := range f.secret("quoted.password", value, "bin/part.sh", "bin/plain.sh", "bin/whole.sh") {
+	for _, k := range f.secret("quoted.password", value, "bin/part.sh", "bin/plain.sh", "bin/start", "bin/whole.sh") {
 		want[k] = string(apply.StatusApplied)
 	}
 	for _, k := range f.secret("db.yaml.password", ymlValue, ymlFile) {

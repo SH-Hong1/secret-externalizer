@@ -26,7 +26,7 @@ var tester = audit.Actor{Subject: "fake-subject", Name: "Fake Tester"}
 func fnd(fp, file string, c finding.Category, k finding.Kind, line int) finding.Finding {
 	f := finding.Finding{
 		Fingerprint: fp, File: file, Category: c, Kind: k, Preview: "****",
-		HasOriginal: c != finding.CategoryCustomerData,
+		HasOriginal: c != finding.CategoryCustomerData, Shell: triage.ShellFile(file, nil),
 		Locations: []finding.Location{{
 			StartLine: line, StartCol: 1, EndLine: line, EndCol: 4, FileHash: fileHash,
 			Detections: []finding.Detection{{Tool: "opengrep", Rule: "fake-rule"}},

@@ -80,7 +80,7 @@ func NewPlan(in Input) Plan {
 				}
 				t := newTarget(in.Project.ID, b, m, l)
 				if t.WholeFile {
-					reason, pemOnly := keyFileReason(m.File, customer)
+					reason, pemOnly := keyFileReason(m.File, m.Shell, customer)
 					if reason != "" {
 						p.Skipped = append(p.Skipped, skipped(t.Item, reason))
 						continue
@@ -206,7 +206,7 @@ func newTarget(projectID project.ID, b triage.Bundle, m triage.Member, l finding
 	}
 	name := b.Decision.Name
 	t.StoreKey = name.Config()
-	t.Item.Name = name.For(m.File)
+	t.Item.Name = name.For(m.Shell)
 	t.Item.StorePath = bao.StorePath(int64(projectID), t.StoreKey)
 	if !t.WholeFile {
 		t.Text = "${" + t.Item.Name + "}"
@@ -214,20 +214,20 @@ func newTarget(projectID project.ID, b triage.Bundle, m triage.Member, l finding
 	return t
 }
 
-// keyFileReason returns why the key file named file is not removed whole,
-// or "" and whether the file may be removed only once its text is found
-// to hold nothing but PEM blocks. A file that may hold customer data is
-// never stored; a file with a key-store or certificate extension, or an SSH
-// key name, is; a source or configuration file is not, since removing it
-// would remove the code around the key; any other file is, if it is PEM
-// only.
-func keyFileReason(file string, customer map[string]bool) (reason Reason, pemOnly bool) {
+// keyFileReason returns why the key file named file, a shell script when
+// shell is true, is not removed whole, or "" and whether the file may be
+// removed only once its text is found to hold nothing but PEM blocks. A
+// file that may hold customer data is never stored; a file with a key-store
+// or certificate extension, or an SSH key name, is; a shell script, source
+// or configuration file is not, since removing it would remove the code
+// around the key; any other file is, if it is PEM only.
+func keyFileReason(file string, shell bool, customer map[string]bool) (reason Reason, pemOnly bool) {
 	switch {
 	case finding.CustomerDataPath(file) || customer[file]:
 		return ReasonKeyHoldsCustomerData, false
 	case keyFileName(file):
 		return "", false
-	case sourceFileName(file):
+	case shell || sourceFileName(file):
 		return ReasonKeyInSourceFile, false
 	default:
 		return "", true
@@ -252,9 +252,6 @@ func keyFileName(file string) bool {
 // sourceFileName reports whether file is a source, configuration or page
 // file, which a key in it does not make removable. Case is ignored.
 func sourceFileName(file string) bool {
-	if triage.ShellFile(file) {
-		return true
-	}
 	switch strings.ToLower(path.Ext(file)) {
 	case ".java", ".xml", ".properties", ".yml", ".yaml", ".jsp", ".jspf", ".js", ".html", ".htm":
 		return true
