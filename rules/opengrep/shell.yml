@@ -2,9 +2,14 @@
 # the command sshpass runs, so an ssh -p port is not taken for it), the
 # password assigned to SSHPASS for sshpass -e, the user and host of user@host
 # on an ssh, scp, sftp, or rsync line, and the key file given to -i. The -i
-# is an option of ssh itself: one that comes after user@host, or inside a
-# quoted string that began earlier, belongs to the remote command (sed -i)
-# and is not reported. Comment lines and variables ($VAR) are not reported,
+# is reported only where it is an option of ssh, scp, or sftp itself. ssh
+# reads its options, then the destination, then more options, and the first
+# word after those starts the remote command, so the ssh rule walks the words
+# in that order, skipping the argument of each option that takes one; a -i
+# after the remote command has started (ssh host sed -i) is not reported.
+# scp and sftp run no remote command; for them a -i after user@host, or inside
+# a quoted string that began earlier, is not reported. A command whose name
+# only begins with ssh (ssh-keygen) is not ssh. Comment lines and variables ($VAR) are not reported,
 # and quotes around a value are not part of it; a quoted sshpass password may
 # contain spaces. A (?|...) group numbers its alternatives' values alike, so
 # each is $VALUE.
@@ -76,5 +81,7 @@ rules:
       category: ssh-credential
       kind: key-file
     patterns:
-      - pattern-regex: (?m)^[^#\r\n]*?\b(?:ssh|scp|sftp)\b(?:[^#\r\n'"@]|"[^"\r\n]*"|'[^'\r\n]*')*?[ \t]-i[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)
+      - pattern-either:
+          - pattern-regex: (?m)^[^#\r\n]*?(?<![\w.-])ssh(?:[ \t]+-[46AaCfGgKkMNnqsTtVvXxYy]*(?:[BbcDEeFIJLlmOoPpQRSWw][ \t]*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s'"]+))?(?=\s))*(?:[ \t]+(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s'"#-][^\s'"]*)(?:[ \t]+-[46AaCfGgKkMNnqsTtVvXxYy]*(?:[BbcDEeFIJLlmOoPpQRSWw][ \t]*(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s'"]+))?(?=\s))*)?[ \t]+-i[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)
+          - pattern-regex: (?m)^[^#\r\n]*?(?<![\w.-])(?:scp|sftp)(?=[ \t])(?:[^#\r\n'"@]|"[^"\r\n]*"|'[^'\r\n]*')*?[ \t]-i[ \t]*['"]?(?P<VALUE>[^\s'"$][^\s'"]*)
       - focus-metavariable: $VALUE

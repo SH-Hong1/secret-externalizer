@@ -42,6 +42,7 @@
   {"file": "scripts/remote.sh", "line": 7, "category": "ssh-credential", "kind": "account", "value": "ops"},
   {"file": "scripts/remote.sh", "line": 7, "category": "ssh-credential", "kind": "host", "value": "was9.example.invalid"},
   {"file": "scripts/remote.sh", "line": 7, "category": "ssh-credential", "kind": "key-file", "value": "/home/deploy/.ssh/dev_only_fake_key2"},
+  {"file": "scripts/remote.sh", "line": 10, "category": "ssh-credential", "kind": "key-file", "value": "/home/deploy/.ssh/dev_only_fake_key3"},
   {"file": "spring/beans.xml", "line": 4, "category": "storage-credential", "kind": "password", "value": "dev-only-fake-ctor-password"},
   {"file": "spring/beans.xml", "line": 8, "category": "storage-credential", "kind": "password", "value": "dev-only-fake-ctor-value-password"},
   {"file": "spring/beans.xml", "line": 10, "category": "storage-credential", "kind": "password", "value": "dev-only-fake-manager-password"},
