@@ -85,7 +85,8 @@ rules:
   # or !, then the key, then = or :, then the value. White space alone does
   # not separate them here, and the value is one word that ends the line, so
   # a sentence such as "# password must be rotated" or "# password: see the
-  # wiki" is not a setting.
+  # wiki" is not a setting. A password value that holds Hangul is a
+  # message, as in properties-password.
   - id: properties-comment-password
     message: A password is written in a commented-out line of a properties file.
     severity: WARNING
@@ -96,7 +97,7 @@ rules:
       category: storage-credential
       kind: password
     patterns:
-      - pattern-regex: (?mi)^[ \t]*[#!][#! \t]*(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)[ \t]*[=:][ \t]*(?![$#]\{)(?P<VALUE>\S+)[ \t]*\r?$
+      - pattern-regex: (?mi)^[ \t]*[#!][#! \t]*(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)[ \t]*[=:][ \t]*(?![$#]\{)(?![^\r\n]*(?:\p{Hangul}|\\u(?:[aAbBcC][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2}|11[0-9a-fA-F]{2}|31[3-8][0-9a-fA-F])))(?P<VALUE>\S+)[ \t]*\r?$
       - focus-metavariable: $VALUE
 
   - id: properties-comment-username

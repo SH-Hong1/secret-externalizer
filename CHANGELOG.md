@@ -6,6 +6,7 @@
 
 ### 변경
 
+- `.properties` 파일에서 비밀번호 키의 값에 한글이 있으면(글자 그대로이거나 한글 영역의 `\uXXXX` 이스케이프) 비밀번호로 보고하지 않는다. 주석 처리한 줄도 같다. 전에는 메시지 묶음의 `label.password=비밀번호`, `changePassword=비밀번호 변경` 같은 줄이 비밀번호로 보고되었다(`docs/adr/0105-hangul-property-values-are-messages.md`)
 - Spring XML bean의 `url`, `URL`, `jdbcUrl`, `driverUrl`(`p:url`, `p:jdbcUrl` 포함) 값이 `jdbc:`로 시작하면 bean 이름과 상관없이 데이터 소스 URL로 보고하고, 그 bean의 `user`, `username`도 데이터 소스 계정으로 보고한다. 전에는 `orderPool`처럼 이름에 `pool`만 있고 알려진 데이터 소스 이름이 없는 bean의 URL과 계정이 빠졌다. 스레드 풀처럼 `jdbc:` URL이 없는 bean은 지금처럼 보고하지 않는다(`docs/adr/0104-jdbc-url-makes-a-bean-a-data-source.md`)
 - `application*.yml`에서 목록 항목의 첫 키로 쓴 블록 스칼라 비밀번호(`- password: >`, `- password: |`)를 한 줄일 때 보고한다. 새 규칙 `yaml-list-block-password`가 보고하고, placeholder는 보고하지 않는다. 또 블록 스칼라 비밀번호의 블록 안에 빈 줄이 있으면 두 줄 이상인 블록으로 보고 보고하지 않는다. 전에는 빈 줄 앞의 첫 줄만 값으로 보고해 적용이 값의 일부만 바꿀 수 있었다(`docs/adr/0103-yaml-list-block-scalar-passwords.md`)
 - Maven `settings.xml`의 `<proxy>` 안 `<username>`과 `<password>`를 기타 비밀 값(`other-secret`)의 계정과 비밀번호로 보고한다. 새 규칙 `maven-settings-proxy-username`, `maven-settings-proxy-password`가 보고하고, placeholder와 빈 값은 보고하지 않는다. 전에는 `<server>` 안만 찾아 프록시 계정과 비밀번호가 빠졌다(`docs/adr/0102-maven-proxy-credentials-are-other-secrets.md`)
