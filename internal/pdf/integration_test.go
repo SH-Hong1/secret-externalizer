@@ -72,6 +72,20 @@ func TestConvert_Real(t *testing.T) {
 		}
 	})
 
+	t.Run("Korean text in the footer", func(t *testing.T) {
+		out := convert(t, c, pdf.Document{
+			Index: []byte(`<!doctype html><html><body><p>ASCII page</p></body></html>`),
+			Footer: []byte(`<!doctype html><html lang="ko"><head><meta charset="utf-8"><style>body{font-family:"Noto Sans CJK KR",sans-serif;font-size:8pt}</style></head>` +
+				`<body>결제 서비스 | <span class="pageNumber"></span></body></html>`),
+		})
+		// The footer reads none of the fonts sent with the page and the page
+		// here has no Korean text, so a Korean font in the PDF is the one the
+		// footer names from the image, as the report footer does.
+		if !bytes.Contains(out, []byte("+NotoSansCJKkr")) {
+			t.Errorf("Convert() of a Korean footer gave a PDF without Noto Sans CJK KR embedded")
+		}
+	})
+
 	t.Run("script and outside image", func(t *testing.T) {
 		convert(t, c, pdf.Document{
 			Index: []byte(`<!doctype html><html><body><p id="p">static</p>` +

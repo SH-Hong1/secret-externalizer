@@ -19,17 +19,24 @@ and named by its bare name. */}}
 </html>
 {{end}}
 {{/* The footer of every sheet of the PDF. The converter draws it apart
-from the page and it reads no stylesheet, so it carries its own style. Its
-text is ASCII, because it cannot use the fonts sent with the page. */}}
+from the page and it reads no stylesheet and none of the fonts sent with the
+page, so it carries its own style and names a Korean font of the converter
+image; it does not take the lang attribute into account when choosing a
+fallback font. Text alignment on the body does not move it, so a flex
+row of the full width puts it on the right. A long project name is cut with
+an ellipsis and the scan and page numbers stay whole. */}}
 {{define "print-footer"}}<!doctype html>
-<html>
+<html lang="ko">
 <head>
 <meta charset="utf-8">
 <style>
-body { margin: 0; padding: 0 0.6in; width: 100%; box-sizing: border-box; font-family: sans-serif; font-size: 8pt; color: #565d6b; text-align: right; }
+html, body { margin: 0; padding: 0; }
+.footer { display: flex; justify-content: flex-end; box-sizing: border-box; width: 100%; padding: 0 0.6in; font-family: "Noto Sans CJK KR", sans-serif; font-size: 8pt; color: #565d6b; white-space: pre; }
+.footer-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.footer-keep { flex: none; }
 </style>
 </head>
-<body>secret-externalizer | scan #{{.ScanID}} | <span class="pageNumber"></span> / <span class="totalPages"></span></body>
+<body><div class="footer"><span class="footer-keep">secret-externalizer | </span><span class="footer-name">{{.ProjectName}}</span><span class="footer-keep"> | scan #{{.ScanID}} | <span class="pageNumber"></span> / <span class="totalPages"></span></span></div></body>
 </html>
 {{end}}
 {{/* The report itself, drawn by the screen and by the PDF document. It
