@@ -59,7 +59,7 @@ func maskPatterns(placed []*placedFile, raws []Raw) []pattern {
 				continue
 			}
 			seenURL[string(text)] = true
-			parts, _ := connstr.Split(text)
+			parts, _ := connstr.Split(text) // splitConnections split this URL, so Split knows it
 			var short []finding.Span
 			for _, p := range parts {
 				if p.Span.End-p.Span.Start < minMaskLen {
