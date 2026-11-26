@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"slices"
 	"strconv"
 
 	"github.com/SH-Hong1/secret-externalizer/internal/apply"
@@ -270,8 +269,7 @@ func (aw applyWriter) build(ctx context.Context, pid project.ID) (applyPage, int
 		page.Checks = runChecks(c.Blockers)
 		if c.State == apply.StateBlocked {
 			page.View = applyViewBlocked
-			page.Dirty = slices.Clone(c.DirtyFiles)
-			page.DirtyMore = max(0, c.DirtyCount-len(c.DirtyFiles))
+			page.Dirty = dirtyOf(*c)
 			page.Unchecked = countPlanned(items)
 			return page, 0, nil
 		}

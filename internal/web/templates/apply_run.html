@@ -37,6 +37,10 @@
 <div><a class="btn btn-primary" href="{{$.ProjectHref}}">프로젝트에서 스캔 시작</a></div>
 {{else if $.LaterScan}}<p class="text-2">이 실행 뒤에 요청된 스캔: <a href="/scans/{{$.LaterScan}}">스캔 #{{$.LaterScan}}</a></p>
 {{end}}</div>
+{{end}}{{if .Refused}}<section class="flex flex-col gap-2.5">
+<h2 class="section-title mb-0">조건</h2>
+<p class="text-2">worker가 적용을 시작하기 전에 조건을 다시 점검했고, 통과하지 못해 아무것도 바꾸지 않았습니다.</p>
+{{template "checks" .Checks}}{{with .Dirty}}{{template "dirty" .}}{{end}}</section>
 {{end}}{{end}}<dl class="facts">
 <div><dt>요청</dt><dd>{{.Run.Requester.Name}} · <span class="mono">{{.RequestedAt}}</span></dd></div>
 <div><dt>적용 확인</dt><dd>{{if .ConfirmedAt}}<span class="mono">{{.ConfirmedAt}}</span>{{else}}<span class="muted">—</span>{{end}}</dd></div>
@@ -93,7 +97,7 @@
 {{end}}{{with .Untouched}}<details class="skips">
 <summary>처리하지 않음 · {{len .}}곳</summary>
 <div class="skips-body">
-<p class="text-2">실행이 멈춰 이 위치에는 닿지 못했습니다. 소스는 그대로입니다. 다시 점검하고 적용하면 바꿉니다.</p>
+<p class="text-2">{{if $.Refused}}조건을 통과하지 못해 이 위치는 바꾸지 않았습니다.{{else}}실행이 멈춰 이 위치에는 닿지 못했습니다.{{end}} 소스는 그대로입니다. {{if $.Refused}}조건을 고친 뒤 다시 점검하고 적용하면 바꿉니다.{{else}}다시 점검하고 적용하면 바꿉니다.{{end}}</p>
 {{template "places" .}}</div>
 </details>
 {{end}}{{end}}</main>{{end}}

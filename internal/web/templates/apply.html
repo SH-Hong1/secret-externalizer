@@ -2,15 +2,6 @@
 {{define "section"}}projects{{end}}
 {{define "head"}}{{if eq .View "checking"}}<meta http-equiv="refresh" content="3; url=/projects/{{.Project.ID}}/apply">
 {{end}}{{end}}
-{{define "checks"}}<dl class="facts facts-list">
-{{range .}}<div class="check-row">
-<dt>{{.Label}}</dt>
-<dd><span class="badge badge-{{.Status.Class}}">{{.Status.Label}}</span></dd>
-{{with .Failures}}<dd class="check-detail">{{range .}}<p>{{.Label}}{{with .Code}} <span class="mono">{{.}}</span>{{end}}{{with .Action}} <span class="text-2">{{.}}</span>{{end}}</p>
-{{end}}</dd>
-{{end}}</div>
-{{end}}</dl>
-{{end}}
 {{define "check-button"}}{{if .CanCheck}}<form method="post" action="/projects/{{.Project.ID}}/apply/check">
 <button class="btn {{if eq .View "before"}}btn-primary btn-lg{{else}}btn-secondary btn-lg{{end}}" type="submit">{{if or .Stale (eq .View "blocked") (eq .View "ready")}}다시 점검{{else}}조건 점검{{end}}</button>
 </form>
@@ -70,17 +61,7 @@
 </div>
 {{else if eq .View "blocked"}}<section class="flex flex-col gap-2.5">
 <h2 class="section-title mb-0">조건</h2>
-{{template "checks" .Checks}}{{if .Dirty}}<details class="skips" open>
-<summary>커밋되지 않은 변경 {{.Run.DirtyCount}}개</summary>
-<div class="skips-body">
-<p class="text-2">변경을 커밋하거나 stash한 뒤 다시 점검해 주세요.</p>
-<ul class="skips-list">
-{{range .Dirty}}<li>{{.}}</li>
-{{end}}</ul>
-{{if .DirtyMore}}<p class="muted">처음 {{len .Dirty}}개만 보여 줍니다. 외 {{.DirtyMore}}개.</p>
-{{end}}</div>
-</details>
-{{end}}{{if .Unchecked}}<p class="notice-soft">조건을 통과하지 못해 바꿀 위치 {{.Unchecked}}곳을 점검하지 못함으로 둡니다. 조건을 고친 뒤 다시 점검하면 확인합니다.</p>
+{{template "checks" .Checks}}{{with .Dirty}}{{template "dirty" .}}{{end}}{{if .Unchecked}}<p class="notice-soft">조건을 통과하지 못해 바꿀 위치 {{.Unchecked}}곳을 점검하지 못함으로 둡니다. 조건을 고친 뒤 다시 점검하면 확인합니다.</p>
 {{end}}<div class="form-actions">{{template "check-button" .}}
 <button class="btn btn-primary btn-lg" type="button" disabled>적용</button>
 </div>

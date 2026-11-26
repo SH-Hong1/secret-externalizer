@@ -988,7 +988,7 @@ func TestMoveFinding_KeepsAppliedPlaces(t *testing.T) {
 	id, j := claimApply(t, s, pid)
 	writeFile(t, s, id, "conf/a.yml", hashOf("1"), replaceItem(t, s, pid, pw, "conf/a.yml"))
 	beginFile(t, s, id, "conf/b.xml", hashOf("2"), replaceItem(t, s, pid, pw, "conf/b.xml"))
-	if err := s.FailApply(ctx, j.ID, "worker-a", id, "apply could not finish; see the worker log", nil, nil); err != nil {
+	if err := s.FailApply(ctx, j.ID, "worker-a", id, "apply could not finish; see the worker log", nil, nil, nil); err != nil {
 		t.Fatalf("FailApply(%d) error = %v", id, err)
 	}
 	if b := readBundle(t, s, pid, sid, pw); b.AppliedAt.IsZero() || len(b.Members) != 3 {
@@ -1054,7 +1054,7 @@ func TestMoveFinding_SettledItemsDoNotBlock(t *testing.T) {
 	failed.Status, failed.Reason = apply.StatusFailed, apply.ReasonStoreFailed
 	skipped := replaceItem(t, s, pid, pw, "conf/d.properties")
 	skipped.Status, skipped.Reason = apply.StatusSkipped, apply.ReasonFileChanged
-	if err := s.FailApply(ctx, j.ID, "worker-a", id, apply.FailureSecretStore, nil, []apply.Item{failed, skipped}); err != nil {
+	if err := s.FailApply(ctx, j.ID, "worker-a", id, apply.FailureSecretStore, nil, nil, []apply.Item{failed, skipped}); err != nil {
 		t.Fatalf("FailApply(%d) error = %v", id, err)
 	}
 	statuses := map[string]apply.Reason{}

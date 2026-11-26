@@ -42,7 +42,8 @@ type Store interface {
 	MarkInManifest(ctx context.Context, projectID project.ID) error
 	SettledFingerprints(ctx context.Context, projectID project.ID) ([]string, error)
 	FinishApply(ctx context.Context, jobID int64, workerID string, id ID, items []Item) error
-	FailApply(ctx context.Context, jobID int64, workerID string, id ID, reason string, blockers []Blocker, items []Item) error
+	FailApply(ctx context.Context, jobID int64, workerID string, id ID, reason string, blockers []Blocker,
+		dirty []string, items []Item) error
 	ApplyItems(ctx context.Context, id ID) ([]Item, error)
 	ApplyRun(ctx context.Context, id ID) (Run, error)
 }
@@ -216,7 +217,7 @@ func (r *Runner) end(ctx, limited context.Context, j job.Job, err error, outcome
 	}
 	r.logger.ErrorContext(ctx, "apply run failed", "apply_id", id, "job_id", j.ID, "kind", string(j.Kind),
 		"error", err.Error())
-	if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, reason, nil, outcome); err != nil {
+	if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, reason, nil, nil, outcome); err != nil {
 		return fmt.Errorf("failing apply %d: %w", id, err)
 	}
 	return nil

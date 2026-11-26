@@ -915,6 +915,11 @@ func TestApplyRunPage(t *testing.T) {
 	})
 	failedConfirmed := finishedRun(apply.StateFailed, 8)
 	failedConfirmed.FailureReason = apply.FailureSecretStore
+	refused := finishedRun(apply.StateFailed, 0)
+	refused.FailureReason = apply.FailureDirty
+	refused.Blockers = []apply.Blocker{apply.BlockerDirty}
+	refused.DirtyFiles, refused.DirtyCount = []string{"pom.xml", "src/main/java/shop/App.java"}, 3
+	plannedOnly := unreached[len(unreached)-1:]
 
 	tests := []struct {
 		name       string
@@ -1018,7 +1023,17 @@ func TestApplyRunPage(t *testing.T) {
 		},
 		{
 			name: "places not reached", run: failed, items: unreached, scan: confirmationScan(scan.StatusQueued),
-			want: []string{"처리하지 않음 · 1곳", "deploy/run.sh:4"},
+			want:    []string{"처리하지 않음 · 1곳", "deploy/run.sh:4", "실행이 멈춰 이 위치에는 닿지 못했습니다."},
+			wantNot: []string{"<h2 class=\"section-title mb-0\">조건</h2>", "커밋되지 않은 변경"},
+		},
+		{
+			name: "refused while queued", run: refused, items: plannedOnly,
+			want: []string{
+				"커밋되지 않은 변경이 있습니다.", "<h2 class=\"section-title mb-0\">조건</h2>", "커밋되지 않은 변경이 없음",
+				"커밋되지 않은 변경 3개", "<li>pom.xml</li>", "<li>src/main/java/shop/App.java</li>", "처음 2개만 보여 줍니다. 외 1개.",
+				"처리하지 않음 · 1곳", "deploy/run.sh:4", "조건을 통과하지 못해 이 위치는 바꾸지 않았습니다.",
+			},
+			wantNot: []string{"실행이 멈춰 이 위치에는 닿지 못했습니다."},
 		},
 		{
 			name: "values found again", run: succeededWithFailure, items: runItems(), scan: confirmationScan(scan.StatusSucceeded), reappeared: 2,

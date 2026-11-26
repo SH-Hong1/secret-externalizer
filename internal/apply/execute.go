@@ -63,7 +63,7 @@ func (r *Runner) apply(ctx context.Context, j job.Job) (outcome []Item, err erro
 	if len(p.blockers) > 0 {
 		r.logger.WarnContext(ctx, "apply refused", "apply_id", id, "job_id", j.ID, "blockers", p.blockers,
 			"dirty", len(p.dirty))
-		if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, refusal(p.blockers), p.blockers, nil); err != nil {
+		if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, refusal(p.blockers), p.blockers, p.dirty, nil); err != nil {
 			return nil, fmt.Errorf("refusing the run: %w", err)
 		}
 		return nil, nil
@@ -104,7 +104,7 @@ func (r *Runner) close(ctx context.Context, j job.Job, p *prepared, storeFailure
 	}
 	if failed {
 		r.logger.WarnContext(ctx, "apply stored nothing", "apply_id", id, "job_id", j.ID, "store_failures", storeFailures)
-		if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, FailureSecretStore, nil, outcome); err != nil {
+		if err := r.store.FailApply(ctx, j.ID, r.opts.WorkerID, id, FailureSecretStore, nil, nil, outcome); err != nil {
 			return fmt.Errorf("failing the run: %w", err)
 		}
 		return nil

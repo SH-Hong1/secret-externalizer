@@ -84,6 +84,7 @@ type savedCheck struct {
 type failedRun struct {
 	Reason   string
 	Blockers []apply.Blocker
+	Dirty    []string
 }
 
 func newFakeStore() *fakeStore {
@@ -365,13 +366,13 @@ func (s *fakeStore) FinishApply(ctx context.Context, jobID int64, workerID strin
 }
 
 func (s *fakeStore) FailApply(ctx context.Context, jobID int64, workerID string, id apply.ID, reason string,
-	blockers []apply.Blocker, items []apply.Item,
+	blockers []apply.Blocker, dirty []string, items []apply.Item,
 ) error {
-	if err := s.enter(ctx, "FailApply", jobID, workerID, id, reason, blockers, items); err != nil {
+	if err := s.enter(ctx, "FailApply", jobID, workerID, id, reason, blockers, dirty, items); err != nil {
 		return err
 	}
 	s.merge(id, items)
-	s.failed = &failedRun{Reason: reason, Blockers: slices.Clone(blockers)}
+	s.failed = &failedRun{Reason: reason, Blockers: slices.Clone(blockers), Dirty: slices.Clone(dirty)}
 	s.state[id] = apply.StateFailed
 	return nil
 }
