@@ -102,9 +102,10 @@ func TestHandle_SameValueTwoFiles(t *testing.T) {
 
 func TestHandle_MarksShellScripts(t *testing.T) {
 	line := "PW=\"" + password + "\"\n"
-	eucKR, err := korean.EUCKR.NewEncoder().String("#!/bin/sh\n# 배포\n" + line)
+	plain := "#!/bin/sh\n# 배포\n" + line
+	eucKR, err := korean.EUCKR.NewEncoder().String(plain)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("EUC-KR NewEncoder().String(%q) error = %v, want nil", plain, err)
 	}
 	e := newEnv(t, map[string]string{
 		"bin/deploy.sh":      line,
