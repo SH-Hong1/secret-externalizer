@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/go-cmp/cmp"
 
+	"github.com/SH-Hong1/secret-externalizer/internal/apply"
 	"github.com/SH-Hong1/secret-externalizer/internal/db"
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/job"
@@ -506,10 +507,20 @@ func TestScanCreate_WhileApplying(t *testing.T) {
 }
 
 func TestScanPage_Confirmation(t *testing.T) {
-	const unchecked = "이 스캔이 검사한 범위에서는 외부화한 값이 다시 발견되지 않았습니다. 건너뛴 파일이나 버린 결과가 있습니다."
+	const (
+		unchecked = "이 스캔이 검사한 범위에서는 외부화한 값이 다시 발견되지 않았습니다. 건너뛴 파일이나 버린 결과가 있습니다."
+		unsure    = "확인 스캔이 외부화한 값을 다시 찾지 못했지만, 바꾸던 중에 멈춘 파일의 값은 이 확인에 들지 않을 수 있습니다."
+	)
+	place := func(file string, status apply.Status) apply.Item {
+		return apply.Item{
+			BundleID: 101, File: file, StartLine: 5, Action: apply.ActionReplace, Category: finding.CategoryStorage,
+			Kind: finding.KindPassword, Name: "ext.db.main.password", Status: status,
+		}
+	}
 	for _, tt := range []struct {
 		name       string
 		scan       scan.Scan
+		items      []apply.Item
 		reappeared int
 		want       []string
 		wantNot    []string
@@ -538,6 +549,30 @@ func TestScanPage_Confirmation(t *testing.T) {
 			want: []string{unchecked},
 		},
 		{
+			name: "run stopped while writing", scan: scan.Scan{Status: scan.StatusSucceeded},
+			items:   []apply.Item{place("conf/a.yml", apply.StatusApplied), place("conf/d.properties", apply.StatusWriting)},
+			want:    []string{unsure},
+			wantNot: []string{"외부화한 값이 모두 사라졌습니다"},
+		},
+		{
+			name: "run stopped while writing, skipped files", scan: scan.Scan{Status: scan.StatusSucceeded, Skipped: 1},
+			items:   []apply.Item{place("conf/d.properties", apply.StatusWriting)},
+			want:    []string{unsure},
+			wantNot: []string{unchecked},
+		},
+		{
+			name: "run stopped while writing a changed file", scan: scan.Scan{Status: scan.StatusSucceeded},
+			items:   []apply.Item{place("conf/a.yml", apply.StatusApplied), place("conf/a.yml", apply.StatusWriting)},
+			want:    []string{"외부화한 값이 모두 사라졌습니다"},
+			wantNot: []string{unsure},
+		},
+		{
+			name: "run stopped while writing, values found again", scan: scan.Scan{Status: scan.StatusSucceeded}, reappeared: 1,
+			items:   []apply.Item{place("conf/d.properties", apply.StatusWriting)},
+			want:    []string{"외부화한 묶음의 값이 1개 항목에서 다시 발견되었습니다"},
+			wantNot: []string{unsure},
+		},
+		{
 			name: "running", scan: scan.Scan{Status: scan.StatusRunning},
 			want:    []string{"확인 스캔이 진행 중입니다"},
 			wantNot: []string{"외부화한 값이 모두 사라졌습니다"},
@@ -553,6 +588,8 @@ func TestScanPage_Confirmation(t *testing.T) {
 				e.triage.setScan(sc, map[triage.Verdict]int{})
 			}
 			e.applies.putReappeared(8, tt.reappeared)
+			e.applies.putRun(apply.Run{ID: 4, ProjectID: pid, State: apply.StateFailed})
+			e.applies.putItems(4, tt.items)
 			res := e.do(t, http.MethodGet, "/scans/8", nil, e.user(t))
 			if res.status != http.StatusOK {
 				t.Fatalf("GET /scans/8 status = %d, want 200", res.status)
