@@ -356,6 +356,91 @@ func TestInspect_OutsideRoot(t *testing.T) {
 	})
 }
 
+// alternates writes lines as the alternates file of the repository at dir.
+func alternates(t *testing.T, dir string, lines ...string) {
+	t.Helper()
+	write(t, dir, map[string]string{".git/objects/info/alternates": strings.Join(lines, "\n") + "\n"})
+}
+
+func TestInspect_ObjectsOutsideRoot(t *testing.T) {
+	git := gitPath(t)
+
+	refused := []struct {
+		name  string
+		setup func(t *testing.T, outer, root string) string
+	}{
+		{"shared clone of an outside repository", func(t *testing.T, outer, root string) string {
+			src := repo(t, outer, "src", map[string]string{"a.txt": "a\n"})
+			dir := filepath.Join(root, "p")
+			worktreetest.Git(t, outer, "clone", "-q", "--shared", src, dir)
+			return dir
+		}},
+		{"relative alternate leading outside", func(t *testing.T, outer, root string) string {
+			repo(t, outer, "src", map[string]string{"a.txt": "a\n"})
+			dir := repo(t, root, "p", map[string]string{"b.txt": "b\n"})
+			alternates(t, dir, "# a comment", "", "../../../../src/.git/objects")
+			return dir
+		}},
+		{"alternate inside root that chains outside", func(t *testing.T, outer, root string) string {
+			repo(t, outer, "src", map[string]string{"a.txt": "a\n"})
+			mid := repo(t, root, "mid", map[string]string{"m.txt": "m\n"})
+			alternates(t, mid, filepath.Join(outer, "src", ".git", "objects"))
+			dir := repo(t, root, "p", map[string]string{"b.txt": "b\n"})
+			alternates(t, dir, filepath.Join(mid, ".git", "objects"))
+			return dir
+		}},
+		{"quoted alternate", func(t *testing.T, _, root string) string {
+			dir := repo(t, root, "p", map[string]string{"b.txt": "b\n"})
+			alternates(t, dir, `"/tmp/x"`)
+			return dir
+		}},
+		{"alternates file linked outside", func(t *testing.T, outer, root string) string {
+			dir := repo(t, root, "p", map[string]string{"b.txt": "b\n"})
+			write(t, outer, map[string]string{"alternates": "# nothing\n"})
+			if err := os.Symlink(filepath.Join(outer, "alternates"),
+				filepath.Join(dir, ".git", "objects", "info", "alternates")); err != nil {
+				t.Fatalf("linking the alternates file: %v", err)
+			}
+			return dir
+		}},
+		{"objects folder linked outside", func(t *testing.T, outer, root string) string {
+			dir := repo(t, root, "p", map[string]string{"b.txt": "b\n"})
+			objects := filepath.Join(dir, ".git", "objects")
+			moved := filepath.Join(outer, "objects")
+			if err := os.Rename(objects, moved); err != nil {
+				t.Fatalf("moving the objects folder: %v", err)
+			}
+			if err := os.Symlink(moved, objects); err != nil {
+				t.Fatalf("linking the objects folder: %v", err)
+			}
+			return dir
+		}},
+	}
+	for _, tt := range refused {
+		t.Run(tt.name, func(t *testing.T) {
+			outer, root := workspace(t)
+			dir := tt.setup(t, outer, root)
+			if _, err := worktree.Inspect(t.Context(), git, root, dir); !errors.Is(err, worktree.ErrNotRepository) {
+				t.Errorf("Inspect(%s) error = %v, want ErrNotRepository", tt.name, err)
+			}
+			if got := worktree.CommitHash(t.Context(), git, root, dir); got != "" {
+				t.Errorf("CommitHash(%s) = %q, want empty", tt.name, got)
+			}
+		})
+	}
+
+	t.Run("shared clone inside root", func(t *testing.T) {
+		_, root := workspace(t)
+		src := repo(t, root, "src", map[string]string{"a.txt": "a\n"})
+		dir := filepath.Join(root, "p")
+		worktreetest.Git(t, root, "clone", "-q", "--shared", src, dir)
+		st := inspect(t, root, dir)
+		if len(st.Dirty) != 0 || !st.Tracked("a.txt") {
+			t.Errorf("Inspect(shared clone inside root) = %+v, want clean with a.txt tracked", st)
+		}
+	})
+}
+
 // hostile is a repository whose configuration runs marker.sh if git obeys it.
 type hostile struct {
 	name string
