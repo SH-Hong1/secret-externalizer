@@ -110,6 +110,9 @@ type planner struct {
 	// takenOver has, for each value and file whose keyless row a key took
 	// over in this scan, the bundle of that row.
 	takenOver map[fileOfValue]int64
+	// keyed has each value and file of which the scan found a keyed
+	// finding.
+	keyed map[fileOfValue]bool
 }
 
 // planFindings decides what storing findings, the findings of one scan in
@@ -120,7 +123,12 @@ type planner struct {
 // A finding that is stored under the same fingerprint, file and key keeps
 // its row. A keyed finding that is not stored takes over the one row of its
 // fingerprint and file when that row has no key and the scan has not found
-// it yet. Any other finding is a new row, in the bundle bundleFor gives it,
+// it yet. A keyless finding that is not stored takes over the one row of its
+// fingerprint and file when that row has a key, the scan has not found it
+// yet, the scan finds no keyed finding of that fingerprint and file, and the
+// finding is not customer data, which has no key and a bundle of its own: a
+// scan that cannot read a key it read before keeps the row with its key,
+// bundle and decision. Any other finding is a new row, in the bundle bundleFor gives it,
 // except that a new row of a value and file whose keyless row was taken
 // over in this scan gets an own bundle that takes the decision of the value
 // from the taken-over row's bundle (see storeFindings).
@@ -134,6 +142,12 @@ func planFindings(stored []storedFinding, bundles []autoBundle, findings []findi
 		byBundle:  make(map[fileOfBundle][]*planRow, len(stored)),
 		auto:      make(map[autoKey]bundleRef, len(bundles)),
 		takenOver: make(map[fileOfValue]int64),
+		keyed:     make(map[fileOfValue]bool),
+	}
+	for _, f := range findings {
+		if f.Key != "" {
+			p.keyed[fileOfValue{f.Fingerprint, f.File}] = true
+		}
 	}
 	for _, b := range bundles {
 		p.auto[autoKey{b.fingerprint, b.origin}] = bundleRef{id: b.id}
@@ -161,14 +175,8 @@ func (p *planner) add(of fileOfValue, r *planRow) {
 func (p *planner) place(f finding.Finding) int {
 	of := fileOfValue{f.Fingerprint, f.File}
 	r, ok := p.byID[identity{of, f.Key}]
-	if !ok && f.Key != "" {
-		if rows := p.byFile[of]; len(rows) == 1 && rows[0].key == "" && !rows[0].seen {
-			r, ok = rows[0], true
-			p.takenOver[of] = r.bundle.id
-			delete(p.byID, identity{of, ""})
-			r.key = f.Key
-			p.byID[identity{of, f.Key}] = r
-		}
+	if !ok {
+		r, ok = p.takeOver(of, f)
 	}
 	if !ok {
 		r = &planRow{key: f.Key, slot: -1}
@@ -185,8 +193,42 @@ func (p *planner) place(f finding.Finding) int {
 		r.slot = len(p.plan.rows)
 		p.plan.rows = append(p.plan.rows, plannedRow{id: r.id, bundle: r.bundle})
 	}
+	f.Key = r.key
 	p.plan.rows[r.slot].finding = f
 	return r.slot
+}
+
+// takeOver returns the one row of the value and file of f, a finding that
+// is not stored, when the row can be taken over as
+// planFindings describes. A keyed finding gives a keyless row its key and
+// starts the value decisions of the file's other keys from its bundle. A
+// keyless finding that is not customer data takes over a keyed row only
+// when the scan finds no key of the value and file, and leaves the row its key: the key holds no value,
+// since a key that overlaps one is masked rather than dropped, and a later
+// key that differs still starts a row of its own.
+func (p *planner) takeOver(of fileOfValue, f finding.Finding) (*planRow, bool) {
+	rows := p.byFile[of]
+	if len(rows) != 1 || rows[0].seen {
+		return nil, false
+	}
+	r := rows[0]
+	keyedOverKeyless := f.Key != "" && r.key == ""
+	keylessOverKeyed := f.Key == "" && r.key != "" && !p.keyed[of] &&
+		f.Category != finding.CategoryCustomerData
+	if !keyedOverKeyless && !keylessOverKeyed {
+		return nil, false
+	}
+	if keylessOverKeyed {
+		// The keyless finding names the row from now on, so that the
+		// scan's other keyless findings of the file meet it.
+		p.byID[identity{of, ""}] = r
+		return r, true
+	}
+	p.takenOver[of] = r.bundle.id
+	delete(p.byID, identity{of, ""})
+	r.key = f.Key
+	p.byID[identity{of, f.Key}] = r
+	return r, true
 }
 
 // bundleFor returns the bundle a finding that is stored for the first time
