@@ -273,6 +273,100 @@ func TestReport_TotalsMatchLines(t *testing.T) {
 	}
 }
 
+// listTotals adds up the triage list of a scan by verdict in the units of
+// report.Totals: a line of customer data counts each bundle it groups.
+func listTotals(entries []triage.Entry) report.Totals {
+	var got report.Totals
+	for _, e := range entries {
+		n := report.Count{Bundles: e.Bundles, Locations: e.Count}
+		var c *report.Count
+		switch e.Verdict {
+		case triage.VerdictFalsePositive:
+			c = &got.FalsePositive
+		case triage.VerdictHold:
+			c = &got.Hold
+		case "":
+			c = &got.Undecided
+		case triage.VerdictExternalize, triage.VerdictRedact:
+			c = &got.Pending
+		}
+		c.Bundles += n.Bundles
+		c.Locations += n.Locations
+		got.Found.Bundles += n.Bundles
+		got.Found.Locations += n.Locations
+	}
+	return got
+}
+
+func TestReport_ConfirmationTotalsMatchTriageList(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	many := phones("logs/many.log", 5)
+	first := saveAt(t, s, pid, minute(0),
+		append([]finding.Finding{totalsPwA, totalsToken, totalsHost, totalsHold, totalsUndec}, many...)...)
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"},
+		bundleOf(t, s, pid, fpA, "conf/a.yml"))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictExternalize, Name: "api.main.token"},
+		bundleOf(t, s, pid, fpE, "conf/c.yml"))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictRedact}, bundlesOf(t, s, pid, many[:2])...)
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictFalsePositive}, bundleOf(t, s, pid, fpB, "conf/a.yml"))
+	decide(t, s, pid, triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldLater},
+		bundleOf(t, s, pid, fpG, "conf/d.yml"))
+
+	// The run applies the password and both redactions and skips the
+	// token, so the token is still pending and one redacted phone number
+	// is found again.
+	run := runAt(t, s, pid, first, apply.StateSucceeded, minute(60), minute(61))
+	skipped := itemOf(t, s, pid, totalsToken, "api.main.token", apply.StatusSkipped)
+	skipped.Reason = apply.Reason("file-changed")
+	insertItems(t, s, run,
+		itemOf(t, s, pid, totalsPwA, "db.main.password", apply.StatusApplied),
+		itemOf(t, s, pid, many[0], "", apply.StatusApplied),
+		itemOf(t, s, pid, many[1], "", apply.StatusApplied),
+		skipped)
+	confirmation := save(t, s, pid, append([]finding.Finding{totalsToken, totalsHost, totalsHold, totalsUndec}, many[1:]...)...)
+	if err := s.SetScan(ctx, confirmation, scan.StatusSucceeded, *minute(61), run); err != nil {
+		t.Fatalf("SetScan(%d) error = %v", confirmation, err)
+	}
+
+	r := readReport(t, s, confirmation)
+	if r.Latest != confirmation {
+		t.Fatalf("Report(%d).Latest = %d, want the confirmation scan to be the latest", confirmation, r.Latest)
+	}
+	page, err := s.Entries(ctx, pid, confirmation, triage.Filter{Status: triage.StatusAll, Page: 1})
+	if err != nil {
+		t.Fatalf("Entries(%d, all) error = %v", confirmation, err)
+	}
+	if page.Pages != 1 {
+		t.Fatalf("Entries(%d, all) has %d pages, want 1", confirmation, page.Pages)
+	}
+
+	got := listTotals(page.Entries)
+	got.Externalized, got.Redacted = r.Totals.Externalized, r.Totals.Redacted
+	if diff := cmp.Diff(r.Totals, got); diff != "" {
+		t.Errorf("Report(%d).Totals differ from its triage list added up by bundle (-report +list):\n%s", confirmation, diff)
+	}
+
+	// The tabs count lines: the three undecided phone numbers of one file
+	// are one line, and the redacted one found again is another.
+	wantTabs := map[triage.Verdict]int{
+		"": 2, triage.VerdictExternalize: 1, triage.VerdictRedact: 1, triage.VerdictFalsePositive: 1, triage.VerdictHold: 1,
+	}
+	if diff := cmp.Diff(wantTabs, page.Counts); diff != "" {
+		t.Errorf("Entries(%d).Counts differ (-want +got):\n%s", confirmation, diff)
+	}
+	wantReport := report.Totals{
+		Found: report.Count{Bundles: 8, Locations: 8}, FalsePositive: report.Count{Bundles: 1, Locations: 1},
+		Hold: report.Count{Bundles: 1, Locations: 1}, Undecided: report.Count{Bundles: 4, Locations: 4},
+		Pending:      report.Count{Bundles: 2, Locations: 2},
+		Externalized: report.Count{Bundles: 1, Locations: 1}, Redacted: report.Count{Bundles: 2, Locations: 2},
+	}
+	if diff := cmp.Diff(wantReport, r.Totals); diff != "" {
+		t.Errorf("Report(%d).Totals differ (-want +got):\n%s", confirmation, diff)
+	}
+}
+
 func TestReport_OneSnapshot(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()
