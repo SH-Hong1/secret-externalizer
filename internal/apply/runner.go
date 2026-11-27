@@ -574,7 +574,7 @@ func (r *Runner) reconcile(ctx context.Context, j job.Job, projectID project.ID,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		done, err := r.announced(dir, f)
+		done, err := r.announced(ctx, dir, f)
 		if err != nil {
 			return err
 		}
@@ -614,16 +614,42 @@ func (r *Runner) removeTemp(ctx context.Context, j job.Job, dir projectDir, f Op
 	return nil
 }
 
-// announced reports whether the file of f now is as f announced it.
-func (r *Runner) announced(dir projectDir, f OpenFile) (bool, error) {
-	hash, exists, err := r.hashOf(dir, f.File)
-	if err != nil {
-		return false, err
-	}
+// announced reports whether the file of f now is as f announced it: it
+// has the announced hash, or, for a removal, is gone. A file changed by
+// hand after the change was made has neither hash; it counts as changed
+// when every item the record announced puts a placeholder and the file
+// holds each of them. An item that redacts writes a marker that may be in
+// the file for other reasons, so a record with one counts only by its hash.
+func (r *Runner) announced(ctx context.Context, dir projectDir, f OpenFile) (bool, error) {
 	if f.AfterHash == "" {
-		return !exists, nil
+		_, exists, err := r.hashOf(dir, f.File)
+		return !exists, err
 	}
-	return exists && hash == f.AfterHash, nil
+	raw, seen, err := dir.Read(f.File, 2*r.opts.MaxFileBytes)
+	defer clear(raw)
+	switch {
+	case errors.Is(err, fs.ErrNotExist), errors.Is(err, rewrite.ErrTooLarge), errors.Is(err, rewrite.ErrNotRegular):
+		return false, nil
+	case err != nil:
+		return false, fmt.Errorf("reading %s: %w", f.File, err)
+	case seen.Hash == f.AfterHash:
+		return true, nil
+	}
+	items, err := r.store.ApplyItems(ctx, f.Run)
+	if err != nil {
+		return false, fmt.Errorf("reading the items of the run: %w", err)
+	}
+	found := false
+	for _, it := range items {
+		if it.File != f.File || it.Status != StatusWriting {
+			continue
+		}
+		if it.Action != ActionReplace || it.Name == "" || !bytes.Contains(raw, []byte("${"+it.Name+"}")) {
+			return false, nil
+		}
+		found = true
+	}
+	return found, nil
 }
 
 // hashOf returns the hash of the file rel and whether it exists. A file
