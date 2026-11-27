@@ -35,6 +35,9 @@ type bundleRef struct {
 type plannedBundle struct {
 	fingerprint string
 	origin      string
+	// decisionFrom is the stored bundle whose decision of the value the new
+	// bundle takes, or 0 for none.
+	decisionFrom int64
 }
 
 // plannedRow is a finding row as a scan leaves it.
@@ -104,6 +107,9 @@ type planner struct {
 	byFile   map[fileOfValue][]*planRow
 	byBundle map[fileOfBundle][]*planRow
 	auto     map[autoKey]bundleRef
+	// takenOver has, for each value and file whose keyless row a key took
+	// over in this scan, the bundle of that row.
+	takenOver map[fileOfValue]int64
 }
 
 // planFindings decides what storing findings, the findings of one scan in
@@ -114,16 +120,20 @@ type planner struct {
 // A finding that is stored under the same fingerprint, file and key keeps
 // its row. A keyed finding that is not stored takes over the one row of its
 // fingerprint and file when that row has no key and the scan has not found
-// it yet. Any other finding is a new row, in the bundle bundleFor gives it.
+// it yet. Any other finding is a new row, in the bundle bundleFor gives it,
+// except that a new row of a value and file whose keyless row was taken
+// over in this scan gets an own bundle that takes the decision of the value
+// from the taken-over row's bundle (see storeFindings).
 // Each finding is planned over the rows as the findings before it left them,
 // so the order of findings decides which key takes over a keyless row.
 func planFindings(stored []storedFinding, bundles []autoBundle, findings []finding.Finding) findingPlan {
 	p := &planner{
-		plan:     findingPlan{slots: make([]int, len(findings))},
-		byID:     make(map[identity]*planRow, len(stored)),
-		byFile:   make(map[fileOfValue][]*planRow, len(stored)),
-		byBundle: make(map[fileOfBundle][]*planRow, len(stored)),
-		auto:     make(map[autoKey]bundleRef, len(bundles)),
+		plan:      findingPlan{slots: make([]int, len(findings))},
+		byID:      make(map[identity]*planRow, len(stored)),
+		byFile:    make(map[fileOfValue][]*planRow, len(stored)),
+		byBundle:  make(map[fileOfBundle][]*planRow, len(stored)),
+		auto:      make(map[autoKey]bundleRef, len(bundles)),
+		takenOver: make(map[fileOfValue]int64),
 	}
 	for _, b := range bundles {
 		p.auto[autoKey{b.fingerprint, b.origin}] = bundleRef{id: b.id}
@@ -154,13 +164,20 @@ func (p *planner) place(f finding.Finding) int {
 	if !ok && f.Key != "" {
 		if rows := p.byFile[of]; len(rows) == 1 && rows[0].key == "" && !rows[0].seen {
 			r, ok = rows[0], true
+			p.takenOver[of] = r.bundle.id
 			delete(p.byID, identity{of, ""})
 			r.key = f.Key
 			p.byID[identity{of, f.Key}] = r
 		}
 	}
 	if !ok {
-		r = &planRow{key: f.Key, bundle: p.bundleFor(f), slot: -1}
+		r = &planRow{key: f.Key, slot: -1}
+		if from, taken := p.takenOver[of]; taken {
+			r.bundle = p.newBundle(f.Fingerprint, originOwn)
+			p.plan.bundles[r.bundle.planned-1].decisionFrom = from
+		} else {
+			r.bundle = p.bundleFor(f)
+		}
 		p.add(of, r)
 	}
 	r.seen = true

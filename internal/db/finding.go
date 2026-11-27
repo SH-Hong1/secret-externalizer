@@ -11,6 +11,7 @@ import (
 	"github.com/SH-Hong1/secret-externalizer/internal/finding"
 	"github.com/SH-Hong1/secret-externalizer/internal/project"
 	"github.com/SH-Hong1/secret-externalizer/internal/scan"
+	"github.com/SH-Hong1/secret-externalizer/internal/triage"
 )
 
 // detection is how a finding.Detection is kept in location.detections.
@@ -96,7 +97,9 @@ const saveBatch = 1000
 // first scan. A keyed finding that takes over a keyless row gives the row its
 // key, so a finding stored before keys were read keeps its ID, and with it
 // its bundle, decision and apply records, under the first key of its file
-// that a scan reads.
+// that a scan reads. The other keys of that value and file start bundles of
+// their own that take the decision of the value, as copyValueDecisions
+// gives it.
 func storeFindings(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, findings []finding.Finding) ([]int64, error) {
 	stored, err := readStoredFindings(ctx, tx, projectID, id)
 	if err != nil {
@@ -115,6 +118,9 @@ func storeFindings(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID, 
 			return nil, err
 		}
 		bundleIDs = append(bundleIDs, created...)
+	}
+	if err := copyValueDecisions(ctx, tx, plan.bundles, bundleIDs); err != nil {
+		return nil, err
 	}
 
 	// A row that is taken over gets its key before any row is inserted, so
@@ -167,11 +173,11 @@ func insertBundles(ctx context.Context, tx pgx.Tx, projectID int64, bundles []pl
 		return nil, fmt.Errorf("creating bundles: %w", err)
 	}
 	defer rows.Close()
-	created := make(map[plannedBundle][]int64, len(bundles))
+	created := make(map[autoKey][]int64, len(bundles))
 	for rows.Next() {
 		var (
 			id int64
-			b  plannedBundle
+			b  autoKey
 		)
 		if err := rows.Scan(&id, &b.fingerprint, &b.origin); err != nil {
 			return nil, fmt.Errorf("reading created bundle: %w", err)
@@ -186,9 +192,41 @@ func insertBundles(ctx context.Context, tx pgx.Tx, projectID int64, bundles []pl
 	}
 	out := make([]int64, len(bundles))
 	for i, b := range bundles {
-		out[i], created[b] = created[b][0], created[b][1:]
+		k := autoKey{b.fingerprint, b.origin}
+		out[i], created[k] = created[k][0], created[k][1:]
 	}
 	return out, nil
+}
+
+// copyValueDecisions gives each created bundle, whose ID is in ids at its
+// index in bundles, the decision of the stored bundle it names in
+// decisionFrom, when that decision is about the value: false-positive or
+// hold, with its reason, note, decider and time. An externalize decision is
+// not copied, because its name belongs to one bundle; such a bundle stays
+// undecided. Redact never reaches here: only customer data takes it, and
+// customer data has no key.
+func copyValueDecisions(ctx context.Context, tx pgx.Tx, bundles []plannedBundle, ids []int64) error {
+	var to, from []int64
+	for i, b := range bundles {
+		if b.decisionFrom != 0 {
+			to = append(to, ids[i])
+			from = append(from, b.decisionFrom)
+		}
+	}
+	if len(to) == 0 {
+		return nil
+	}
+	_, err := tx.Exec(ctx, `
+		UPDATE bundle b SET verdict = s.verdict, hold_reason = s.hold_reason, note = s.note,
+			decided_by = s.decided_by, decided_at = s.decided_at
+		FROM unnest($1::bigint[], $2::bigint[]) AS u (to_id, from_id)
+		JOIN bundle s ON s.id = u.from_id
+		WHERE b.id = u.to_id AND s.verdict = ANY($3::text[])`,
+		to, from, []string{string(triage.VerdictFalsePositive), string(triage.VerdictHold)})
+	if err != nil {
+		return fmt.Errorf("copying decisions to new bundles: %w", err)
+	}
+	return nil
 }
 
 // findingColumns holds the values of some finding rows, one slice a column,

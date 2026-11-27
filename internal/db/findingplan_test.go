@@ -73,7 +73,7 @@ func TestPlanFindings(t *testing.T) {
 			},
 			want: []db.Planned{
 				{ID: 7, Key: "local.password"},
-				{Key: "dev.password", NewBundle: 1, Origin: "own"},
+				{Key: "dev.password", NewBundle: 1, Origin: "own", DecisionFrom: 3},
 			},
 		},
 		{
@@ -103,7 +103,26 @@ func TestPlanFindings(t *testing.T) {
 			},
 			want: []db.Planned{
 				{ID: 7, Key: "dev.password"},
-				{NewBundle: 1, Origin: "own"},
+				{NewBundle: 1, Origin: "own", DecisionFrom: 3},
+			},
+		},
+		{
+			name: "every later key of a taken-over file starts its own bundle with the decision",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Bundle: 5},
+			},
+			bundles: []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{
+				password(fpA, file, "local.password"),
+				password(fpA, file, "dev.password"),
+				password(fpA, file, "live.password"),
+				password(fpA, other, "dev.password"),
+			},
+			want: []db.Planned{
+				{ID: 7, Key: "local.password"},
+				{Key: "dev.password", NewBundle: 1, Origin: "own", DecisionFrom: 5},
+				{Key: "live.password", NewBundle: 2, Origin: "own", DecisionFrom: 5},
+				{Key: "dev.password", Bundle: 3},
 			},
 		},
 		{
