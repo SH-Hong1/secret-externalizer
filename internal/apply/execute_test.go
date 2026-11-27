@@ -1039,6 +1039,43 @@ func TestApply_ExistingManifestExtended(t *testing.T) {
 	}
 }
 
+func TestApply_ManifestLinesFollowMovedPlaceholders(t *testing.T) {
+	f := newShop(t, inRepository)
+	moved := manifest.Entry{
+		Name: "ext.redis.password", Category: finding.CategoryStorage, Action: manifest.ActionExternalized,
+		Store: storePath("ext.redis.password"), Locations: []manifest.Location{{File: ymlFile, Line: 1}},
+	}
+	gone := manifest.Entry{
+		Name: "ext.other.thing", Category: finding.CategoryOther, Action: manifest.ActionExternalized,
+		Store: storePath("ext.other.thing"), Locations: []manifest.Location{{File: "conf/other.yml", Line: 4}},
+	}
+	content, err := manifest.Manifest{Entries: []manifest.Entry{moved, gone}}.Encode()
+	if err != nil {
+		t.Fatalf("Encode() error = %v", err)
+	}
+	write(t, f.dir, manifest.FileName, string(content))
+	f.replaceIn(ymlFile, "${REDIS_PASSWORD}", "${ext.redis.password}")
+	f.commit()
+	redisLine := f.lineOf(ymlFile, "${ext.redis.password}")
+	line := f.lineOf(ymlFile, ymlValue)
+	f.secret("db.yaml.password", ymlValue, ymlFile)
+
+	f.mustApply()
+
+	moved.Locations = []manifest.Location{{File: ymlFile, Line: redisLine}}
+	want := []manifest.Entry{
+		{
+			Name: "ext.db.yaml.password", Category: finding.CategoryStorage, Action: manifest.ActionExternalized,
+			Store: storePath("ext.db.yaml.password"), Locations: []manifest.Location{{File: ymlFile, Line: line}},
+		},
+		moved,
+		gone,
+	}
+	if diff := cmp.Diff(want, f.readManifest().Entries); diff != "" {
+		t.Errorf("manifest entries (-want +got):\n%s", diff)
+	}
+}
+
 func TestApply_UnreadableManifestBlocks(t *testing.T) {
 	f := newShop(t, inRepository)
 	write(t, f.dir, manifest.FileName, "# edited by hand\nversion: 1\nentries: []\n")

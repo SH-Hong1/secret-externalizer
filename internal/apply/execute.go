@@ -530,7 +530,7 @@ func (r *Runner) writeManifest(ctx context.Context, j job.Job, p *prepared) erro
 		return fmt.Errorf("%w: reading it again: %w", errManifestWrite, err)
 	}
 	p.manifest, p.hasManifest, p.manifestSeen = current, has, seen
-	content, err := p.manifest.Merge(entries).Encode()
+	content, err := r.relocate(ctx, j, p.dir, p.manifest.Merge(entries)).Encode()
 	if err != nil {
 		return fmt.Errorf("%w: encoding: %w", errManifestWrite, err)
 	}
@@ -560,6 +560,33 @@ func (r *Runner) writeManifest(ctx context.Context, j job.Job, p *prepared) erro
 		return fmt.Errorf("%w: marking the listed items: %w", errManifestWrite, err)
 	}
 	return nil
+}
+
+// relocate returns m with the line of every location brought up to date
+// from the file it names, which a later change may have moved. A file that
+// cannot be read, because it is gone, too large or not a regular file
+// inside dir, keeps its locations as listed, and the reason is logged. The
+// bytes read are zeroed.
+func (r *Runner) relocate(ctx context.Context, j job.Job, dir projectDir, m manifest.Manifest) manifest.Manifest {
+	var files []string
+	for _, e := range m.Entries {
+		for _, l := range e.Locations {
+			if l.Line > 0 && !slices.Contains(files, l.File) {
+				files = append(files, l.File)
+			}
+		}
+	}
+	for _, file := range files {
+		raw, _, err := dir.Read(file, r.opts.MaxFileBytes)
+		if err != nil {
+			r.logger.InfoContext(ctx, "apply manifest lines kept", "apply_id", j.ApplyID, "job_id", j.ID,
+				"file", file, "error", err.Error())
+			continue
+		}
+		m = m.Relocate(file, raw)
+		clear(raw)
+	}
+	return m
 }
 
 // readManifestFile reads and parses the manifest in dir, and reports
