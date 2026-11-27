@@ -166,18 +166,39 @@ rules:
   # Comment lines start with # or ! and do not match the key pattern. A
   # password value that holds Hangul, written as is or as a \uXXXX escape
   # in the Hangul blocks, is a message in a message bundle
-  # (label.password=비밀번호) and is not reported.
+  # (label.password=비밀번호) and is not reported. Message bundles, whose
+  # names start with messages or hold Messages, are left to
+  # properties-message-password.
   - id: properties-password
     message: A password is written in a properties file.
     severity: WARNING
     languages: [regex]
     paths:
       include: ["*.properties"]
+      exclude: ["messages*.properties", "*Messages*.properties"]
     metadata:
       category: storage-credential
       kind: password
     patterns:
       - pattern-regex: (?mi)^[ \t]*(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)(?:[ \t]*[=:][ \t]*|[ \t]+(?![=:]))(?![$#]\{)(?![^\r\n]*(?:\p{Hangul}|\\u(?:[aAbBcC][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2}|11[0-9a-fA-F]{2}|31[3-8][0-9a-fA-F])))(?P<VALUE>\S[^\r\n]*?)[ \t]*\r?$
+      - focus-metavariable: $VALUE
+
+  # The same lines in a message bundle (messages.properties,
+  # messages_en_US.properties, ValidationMessages.properties). There a value
+  # with white space inside it is a sentence, such as "Change password" under
+  # the key changePassword, so a password is one word, as in
+  # properties-username.
+  - id: properties-message-password
+    message: A password is written in a properties file.
+    severity: WARNING
+    languages: [regex]
+    paths:
+      include: ["messages*.properties", "*Messages*.properties"]
+    metadata:
+      category: storage-credential
+      kind: password
+    patterns:
+      - pattern-regex: (?mi)^[ \t]*(?:[\w-]+\.)*(?:[\w-]*(?:password|passwd|pwd)|(?:[\w-]*[_-])?pass)(?:[ \t]*[=:][ \t]*|[ \t]+(?![=:]))(?![$#]\{)(?![^\r\n]*(?:\p{Hangul}|\\u(?:[aAbBcC][0-9a-fA-F]{3}|[dD][0-7][0-9a-fA-F]{2}|11[0-9a-fA-F]{2}|31[3-8][0-9a-fA-F])))(?P<VALUE>\S+)[ \t]*\r?$
       - focus-metavariable: $VALUE
 
   # A user name is one word. A value with white space inside it is a
