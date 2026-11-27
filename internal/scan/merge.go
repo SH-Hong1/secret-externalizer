@@ -55,9 +55,10 @@ type mergedLocation struct {
 // whole-file result, for customer data, and for a value that spans lines.
 // When a piece of the key overlaps a range masked in surrounding lines, the
 // key is finding.MaskedKey of the key's fingerprint, so that a key never
-// holds a value found in the scan. spans are those ranges per file of placed,
-// from maskedSpans, and fingerprints holds the text of every such key, from
-// maskedKeys.
+// holds a value found in the scan. Every key, masked or not, carries the
+// fingerprint of its text as the finding's KeyFingerprint. spans are those
+// ranges per file of placed, from maskedSpans, and fingerprints holds the
+// text of every key, from keyTexts.
 func merge(placed []*placedFile, fingerprints map[string]string, spans [][]finding.Span) ([]finding.Finding, map[string][]byte) {
 	var findings []finding.Finding
 	originals := map[string][]byte{}
@@ -86,10 +87,15 @@ func merge(placed []*placedFile, fingerprints map[string]string, spans [][]findi
 			})
 		}
 		byFinding := map[findingKey][]*mergedLocation{}
+		keyPrints := map[string]string{}
 		for _, ml := range order {
 			key, masked := spotKey(pf, ml.spot, ml.keyAt, spans)
+			textPrint := fingerprints[key]
 			if masked {
 				key = maskedKey(fingerprints, key)
+			}
+			if key != "" {
+				keyPrints[key] = textPrint
 			}
 			fk := findingKey{fp: ml.fp, key: key}
 			byFinding[fk] = append(byFinding[fk], ml)
@@ -97,6 +103,9 @@ func merge(placed []*placedFile, fingerprints map[string]string, spans [][]findi
 
 		for fk, mls := range byFinding {
 			f := newFinding(pf, fk, mls, spans)
+			if f.Key != "" {
+				f.KeyFingerprint = keyPrints[f.Key]
+			}
 			if f.HasOriginal {
 				originals[fk.fp] = mls[0].spot.value
 			}
@@ -128,16 +137,17 @@ func maskedSpans(placed []*placedFile, elsewhere valueIndex) [][]finding.Span {
 	return out
 }
 
-// maskedKeys returns the text of every key in placed that overlaps a range
-// in spans, the result of maskedSpans, once each. merge stores such a key as
-// the masked form of its fingerprint.
-func maskedKeys(placed []*placedFile, spans [][]finding.Span) [][]byte {
+// keyTexts returns the text of every key in placed, once each. spans are
+// the masked ranges of maskedSpans. merge stores a key that overlaps one of
+// them as the masked form of its fingerprint, and gives every key the
+// fingerprint of its text.
+func keyTexts(placed []*placedFile, spans [][]finding.Span) [][]byte {
 	seen := map[string]bool{}
 	var out [][]byte
 	for i, pf := range placed {
 		for _, s := range pf.spots {
-			key, masked := spotKey(pf, s, pf.keyAt(s), spans[i])
-			if masked && !seen[key] {
+			key, _ := spotKey(pf, s, pf.keyAt(s), spans[i])
+			if key != "" && !seen[key] {
 				seen[key] = true
 				out = append(out, []byte(key))
 			}

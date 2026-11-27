@@ -225,7 +225,7 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 	res.Dropped = d.dropped.count + notPlaced
 
 	spans := maskedSpans(placed, newValueIndex(maskPatterns(placed, d.raws)))
-	fingerprints, err := r.fingerprint(ctx, placed, maskedKeys(placed, spans))
+	fingerprints, err := r.fingerprint(ctx, placed, keyTexts(placed, spans))
 	if err != nil {
 		return err
 	}

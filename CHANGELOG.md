@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 다른 곳에서 찾은 값이 나타나거나 사라져 설정 키가 원래 키와 가린 키(`#…`) 사이에서 바뀌어도 같은 항목으로 이어져 묶음, 판정, 이름, 적용 기록이 남는다. 스캔이 읽은 모든 키 글자의 지문을 구하고, 마이그레이션 `0016`이 `finding.key_fingerprint`를 더한다. 이미 원래 키로 저장된 항목은 그 키를 다시 읽는 다음 스캔부터 이어진다. 전에는 키가 바뀐 쪽이 미판정의 새 묶음이 되고 원래 묶음이 그 스캔의 판정 화면과 적용에서 빠졌다(`docs/adr/0132-key-keeps-its-finding-across-its-masked-form.md`)
 - 어느 스캔이 설정 키를 읽지 못해도, 그 파일의 그 값에 저장된 항목이 키 있는 것 하나뿐이고 그 스캔이 같은 값의 다른 키를 읽지 않았으면, 키 없는 자리가 그 항목을 이어 써 묶음, 판정, 이름, 키가 그대로 남는다. 전에는 키 없는 미판정 묶음이 새로 생기고 원래 묶음이 그 스캔의 판정 화면과 적용에서 빠졌다. 고객정보와 같은 값의 키가 여럿인 파일은 지금과 같다(`docs/adr/0131-keyless-spot-keeps-the-sole-keyed-finding.md`)
 - 메시지 묶음(이름이 `messages`로 시작하거나 `Messages`를 담은 `.properties` 파일)에서는 비밀번호 키의 값이 공백 없는 한 낱말일 때만 비밀번호로 보고한다. 새 규칙 `properties-message-password`가 보고한다. 전에는 `changePassword=Change password`, `error.password=Password is required.` 같은 영어 메시지가 비밀번호로 보고되었다. 다른 `.properties` 파일은 지금처럼 공백이 든 값도 보고한다(`docs/adr/0130-message-bundle-passwords-are-one-word.md`)
 - 키 이름에 스캔의 다른 곳에서 찾은 값(계정 `admin`, `user` 등)이 들어 있으면, 키를 비우지 않고 키 글자의 지문으로 가려 저장한다. 같은 파일에서 같은 값이 그런 키 여럿에 있으면 키마다 따로 항목이 되고, 판정 화면은 그 키를 `가린 키 #1a2b3c4d`로 보이며 가린 이유를 적는다. 가린 키는 추천 이름에 쓰지 않는다. 전에는 그 키가 비어 `local.admin.password`와 `live.admin.password`의 같은 값이 항목 하나로 합쳐졌고 이유가 보이지 않았다. 마이그레이션 `0015`가 `finding.key`의 CHECK를 넓힌다(`docs/adr/0129-masked-key-is-the-fingerprint-of-its-text.md`)

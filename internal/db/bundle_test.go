@@ -1263,6 +1263,38 @@ func TestSaveResult_KeylessScanKeepsSoleKeyedFinding(t *testing.T) {
 	}
 }
 
+func TestSaveResult_KeyKeepsItsFindingAcrossItsMaskedForm(t *testing.T) {
+	s := newMigratedStore(t)
+	ctx := t.Context()
+	pid := newProject(t, s, "shop")
+	const text = "admin.db.password"
+	textPrint := strings.Repeat("1", 64)
+	masked := finding.MaskedKey(textPrint)
+	withPrint := func(key string) finding.Finding {
+		f := pwKey(key)
+		f.KeyFingerprint = textPrint
+		return f
+	}
+	save(t, s, pid, withPrint(text))
+	id := findingIDOfKey(t, s, pid, fpA, keysFile, text)
+	b := bundleOfKey(t, s, pid, fpA, keysFile, text)
+	want := triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.admin.password"}
+	decide(t, s, pid, want, b)
+
+	for _, key := range []string{masked, text} {
+		scanID := save(t, s, pid, withPrint(key))
+		if got := findingIDOfKey(t, s, pid, fpA, keysFile, key); got != id {
+			t.Errorf("finding of key %q = %d, want %d", key, got, id)
+		}
+		if got := readBundle(t, s, pid, scanID, b); got.Decision != want {
+			t.Errorf("Bundle(%d).Decision after a scan with key %q = %+v, want %+v", b, key, got.Decision, want)
+		}
+		if n, err := s.Count(ctx, "finding"); err != nil || n != 1 {
+			t.Errorf("rows in finding after a scan with key %q = %d, %v, want 1", key, n, err)
+		}
+	}
+}
+
 func TestSaveResult_NewKeyBesideKeylessAndKeyed(t *testing.T) {
 	s := newMigratedStore(t)
 	ctx := t.Context()

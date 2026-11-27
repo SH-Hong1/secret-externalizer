@@ -1,6 +1,7 @@
 package db_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/google/go-cmp/cmp"
@@ -15,6 +16,13 @@ func TestPlanFindings(t *testing.T) {
 		other = "conf/app.properties"
 		page  = "web/login.jsp"
 	)
+	keyPrint := strings.Repeat("1", 64)
+	otherPrint := strings.Repeat("2", 64)
+	masked := finding.MaskedKey(keyPrint)
+	keyed := func(f finding.Finding, keyFP string) finding.Finding {
+		f.KeyFingerprint = keyFP
+		return f
+	}
 	password := func(fp, file, key string) finding.Finding {
 		return finding.Finding{
 			Fingerprint: fp, File: file, Key: key,
@@ -195,6 +203,78 @@ func TestPlanFindings(t *testing.T) {
 			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
 			findings: []finding.Finding{password(fpA, file, "")},
 			want:     []db.Planned{{NewBundle: 1, Origin: "own"}},
+		},
+		{
+			name: "a key that starts to be masked keeps its row",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "admin.password", KeyFingerprint: keyPrint, Bundle: 3},
+			},
+			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{keyed(password(fpA, file, masked), keyPrint)},
+			want:     []db.Planned{{ID: 7, Key: masked, KeyFingerprint: keyPrint}},
+		},
+		{
+			name: "a key that stops being masked keeps its row",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: masked, KeyFingerprint: keyPrint, Bundle: 3},
+			},
+			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{keyed(password(fpA, file, "admin.password"), keyPrint)},
+			want:     []db.Planned{{ID: 7, Key: "admin.password", KeyFingerprint: keyPrint}},
+		},
+		{
+			name: "a masked key of another text is a new row",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "admin.password", KeyFingerprint: keyPrint, Bundle: 3},
+			},
+			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{keyed(password(fpA, file, finding.MaskedKey(otherPrint)), otherPrint)},
+			want: []db.Planned{
+				{Key: finding.MaskedKey(otherPrint), KeyFingerprint: otherPrint, NewBundle: 1, Origin: "own"},
+			},
+		},
+		{
+			name: "a key stored without its fingerprint does not meet its masked form",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "admin.password", Bundle: 3},
+			},
+			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{keyed(password(fpA, file, masked), keyPrint)},
+			want:     []db.Planned{{Key: masked, KeyFingerprint: keyPrint, NewBundle: 1, Origin: "own"}},
+		},
+		{
+			name: "a key this scan already stored is not taken by its other form",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "admin.password", KeyFingerprint: keyPrint, Bundle: 3, Seen: true},
+			},
+			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{keyed(password(fpA, file, masked), keyPrint)},
+			want:     []db.Planned{{Key: masked, KeyFingerprint: keyPrint, NewBundle: 1, Origin: "own"}},
+		},
+		{
+			name: "both forms of a key in one scan keep their own rows",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "admin.password", KeyFingerprint: keyPrint, Bundle: 3},
+				{ID: 8, Fingerprint: fpA, File: file, Key: masked, KeyFingerprint: keyPrint, Bundle: 4},
+			},
+			bundles: []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{
+				keyed(password(fpA, file, masked), keyPrint),
+				keyed(password(fpA, file, "admin.password"), keyPrint),
+			},
+			want: []db.Planned{
+				{ID: 8, Key: masked, KeyFingerprint: keyPrint},
+				{ID: 7, Key: "admin.password", KeyFingerprint: keyPrint},
+			},
+		},
+		{
+			name: "a keyless finding that takes over a keyed row keeps the key's fingerprint",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "db.password", KeyFingerprint: keyPrint, Bundle: 3},
+			},
+			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{password(fpA, file, "")},
+			want:     []db.Planned{{ID: 7, Key: "db.password", KeyFingerprint: keyPrint}},
 		},
 		{
 			name: "customer data does not take over a keyed finding",

@@ -11,7 +11,10 @@ type storedFinding struct {
 	fingerprint string
 	file        string
 	key         string
-	bundle      int64
+	// keyFingerprint is the fingerprint of the key's text, or "" when the
+	// row has no key or was stored before key fingerprints were kept.
+	keyFingerprint string
+	bundle         int64
 	// seen says that the scan being saved has stored the finding already.
 	seen bool
 }
@@ -64,9 +67,10 @@ type findingPlan struct {
 // planRow is a finding row while planFindings works: a stored row, or one
 // the plan inserts.
 type planRow struct {
-	id     int64
-	key    string
-	bundle bundleRef
+	id             int64
+	key            string
+	keyFingerprint string
+	bundle         bundleRef
 	// seen says that the scan has found the row.
 	seen bool
 	// slot is the index of the row in findingPlan.rows, or -1 while the scan
@@ -121,7 +125,12 @@ type planner struct {
 // of the project and bundles every bundle that is not an own bundle.
 //
 // A finding that is stored under the same fingerprint, file and key keeps
-// its row. A keyed finding that is not stored takes over the one row of its
+// its row. A keyed finding that is not stored takes over the row of its
+// fingerprint and file whose key has the same key fingerprint, when the scan
+// has not found that row yet: the key's text is the same, and only its form
+// changed between the text and its masked form, as values found elsewhere in
+// the scan appear or go. Otherwise a keyed finding that is not stored takes
+// over the one row of its
 // fingerprint and file when that row has no key and the scan has not found
 // it yet. A keyless finding that is not stored takes over the one row of its
 // fingerprint and file when that row has a key, the scan has not found it
@@ -154,7 +163,8 @@ func planFindings(stored []storedFinding, bundles []autoBundle, findings []findi
 	}
 	for _, f := range stored {
 		p.add(fileOfValue{f.fingerprint, f.file}, &planRow{
-			id: f.id, key: f.key, bundle: bundleRef{id: f.bundle}, seen: f.seen, slot: -1,
+			id: f.id, key: f.key, keyFingerprint: f.keyFingerprint, bundle: bundleRef{id: f.bundle},
+			seen: f.seen, slot: -1,
 		})
 	}
 	for i, f := range findings {
@@ -176,6 +186,9 @@ func (p *planner) place(f finding.Finding) int {
 	of := fileOfValue{f.Fingerprint, f.File}
 	r, ok := p.byID[identity{of, f.Key}]
 	if !ok {
+		r, ok = p.reform(of, f)
+	}
+	if !ok {
 		r, ok = p.takeOver(of, f)
 	}
 	if !ok {
@@ -193,9 +206,32 @@ func (p *planner) place(f finding.Finding) int {
 		r.slot = len(p.plan.rows)
 		p.plan.rows = append(p.plan.rows, plannedRow{id: r.id, bundle: r.bundle})
 	}
-	f.Key = r.key
+	if f.Key != "" {
+		r.keyFingerprint = f.KeyFingerprint
+	}
+	f.Key, f.KeyFingerprint = r.key, r.keyFingerprint
 	p.plan.rows[r.slot].finding = f
 	return r.slot
+}
+
+// reform returns the row of the value and file of f, a keyed finding that
+// is not stored, whose key is the other form of the same key text: the same
+// key fingerprint under another key. The scan must not have found the row
+// yet. The row takes the key of f.
+func (p *planner) reform(of fileOfValue, f finding.Finding) (*planRow, bool) {
+	if f.Key == "" || f.KeyFingerprint == "" {
+		return nil, false
+	}
+	for _, r := range p.byFile[of] {
+		if r.seen || r.key == "" || r.keyFingerprint != f.KeyFingerprint {
+			continue
+		}
+		delete(p.byID, identity{of, r.key})
+		r.key = f.Key
+		p.byID[identity{of, f.Key}] = r
+		return r, true
+	}
+	return nil, false
 }
 
 // takeOver returns the one row of the value and file of f, a finding that
