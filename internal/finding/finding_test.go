@@ -156,3 +156,33 @@ func TestParseEncoding(t *testing.T) {
 		}
 	}
 }
+
+func TestMaskedKey(t *testing.T) {
+	fp := strings.Repeat("0a", 32)
+	got := finding.MaskedKey(fp)
+	if want := "#" + fp; got != want {
+		t.Errorf("MaskedKey(%q) = %q, want %q", fp, got, want)
+	}
+	if !finding.KeyMasked(got) {
+		t.Errorf("KeyMasked(%q) = false, want true", got)
+	}
+}
+
+func TestKeyMasked(t *testing.T) {
+	tests := []struct {
+		key  string
+		want bool
+	}{
+		{"", false},
+		{"live.db.password", false},
+		{"#" + strings.Repeat("a", 64), true},
+		{"#" + strings.Repeat("a", 63), false},
+		{"#" + strings.Repeat("A", 64), false},
+		{strings.Repeat("a", 65), false},
+	}
+	for _, tt := range tests {
+		if got := finding.KeyMasked(tt.key); got != tt.want {
+			t.Errorf("KeyMasked(%q) = %v, want %v", tt.key, got, tt.want)
+		}
+	}
+}

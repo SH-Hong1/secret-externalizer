@@ -224,12 +224,13 @@ func (r *Runner) run(ctx context.Context, j job.Job, id ID, copies string) error
 	placed = splitConnections(placed)
 	res.Dropped = d.dropped.count + notPlaced
 
-	fingerprints, err := r.fingerprint(ctx, placed)
+	spans := maskedSpans(placed, newValueIndex(maskPatterns(placed, d.raws)))
+	fingerprints, err := r.fingerprint(ctx, placed, maskedKeys(placed, spans))
 	if err != nil {
 		return err
 	}
 	settled := r.settled(ctx, id, p.ID)
-	findings, originals := merge(placed, fingerprints, newValueIndex(maskPatterns(placed, d.raws)))
+	findings, originals := merge(placed, fingerprints, spans)
 	dropSettled(findings, originals, settled)
 	if err := r.park(ctx, int64(p.ID), originals); err != nil {
 		return err
@@ -317,18 +318,24 @@ func (r *Runner) logSummary(ctx context.Context, j job.Job, id ID, res Result, d
 	r.logger.InfoContext(ctx, "scan skipped files", "scan_id", id, "job_id", j.ID, "total", len(skipped), "paths", paths)
 }
 
-// fingerprint returns the fingerprint of every distinct value in placed,
-// keyed by the value.
-func (r *Runner) fingerprint(ctx context.Context, placed []*placedFile) (map[string]string, error) {
+// fingerprint returns the fingerprint of every distinct value in placed and
+// of every masked key text in keys, keyed by the text, from one batch.
+func (r *Runner) fingerprint(ctx context.Context, placed []*placedFile, keys [][]byte) (map[string]string, error) {
 	index := map[string]int{}
 	var values [][]byte
+	add := func(v []byte) {
+		if _, seen := index[string(v)]; !seen {
+			index[string(v)] = len(values)
+			values = append(values, v)
+		}
+	}
 	for _, pf := range placed {
 		for _, s := range pf.spots {
-			if _, seen := index[string(s.value)]; !seen {
-				index[string(s.value)] = len(values)
-				values = append(values, s.value)
-			}
+			add(s.value)
 		}
+	}
+	for _, k := range keys {
+		add(k)
 	}
 	if len(values) == 0 {
 		return map[string]string{}, nil

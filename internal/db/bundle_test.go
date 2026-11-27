@@ -1353,6 +1353,20 @@ func TestSaveResult_LegacyDecisionOfValueReachesEveryKey(t *testing.T) {
 	}
 }
 
+func TestSaveResult_StoresMaskedKeys(t *testing.T) {
+	s := newMigratedStore(t)
+	pid := newProject(t, s, "shop")
+	local := finding.MaskedKey(strings.Repeat("1", 64))
+	live := finding.MaskedKey(strings.Repeat("2", 64))
+	save(t, s, pid, pwKey(local), pwKey(live))
+
+	a := bundleOfKey(t, s, pid, fpA, keysFile, local)
+	b := bundleOfKey(t, s, pid, fpA, keysFile, live)
+	if a == b {
+		t.Errorf("BundleOfKey() = %d for both masked keys, want two bundles", a)
+	}
+}
+
 func TestBundle_MembersCarryKey(t *testing.T) {
 	s := newMigratedStore(t)
 	pid := newProject(t, s, "shop")

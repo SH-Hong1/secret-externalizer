@@ -754,6 +754,32 @@ func TestTriageDetail_ShowsKey(t *testing.T) {
 	}
 }
 
+func TestTriageDetail_ShowsMaskedKey(t *testing.T) {
+	e := triageEnv(t)
+	loc := []finding.Location{{StartLine: 3, EndLine: 3}}
+	fp := "1a2b3c4d" + strings.Repeat("0", 56)
+	e.triage.putBundle(triage.Bundle{
+		ID: passwordBundle, ProjectID: 1, Fingerprint: fpPassword,
+		Category: finding.CategoryStorage, Kind: finding.KindPassword, Preview: "Sh0p****",
+		Members: []triage.Member{
+			{FindingID: 1001, File: "conf/app.properties", Key: finding.MaskedKey(fp), Locations: loc},
+		},
+	})
+	e.triage.same[passwordBundle] = []triage.Entry{{
+		Bundle: 17, Verdict: triage.VerdictExternalize, Key: finding.MaskedKey(fp), Name: "db.shop.password",
+		Category: finding.CategoryStorage, Kind: finding.KindPassword, File: "conf/other.yml", FirstLine: 4, Count: 1, Bundles: 1,
+	}}
+	res := e.getTriage(t, nil, nil)
+	detail := section(res.body, "section", "detail")
+	wantIn(t, "detail of a bundle with a masked key", detail,
+		`<span class="muted">키</span> <span class="mono">가린 키 #1a2b3c4d</span>`,
+		"다른 곳에서 찾은 값이 키 이름에 들어 있어 키를 가렸습니다",
+		" · 가린 키 #1a2b3c4d</option>")
+	if strings.Contains(detail, fp) {
+		t.Errorf("detail shows the whole masked key %q, want only its first eight digits", fp)
+	}
+}
+
 func TestTriageDetail_MoveTargetShowsKey(t *testing.T) {
 	e := triageEnv(t)
 	e.triage.same[passwordBundle] = []triage.Entry{

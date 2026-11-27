@@ -143,7 +143,8 @@ type Finding struct {
 	Fingerprint string
 	File        string
 	// Key is the configuration key the value is assigned to in the file, or
-	// the empty string when there is none. It never holds a value.
+	// the empty string when there is none. It never holds a value: a key
+	// that would hold one is stored as MaskedKey of its fingerprint.
 	Key         string
 	Category    Category
 	Kind        Kind
@@ -151,6 +152,24 @@ type Finding struct {
 	HasOriginal bool
 	Shell       bool
 	Locations   []Location
+}
+
+// maskedKeyPrefix starts every masked key. A configuration key never holds
+// it, so a masked key cannot be mistaken for one.
+const maskedKeyPrefix = "#"
+
+// MaskedKey returns the key stored in place of a configuration key that
+// holds a value found in the scan, given the fingerprint of the key's text.
+// Places under different such keys stay apart, and the same key gives the
+// same masked key in every scan, without the key's text being stored.
+func MaskedKey(fingerprint string) string {
+	return maskedKeyPrefix + fingerprint
+}
+
+// KeyMasked reports whether key was built by MaskedKey from a fingerprint.
+func KeyMasked(key string) bool {
+	fp, ok := strings.CutPrefix(key, maskedKeyPrefix)
+	return ok && len(fp) == 64 && strings.Trim(fp, "0123456789abcdef") == ""
 }
 
 const (

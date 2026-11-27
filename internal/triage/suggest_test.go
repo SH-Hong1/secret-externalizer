@@ -337,6 +337,7 @@ func TestSuggestName_StoredKey(t *testing.T) {
 		{"camel case", "conf/context.xml", "liveDataSource.password", "", "db.prod.data.password"},
 		{"file environment first", "conf/application-dev.yml", "live.db.password", "", "db.dev.live.password"},
 		{"no stored key", "conf/config.properties", "", "    password: ****", "db.main.password"},
+		{"masked key", "conf/config.properties", "#" + strings.Repeat("ab", 32), "****.db.password=****", "db.main.password"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

@@ -112,14 +112,29 @@ type appliedInfo struct {
 }
 
 // memberView is one member of a bundle. Key is the configuration key of its
-// value, empty when it has none. MoveAction is where its move forms post;
-// Split is set for every member after the first, which can be split off into
-// a bundle of its own.
+// value as keyText shows it, empty when it has none; Masked is set when the
+// key was masked. MoveAction is where its move forms post; Split is set for
+// every member after the first, which can be split off into a bundle of its
+// own.
 type memberView struct {
 	MoveAction string
 	Key        string
+	Masked     bool
 	Split      bool
 	Locations  []locationView
+}
+
+// maskedKeyDigits is how many digits of a masked key's fingerprint keyText
+// shows: enough to tell the keys of one file apart.
+const maskedKeyDigits = 8
+
+// keyText returns key as the triage screen shows it. A masked key shows the
+// first digits of its fingerprint after "가린 키 #".
+func keyText(key string) string {
+	if !finding.KeyMasked(key) {
+		return key
+	}
+	return "가린 키 #" + key[1:1+maskedKeyDigits]
 }
 
 // moveTarget is a bundle a member can move to.
@@ -266,7 +281,8 @@ func newBundleDetail(id project.ID, ret string, b triage.Bundle, s triage.Sugges
 	for i, m := range b.Members {
 		mv := memberView{
 			MoveAction: "/projects/" + pid + "/findings/" + strconv.FormatInt(int64(m.FindingID), 10) + "/move",
-			Key:        m.Key,
+			Key:        keyText(m.Key),
+			Masked:     finding.KeyMasked(m.Key),
 			Split:      i > 0,
 		}
 		for _, l := range m.Locations {
@@ -315,7 +331,7 @@ func newMoveTargets(same []triage.Entry) []moveTarget {
 			where = entryName(e)
 		}
 		if e.Key != "" {
-			where += " · " + e.Key
+			where += " · " + keyText(e.Key)
 		}
 		id := strconv.FormatInt(int64(e.Bundle), 10)
 		out = append(out, moveTarget{Value: id, Label: "묶음 #" + id + " · " + verdictOf(e.Verdict).Label + " · " + where})

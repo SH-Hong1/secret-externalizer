@@ -189,10 +189,10 @@ func nameItem(k finding.Kind) string {
 
 // detectedKey returns the key the first detected value of b is assigned to,
 // or "" when there is none. It is the key stored with the first member when
-// that has one, and otherwise the key read from the masked line around the
-// first location.
+// that has one that is not masked, and otherwise the key read from the
+// masked line around the first location.
 func detectedKey(b Bundle) string {
-	if len(b.Members) > 0 && b.Members[0].Key != "" {
+	if len(b.Members) > 0 && b.Members[0].Key != "" && !finding.KeyMasked(b.Members[0].Key) {
 		return b.Members[0].Key
 	}
 	if len(b.Members) == 0 || len(b.Members[0].Locations) == 0 {
