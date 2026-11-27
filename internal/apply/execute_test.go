@@ -1184,6 +1184,57 @@ func TestApply_CrashAfterRename(t *testing.T) {
 	}
 }
 
+func TestApply_CrashAfterRenameThenEdited(t *testing.T) {
+	tests := []struct {
+		name string
+		// edit changes the YAML file the stopped run changed, before the
+		// change is committed.
+		edit func(f *fixture)
+		done bool
+		want string
+	}{
+		{
+			name: "placeholder kept",
+			edit: func(f *fixture) {
+				write(f.t, f.dir, ymlFile, string(read(f.t, f.dir, ymlFile))+"# edited by hand\n")
+			},
+			done: true,
+			want: applied,
+		},
+		{
+			name: "placeholder removed",
+			edit: func(f *fixture) { f.replaceIn(ymlFile, "${ext.db.yaml.password}", "${DB_PASSWORD}") },
+			want: skippedFor(apply.ReasonFileChanged),
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			f := newShop(t, inRepository)
+			keys, _ := f.twoFiles()
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			f.crash(cancel, "EndFile", 1, true)
+			if err := f.apply(ctx); err == nil {
+				t.Fatalf("Apply() with the worker stopping = nil, want an error")
+			}
+			f.store.hooks = map[string]func(context.Context) error{}
+			tt.edit(f)
+			f.commit()
+
+			if err := f.apply(t.Context()); err != nil {
+				t.Fatalf("Apply() after the edit = %v", err)
+			}
+
+			if len(f.store.resolved) != 1 || f.store.resolved[0].File.File != ymlFile || f.store.resolved[0].Done != tt.done {
+				t.Errorf("ResolveFile calls %+v, want %s settled with done %v", f.store.resolved, ymlFile, tt.done)
+			}
+			if got := f.items()[keys[0]]; got != tt.want {
+				t.Errorf("item of %s = %q, want %q", ymlFile, got, tt.want)
+			}
+		})
+	}
+}
+
 func TestApply_CrashBeforeRename(t *testing.T) {
 	f := newShop(t, inRepository)
 	keys, want := f.twoFiles()
