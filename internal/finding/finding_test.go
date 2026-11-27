@@ -181,8 +181,10 @@ func TestKeyMasked(t *testing.T) {
 		{strings.Repeat("a", 65), false},
 	}
 	for _, tt := range tests {
-		if got := finding.KeyMasked(tt.key); got != tt.want {
-			t.Errorf("KeyMasked(%q) = %v, want %v", tt.key, got, tt.want)
-		}
+		t.Run(tt.key, func(t *testing.T) {
+			if got := finding.KeyMasked(tt.key); got != tt.want {
+				t.Errorf("KeyMasked(%q) = %v, want %v", tt.key, got, tt.want)
+			}
+		})
 	}
 }
