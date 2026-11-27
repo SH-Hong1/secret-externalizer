@@ -618,6 +618,9 @@ type Planned struct {
 	// joins, or 0, and Origin that bundle's origin.
 	NewBundle int
 	Origin    string
+	// DecisionFrom is the stored bundle whose decision the new bundle takes,
+	// or 0.
+	DecisionFrom int64
 	// Preview is the preview the row gets. It is compared only by tests
 	// that set one.
 	Preview string
@@ -646,6 +649,7 @@ func PlanFindings(stored []StoredFinding, bundles []AutoBundle, findings []findi
 		decided[i].Bundle, decided[i].NewBundle = r.bundle.id, r.bundle.planned
 		if r.bundle.planned != 0 {
 			decided[i].Origin = p.bundles[r.bundle.planned-1].origin
+			decided[i].DecisionFrom = p.bundles[r.bundle.planned-1].decisionFrom
 		}
 	}
 	return decided, len(p.rows), len(p.bundles)

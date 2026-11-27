@@ -1283,8 +1283,8 @@ func TestSaveResult_LegacyFoundKeylessInSameScanIsNotAdopted(t *testing.T) {
 // assertLegacyAdopts stores legacy, a finding with no key, decides its bundle
 // with d, and rescans its file with keys local, dev and live. It checks that
 // local takes over the finding with its bundle and decision and that dev and
-// live start in undecided bundles of their own.
-func assertLegacyAdopts(t *testing.T, legacy finding.Finding, d triage.Decision) {
+// live start in bundles of their own decided with others.
+func assertLegacyAdopts(t *testing.T, legacy finding.Finding, d, others triage.Decision) {
 	t.Helper()
 	s := newMigratedStore(t)
 	ctx := t.Context()
@@ -1311,8 +1311,13 @@ func assertLegacyAdopts(t *testing.T, legacy finding.Finding, d triage.Decision)
 			t.Errorf("bundle of %s = %d, want a new bundle", k, b)
 			continue
 		}
-		if got := readBundle(t, s, pid, second, b); got.Decision != (triage.Decision{}) {
-			t.Errorf("Bundle(%d).Decision of %s = %+v, want none", b, k, got.Decision)
+		got := readBundle(t, s, pid, second, b)
+		if got.Decision != others {
+			t.Errorf("Bundle(%d).Decision of %s = %+v, want %+v", b, k, got.Decision, others)
+		}
+		if wantBy := others != (triage.Decision{}); (got.DecidedBy != "") != wantBy || got.DecidedAt.IsZero() == wantBy {
+			t.Errorf("Bundle(%d) of %s decided by %q at %v, want a decider and time only with a decision",
+				b, k, got.DecidedBy, got.DecidedAt)
 		}
 	}
 	if _, err := s.FindingRow(ctx, pid, fp, file); err == nil {
@@ -1325,12 +1330,27 @@ func assertLegacyAdopts(t *testing.T, legacy finding.Finding, d triage.Decision)
 
 func TestSaveResult_LegacyFindingAdoptsFirstKey(t *testing.T) {
 	assertLegacyAdopts(t, password(keysFile),
-		triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"})
+		triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.password"}, triage.Decision{})
 }
 
 func TestSaveResult_LegacyOwnBundleAdopts(t *testing.T) {
 	assertLegacyAdopts(t, host(keysFile),
-		triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"})
+		triage.Decision{Verdict: triage.VerdictExternalize, Name: "db.main.host"}, triage.Decision{})
+}
+
+func TestSaveResult_LegacyDecisionOfValueReachesEveryKey(t *testing.T) {
+	tests := []struct {
+		name string
+		d    triage.Decision
+	}{
+		{"false positive", triage.Decision{Verdict: triage.VerdictFalsePositive, Note: "sample value"}},
+		{"hold", triage.Decision{Verdict: triage.VerdictHold, Reason: triage.HoldConfirm, Note: "ask the team"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assertLegacyAdopts(t, password(keysFile), tt.d, tt.d)
+		})
+	}
 }
 
 func TestBundle_MembersCarryKey(t *testing.T) {
