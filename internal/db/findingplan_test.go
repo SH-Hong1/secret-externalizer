@@ -145,6 +145,78 @@ func TestPlanFindings(t *testing.T) {
 			want:     []db.Planned{{Key: "dev.password", NewBundle: 1, Origin: "own"}},
 		},
 		{
+			name: "a keyless finding takes over the sole keyed finding of its file",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "db.password", Bundle: 3},
+			},
+			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{password(fpA, file, "")},
+			want:     []db.Planned{{ID: 7, Key: "db.password"}},
+		},
+		{
+			name: "a keyless finding given twice keeps the keyed row it took over",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "db.password", Bundle: 3},
+			},
+			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{password(fpA, file, ""), password(fpA, file, "")},
+			want:     []db.Planned{{ID: 7, Key: "db.password"}, {ID: 7, Key: "db.password"}},
+		},
+		{
+			name: "a keyless finding does not take over a keyed finding this scan already stored",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "db.password", Bundle: 3, Seen: true},
+			},
+			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{password(fpA, file, "")},
+			want:     []db.Planned{{NewBundle: 1, Origin: "own"}},
+		},
+		{
+			name: "a keyless finding does not take over a keyed finding when the scan reads a key of the file",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "db.password", Bundle: 3},
+			},
+			bundles: []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{
+				password(fpA, file, ""),
+				password(fpA, file, "db.password"),
+			},
+			want: []db.Planned{
+				{NewBundle: 1, Origin: "own"},
+				{ID: 7, Key: "db.password"},
+			},
+		},
+		{
+			name: "a keyless finding does not take over when the file has two stored keys",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "local.password", Bundle: 3},
+				{ID: 8, Fingerprint: fpA, File: file, Key: "dev.password", Bundle: 4},
+			},
+			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{password(fpA, file, "")},
+			want:     []db.Planned{{NewBundle: 1, Origin: "own"}},
+		},
+		{
+			name: "customer data does not take over a keyed finding",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "db.password", Bundle: 3},
+			},
+			bundles: []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{
+				{Fingerprint: fpA, File: file, Category: finding.CategoryCustomerData, Kind: finding.KindPhone},
+			},
+			want: []db.Planned{{NewBundle: 1, Origin: "own"}},
+		},
+		{
+			name: "a keyless finding in another file does not take over",
+			stored: []db.StoredFinding{
+				{ID: 7, Fingerprint: fpA, File: file, Key: "db.password", Bundle: 3},
+			},
+			bundles:  []db.AutoBundle{{ID: 3, Fingerprint: fpA, Origin: "shared"}},
+			findings: []finding.Finding{password(fpA, other, "")},
+			want:     []db.Planned{{Bundle: 3}},
+		},
+		{
 			name: "two new keys of one file do not share a bundle",
 			findings: []finding.Finding{
 				password(fpA, file, "local.password"),

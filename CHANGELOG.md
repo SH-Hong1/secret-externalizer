@@ -6,6 +6,7 @@
 
 ### 변경
 
+- 어느 스캔이 설정 키를 읽지 못해도, 그 파일의 그 값에 저장된 항목이 키 있는 것 하나뿐이고 그 스캔이 같은 값의 다른 키를 읽지 않았으면, 키 없는 자리가 그 항목을 이어 써 묶음, 판정, 이름, 키가 그대로 남는다. 전에는 키 없는 미판정 묶음이 새로 생기고 원래 묶음이 그 스캔의 판정 화면과 적용에서 빠졌다. 고객정보와 같은 값의 키가 여럿인 파일은 지금과 같다(`docs/adr/0131-keyless-spot-keeps-the-sole-keyed-finding.md`)
 - 메시지 묶음(이름이 `messages`로 시작하거나 `Messages`를 담은 `.properties` 파일)에서는 비밀번호 키의 값이 공백 없는 한 낱말일 때만 비밀번호로 보고한다. 새 규칙 `properties-message-password`가 보고한다. 전에는 `changePassword=Change password`, `error.password=Password is required.` 같은 영어 메시지가 비밀번호로 보고되었다. 다른 `.properties` 파일은 지금처럼 공백이 든 값도 보고한다(`docs/adr/0130-message-bundle-passwords-are-one-word.md`)
 - 키 이름에 스캔의 다른 곳에서 찾은 값(계정 `admin`, `user` 등)이 들어 있으면, 키를 비우지 않고 키 글자의 지문으로 가려 저장한다. 같은 파일에서 같은 값이 그런 키 여럿에 있으면 키마다 따로 항목이 되고, 판정 화면은 그 키를 `가린 키 #1a2b3c4d`로 보이며 가린 이유를 적는다. 가린 키는 추천 이름에 쓰지 않는다. 전에는 그 키가 비어 `local.admin.password`와 `live.admin.password`의 같은 값이 항목 하나로 합쳐졌고 이유가 보이지 않았다. 마이그레이션 `0015`가 `finding.key`의 CHECK를 넓힌다(`docs/adr/0129-masked-key-is-the-fingerprint-of-its-text.md`)
 - 키 없이 판정된 항목을 어느 파일의 첫 키가 이어받는 스캔에서, 같은 파일의 같은 값의 나머지 키가 그 판정이 오탐이나 보류이면 판정, 보류 사유, 메모를 이어받는다. 나머지 키는 언제나 자기 묶음으로 시작한다. 외부화는 이름이 묶음마다 달라야 하므로 이어받지 않는다. 전에는 나머지 키가 모두 미판정이었고, 이어받은 항목이 사람이 옮긴 묶음에 있으면 나머지 키가 그 값의 공유 묶음에 들어가 그 판정을 받을 수 있었다(`docs/adr/0128-other-keys-of-a-taken-over-file-take-the-value-decision.md`)
