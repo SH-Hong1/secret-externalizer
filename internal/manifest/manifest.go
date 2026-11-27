@@ -663,6 +663,53 @@ func (m Manifest) Merge(entries []Entry) Manifest {
 	return out
 }
 
+// Relocate returns m with the line locations in file brought up to date
+// from content, the bytes file holds now. For each entry with a location in
+// file other than a removed file's, the lines of content that hold the
+// placeholder ${Name} replace those locations, each line once. An entry
+// whose placeholder content does not hold keeps its locations, and no entry
+// gains a location in a file it did not list. Lines are counted by the line
+// feed byte, which neither UTF-8 nor EUC-KR uses inside a character, so
+// content is searched as it is on disk. Relocate copies what it keeps and
+// does not change m.
+func (m Manifest) Relocate(file string, content []byte) Manifest {
+	out := Manifest{CRLF: m.CRLF}
+	for _, e := range m.Entries {
+		e = cloneEntry(e)
+		inFile := slices.ContainsFunc(e.Locations, func(l Location) bool { return l.File == file && l.Line > 0 })
+		if inFile {
+			if lines := placeholderLines(content, e.Name); len(lines) > 0 {
+				e.Locations = slices.DeleteFunc(e.Locations, func(l Location) bool { return l.File == file && l.Line > 0 })
+				for _, n := range lines {
+					e.Locations = append(e.Locations, Location{File: file, Line: n})
+				}
+				e = withLocations(e)
+			}
+		}
+		out.Entries = append(out.Entries, e)
+	}
+	return out
+}
+
+// placeholderLines returns the 1-based lines of content that hold ${name},
+// in order, each once.
+func placeholderLines(content []byte, name string) []int {
+	needle := []byte("${" + name + "}")
+	var lines []int
+	line, from := 1, 0
+	for {
+		i := bytes.Index(content[from:], needle)
+		if i < 0 {
+			return lines
+		}
+		line += bytes.Count(content[from:from+i], []byte{'\n'})
+		if len(lines) == 0 || lines[len(lines)-1] != line {
+			lines = append(lines, line)
+		}
+		from += i + len(needle)
+	}
+}
+
 // cloneEntry returns e with its own copy of the locations.
 func cloneEntry(e Entry) Entry {
 	e.Locations = slices.Clone(e.Locations)

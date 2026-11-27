@@ -448,6 +448,80 @@ func TestMerge(t *testing.T) {
 	})
 }
 
+func TestRelocate(t *testing.T) {
+	base := manifest.Manifest{Entries: []manifest.Entry{
+		entry("ext.a", manifest.Location{File: "a.yml", Line: 2}, manifest.Location{File: "b.yml", Line: 9}),
+		entry("ext.b", manifest.Location{File: "a.yml", Line: 0}),
+		entry("ext.c", manifest.Location{File: "a.yml", Line: 5}),
+		entry("ext.a.x", manifest.Location{File: "c.yml", Line: 1}),
+	}, CRLF: true}
+
+	tests := []struct {
+		name    string
+		file    string
+		content string
+		want    manifest.Manifest
+	}{
+		{
+			name:    "moved placeholders get their current lines",
+			file:    "a.yml",
+			content: "x: 1\r\ny: 2\r\na: ${ext.a}\r\n\r\nc: \"${ext.c}\"\r\n",
+			want: manifest.Manifest{Entries: []manifest.Entry{
+				entry("ext.a", manifest.Location{File: "a.yml", Line: 3}, manifest.Location{File: "b.yml", Line: 9}),
+				base.Entries[1],
+				entry("ext.c", manifest.Location{File: "a.yml", Line: 5}),
+				base.Entries[3],
+			}, CRLF: true},
+		},
+		{
+			name:    "every line that holds the placeholder is listed once",
+			file:    "a.yml",
+			content: "a: ${ext.a} ${ext.a}\nb: x\nc: ${ext.c}\nd: '\"${ext.a}\"'\n",
+			want: manifest.Manifest{Entries: []manifest.Entry{
+				entry("ext.a", manifest.Location{File: "a.yml", Line: 1}, manifest.Location{File: "a.yml", Line: 4}, manifest.Location{File: "b.yml", Line: 9}),
+				base.Entries[1],
+				entry("ext.c", manifest.Location{File: "a.yml", Line: 3}),
+				base.Entries[3],
+			}, CRLF: true},
+		},
+		{
+			name:    "a placeholder no longer found keeps its line",
+			file:    "a.yml",
+			content: "a: ${ext.a.x}\nb: ${ext.a\n}\n",
+			want:    base,
+		},
+		{
+			name:    "an entry with no location in the file is not added to it",
+			file:    "c.yml",
+			content: "a: ${ext.a}\nb: x\nc: ${ext.a.x}\n",
+			want: manifest.Manifest{Entries: []manifest.Entry{
+				base.Entries[0],
+				base.Entries[1],
+				base.Entries[2],
+				entry("ext.a.x", manifest.Location{File: "c.yml", Line: 3}),
+			}, CRLF: true},
+		},
+		{
+			name:    "a removed file keeps line 0",
+			file:    "a.yml",
+			content: "b: ${ext.b}\n",
+			want:    base,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			before := cloneManifest(base)
+			got := base.Relocate(tt.file, []byte(tt.content))
+			if diff := cmp.Diff(tt.want, got); diff != "" {
+				t.Errorf("Relocate(%q, %q) mismatch (-want +got):\n%s", tt.file, tt.content, diff)
+			}
+			if diff := cmp.Diff(before, base); diff != "" {
+				t.Errorf("Relocate(%q, %q) changed its receiver (-before +after):\n%s", tt.file, tt.content, diff)
+			}
+		})
+	}
+}
+
 func cloneManifest(m manifest.Manifest) manifest.Manifest {
 	out := manifest.Manifest{CRLF: m.CRLF}
 	for _, e := range m.Entries {
