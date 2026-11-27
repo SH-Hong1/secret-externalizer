@@ -232,8 +232,8 @@ func copyValueDecisions(ctx context.Context, tx pgx.Tx, bundles []plannedBundle,
 // findingColumns holds the values of some finding rows, one slice a column,
 // as a statement takes them to unnest.
 type findingColumns struct {
-	fingerprints, files, keys, categories, kinds, previews []string
-	hasOriginal, shell                                     []bool
+	fingerprints, files, keys, keyFingerprints, categories, kinds, previews []string
+	hasOriginal, shell                                                      []bool
 }
 
 // columnsOf returns the columns of the rows of rows that chunk indexes.
@@ -244,6 +244,7 @@ func columnsOf(rows []plannedRow, chunk []int) findingColumns {
 		c.fingerprints = append(c.fingerprints, f.Fingerprint)
 		c.files = append(c.files, f.File)
 		c.keys = append(c.keys, f.Key)
+		c.keyFingerprints = append(c.keyFingerprints, f.KeyFingerprint)
 		c.categories = append(c.categories, string(f.Category))
 		c.kinds = append(c.kinds, string(f.Kind))
 		c.previews = append(c.previews, f.Preview)
@@ -262,12 +263,13 @@ func updateFindings(ctx context.Context, tx pgx.Tx, id scan.ID, rows []plannedRo
 	}
 	c := columnsOf(rows, chunk)
 	_, err := tx.Exec(ctx, `
-		UPDATE finding f SET key = u.key, category = u.category, kind = u.kind, preview = u.preview,
-			has_original = u.has_original, shell = u.shell, last_scan_id = $1
-		FROM unnest($2::bigint[], $3::text[], $4::text[], $5::text[], $6::text[], $7::boolean[], $8::boolean[])
-			AS u (id, key, category, kind, preview, has_original, shell)
+		UPDATE finding f SET key = u.key, key_fingerprint = u.key_fingerprint, category = u.category,
+			kind = u.kind, preview = u.preview, has_original = u.has_original, shell = u.shell, last_scan_id = $1
+		FROM unnest($2::bigint[], $3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::boolean[],
+			$9::boolean[])
+			AS u (id, key, key_fingerprint, category, kind, preview, has_original, shell)
 		WHERE f.id = u.id`,
-		id, ids, c.keys, c.categories, c.kinds, c.previews, c.hasOriginal, c.shell)
+		id, ids, c.keys, c.keyFingerprints, c.categories, c.kinds, c.previews, c.hasOriginal, c.shell)
 	if err != nil {
 		return fmt.Errorf("updating findings: %w", err)
 	}
@@ -292,16 +294,17 @@ func insertFindings(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID,
 	}
 	c := columnsOf(rows, chunk)
 	inserted, err := tx.Query(ctx, `
-		INSERT INTO finding (project_id, fingerprint, file_path, key, category, kind, preview, has_original, shell,
-			first_scan_id, last_scan_id, bundle_id)
-		SELECT $1, u.fingerprint, u.file_path, u.key, u.category, u.kind, u.preview, u.has_original, u.shell,
-			$2, $2, u.bundle_id
-		FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::boolean[],
-			$10::boolean[], $11::bigint[])
-			AS u (fingerprint, file_path, key, category, kind, preview, has_original, shell, bundle_id)
+		INSERT INTO finding (project_id, fingerprint, file_path, key, key_fingerprint, category, kind, preview,
+			has_original, shell, first_scan_id, last_scan_id, bundle_id)
+		SELECT $1, u.fingerprint, u.file_path, u.key, u.key_fingerprint, u.category, u.kind, u.preview,
+			u.has_original, u.shell, $2, $2, u.bundle_id
+		FROM unnest($3::text[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[], $9::text[],
+			$10::boolean[], $11::boolean[], $12::bigint[])
+			AS u (fingerprint, file_path, key, key_fingerprint, category, kind, preview, has_original, shell,
+				bundle_id)
 		RETURNING id, fingerprint, file_path, key`,
-		projectID, id, c.fingerprints, c.files, c.keys, c.categories, c.kinds, c.previews, c.hasOriginal, c.shell,
-		bundles)
+		projectID, id, c.fingerprints, c.files, c.keys, c.keyFingerprints, c.categories, c.kinds, c.previews,
+		c.hasOriginal, c.shell, bundles)
 	if err != nil {
 		return fmt.Errorf("inserting findings: %w", err)
 	}
@@ -326,7 +329,7 @@ func insertFindings(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID,
 // seen when scan id stored it.
 func readStoredFindings(ctx context.Context, tx pgx.Tx, projectID int64, id scan.ID) ([]storedFinding, error) {
 	rows, err := tx.Query(ctx, `
-		SELECT id, fingerprint, file_path, key, bundle_id, last_scan_id = $2
+		SELECT id, fingerprint, file_path, key, key_fingerprint, bundle_id, last_scan_id = $2
 		FROM finding WHERE project_id = $1`, projectID, id)
 	if err != nil {
 		return nil, fmt.Errorf("reading stored findings: %w", err)
@@ -335,7 +338,7 @@ func readStoredFindings(ctx context.Context, tx pgx.Tx, projectID int64, id scan
 	var out []storedFinding
 	for rows.Next() {
 		var f storedFinding
-		if err := rows.Scan(&f.id, &f.fingerprint, &f.file, &f.key, &f.bundle, &f.seen); err != nil {
+		if err := rows.Scan(&f.id, &f.fingerprint, &f.file, &f.key, &f.keyFingerprint, &f.bundle, &f.seen); err != nil {
 			return nil, fmt.Errorf("reading stored finding: %w", err)
 		}
 		out = append(out, f)

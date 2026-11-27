@@ -594,8 +594,10 @@ type StoredFinding struct {
 	Fingerprint string
 	File        string
 	Key         string
-	Bundle      int64
-	Seen        bool
+	// KeyFingerprint is the fingerprint of the key's text, or "".
+	KeyFingerprint string
+	Bundle         int64
+	Seen           bool
 }
 
 // AutoBundle is a shared or frontend bundle row given to PlanFindings.
@@ -610,8 +612,10 @@ type Planned struct {
 	// ID is the stored finding the scan's finding becomes, or 0 for a new
 	// one.
 	ID int64
-	// Key is the key the row has after the scan.
-	Key string
+	// Key is the key the row has after the scan, and KeyFingerprint the
+	// fingerprint of its text.
+	Key            string
+	KeyFingerprint string
 	// Bundle is the stored bundle a new finding joins, or 0.
 	Bundle int64
 	// NewBundle is the 1-based position of the new bundle a new finding
@@ -632,7 +636,7 @@ type Planned struct {
 func PlanFindings(stored []StoredFinding, bundles []AutoBundle, findings []finding.Finding) (decided []Planned, rows, created int) {
 	sf := make([]storedFinding, len(stored))
 	for i, f := range stored {
-		sf[i] = storedFinding{id: f.ID, fingerprint: f.Fingerprint, file: f.File, key: f.Key, bundle: f.Bundle, seen: f.Seen}
+		sf[i] = storedFinding{id: f.ID, fingerprint: f.Fingerprint, file: f.File, key: f.Key, keyFingerprint: f.KeyFingerprint, bundle: f.Bundle, seen: f.Seen}
 	}
 	ab := make([]autoBundle, len(bundles))
 	for i, b := range bundles {
@@ -642,7 +646,7 @@ func PlanFindings(stored []StoredFinding, bundles []AutoBundle, findings []findi
 	decided = make([]Planned, len(p.slots))
 	for i, slot := range p.slots {
 		r := p.rows[slot]
-		decided[i] = Planned{ID: r.id, Key: r.finding.Key, Preview: r.finding.Preview}
+		decided[i] = Planned{ID: r.id, Key: r.finding.Key, KeyFingerprint: r.finding.KeyFingerprint, Preview: r.finding.Preview}
 		if r.id != 0 {
 			continue
 		}

@@ -145,13 +145,17 @@ type Finding struct {
 	// Key is the configuration key the value is assigned to in the file, or
 	// the empty string when there is none. It never holds a value: a key
 	// that would hold one is stored as MaskedKey of its fingerprint.
-	Key         string
-	Category    Category
-	Kind        Kind
-	Preview     string
-	HasOriginal bool
-	Shell       bool
-	Locations   []Location
+	Key string
+	// KeyFingerprint is the fingerprint of the text of Key, the one a
+	// masked form of the key is built from, or "" when there is no key or
+	// it is not known. It ties a key to its masked form across scans.
+	KeyFingerprint string
+	Category       Category
+	Kind           Kind
+	Preview        string
+	HasOriginal    bool
+	Shell          bool
+	Locations      []Location
 }
 
 // maskedKeyPrefix starts every masked key. A configuration key never holds

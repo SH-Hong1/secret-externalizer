@@ -46,6 +46,7 @@ func TestHandle_MergesTools(t *testing.T) {
 	got := e.result(t)
 	want := []finding.Finding{{
 		Fingerprint: fingerprintOf(password), File: propsFile, Key: "jdbc.password",
+		KeyFingerprint: fingerprintOf("jdbc.password"),
 		// storage-credential comes before other-secret, and the kind comes
 		// from the detection that gave the category.
 		Category: finding.CategoryStorage, Kind: finding.KindPassword,
@@ -312,6 +313,34 @@ func TestHandle_KeyNeverHoldsValueFoundElsewhere(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("Handle() found no password in b.properties, want one with a masked key")
+	}
+}
+
+// Every key carries the fingerprint of its text, whether it is stored as
+// text or masked, so that a key that moves between the two forms across
+// scans can be matched.
+func TestHandle_KeysCarryTheFingerprintOfTheirText(t *testing.T) {
+	e := newEnv(t, map[string]string{
+		"a.properties": "acct=shopadmin\n",
+		"b.properties": "shopadmin.password=" + password + "\n",
+		"c.properties": "db.password=" + password + "\n",
+	})
+	user := &needleScanner{tool: "opengrep", rule: "properties-user", category: finding.CategoryStorage, kind: finding.KindAccount, needle: "shopadmin"}
+	if err := e.handle(t.Context(), passwordOG(), user); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	got := map[string]string{}
+	for _, f := range e.result(t).Findings {
+		if f.Fingerprint == fingerprintOf(password) {
+			got[f.File] = f.KeyFingerprint
+		}
+	}
+	want := map[string]string{
+		"b.properties": fingerprintOf("shopadmin.password"),
+		"c.properties": fingerprintOf("db.password"),
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Handle() key fingerprints of the password by file mismatch (-want +got):\n%s", diff)
 	}
 }
 
