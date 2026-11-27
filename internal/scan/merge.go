@@ -52,23 +52,23 @@ type mergedLocation struct {
 // Findings are ordered by file, first location, fingerprint, and key; locations
 // by position. A value inside a URL takes the key of the URL
 // (placedFile.keyAt). A key is empty in a file without surrounding lines, for a
-// whole-file result, for customer data, for a value that spans lines, and
-// when a piece of the key overlaps a range masked in surrounding lines, so
-// that a key never holds a value found in the scan.
-func merge(placed []*placedFile, fingerprints map[string]string, elsewhere valueIndex) ([]finding.Finding, map[string][]byte) {
+// whole-file result, for customer data, and for a value that spans lines.
+// When a piece of the key overlaps a range masked in surrounding lines, the
+// key is finding.MaskedKey of the key's fingerprint, so that a key never
+// holds a value found in the scan. spans are those ranges per file of placed,
+// from maskedSpans, and fingerprints holds the text of every such key, from
+// maskedKeys.
+func merge(placed []*placedFile, fingerprints map[string]string, spans [][]finding.Span) ([]finding.Finding, map[string][]byte) {
 	var findings []finding.Finding
 	originals := map[string][]byte{}
-	for _, pf := range placed {
+	for i, pf := range placed {
+		spans := spans[i]
 		type locationKey struct {
 			start int
 			fp    string
 		}
 		locations := map[locationKey]*mergedLocation{}
 		var order []*mergedLocation
-		var spans []finding.Span
-		if pf.showsContext() {
-			spans = append(pf.spans(), elsewhere.find(pf.file.Text)...)
-		}
 		for _, s := range pf.spots {
 			fp := fingerprints[string(s.value)]
 			lk := locationKey{start: s.span.Start, fp: fp}
@@ -87,7 +87,11 @@ func merge(placed []*placedFile, fingerprints map[string]string, elsewhere value
 		}
 		byFinding := map[findingKey][]*mergedLocation{}
 		for _, ml := range order {
-			fk := findingKey{fp: ml.fp, key: spotKey(pf, ml.spot, ml.keyAt, spans)}
+			key, masked := spotKey(pf, ml.spot, ml.keyAt, spans)
+			if masked {
+				key = maskedKey(fingerprints, key)
+			}
+			fk := findingKey{fp: ml.fp, key: key}
 			byFinding[fk] = append(byFinding[fk], ml)
 		}
 
@@ -111,23 +115,65 @@ func merge(placed []*placedFile, fingerprints map[string]string, elsewhere value
 	return findings, originals
 }
 
+// maskedSpans returns, per file of placed, the ranges masked in its
+// surrounding lines: every placed value of the file and every place in it of
+// a value in elsewhere. A file without surrounding lines has none.
+func maskedSpans(placed []*placedFile, elsewhere valueIndex) [][]finding.Span {
+	out := make([][]finding.Span, len(placed))
+	for i, pf := range placed {
+		if pf.showsContext() {
+			out[i] = append(pf.spans(), elsewhere.find(pf.file.Text)...)
+		}
+	}
+	return out
+}
+
+// maskedKeys returns the text of every key in placed that overlaps a range
+// in spans, the result of maskedSpans, once each. merge stores such a key as
+// the masked form of its fingerprint.
+func maskedKeys(placed []*placedFile, spans [][]finding.Span) [][]byte {
+	seen := map[string]bool{}
+	var out [][]byte
+	for i, pf := range placed {
+		for _, s := range pf.spots {
+			key, masked := spotKey(pf, s, pf.keyAt(s), spans[i])
+			if masked && !seen[key] {
+				seen[key] = true
+				out = append(out, []byte(key))
+			}
+		}
+	}
+	return out
+}
+
+// maskedKey returns the masked form of the key text key, or "" when
+// fingerprints has no fingerprint for it.
+func maskedKey(fingerprints map[string]string, key string) string {
+	fp, ok := fingerprints[key]
+	if !ok {
+		return ""
+	}
+	return finding.MaskedKey(fp)
+}
+
 // spotKey returns the configuration key of s in pf, read at byte at, or ""
 // when s gets none. spans are the ranges masked in the file's surrounding
-// lines; a key that overlaps one of them holds a value and is dropped.
-func spotKey(pf *placedFile, s spot, at int, spans []finding.Span) string {
+// lines; when a piece of the key overlaps one of them, the key holds a value
+// and masked is true.
+func spotKey(pf *placedFile, s spot, at int, spans []finding.Span) (key string, masked bool) {
 	if !pf.showsContext() || s.raw.wholeFile() || s.raw.Category == finding.CategoryCustomerData ||
 		bytes.IndexByte(s.value, '\n') >= 0 {
-		return ""
+		return "", false
 	}
 	key, pieces := configKey(pf.rel, pf.file.Text, at)
 	for _, p := range pieces {
 		for _, m := range spans {
 			if p.Start < m.End && m.Start < p.End {
-				return ""
+				return key, true
 			}
 		}
 	}
-	return key
+	return key, false
 }
 
 // newFinding builds the finding of the value and key fk in pf from

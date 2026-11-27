@@ -289,12 +289,17 @@ func rulesText(t *testing.T, dir string) string {
 }
 
 // compareGolden compares the findings with testdata/public-sample.golden, or
-// rewrites the file when UPDATE_GOLDEN is 1.
+// rewrites the file when UPDATE_GOLDEN is 1. A masked key is listed as
+// "#masked", because its digits depend on the HMAC key of the OpenBao server.
 func compareGolden(t *testing.T, findings []finding.Finding) {
 	t.Helper()
 	lines := make([]string, 0, len(findings))
 	for _, fd := range findings {
-		lines = append(lines, fmt.Sprintf("%s\t%s\t%s\t%s", fd.File, fd.Category, fd.Kind, fd.Key))
+		key := fd.Key
+		if finding.KeyMasked(key) {
+			key = "#masked"
+		}
+		lines = append(lines, fmt.Sprintf("%s\t%s\t%s\t%s", fd.File, fd.Category, fd.Kind, key))
 	}
 	slices.Sort(lines)
 	got := strings.Join(lines, "\n") + "\n"

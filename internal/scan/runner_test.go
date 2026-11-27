@@ -306,17 +306,43 @@ func TestHandle_KeyNeverHoldsValueFoundElsewhere(t *testing.T) {
 			continue
 		}
 		found = true
-		if f.Key != "" {
-			t.Errorf("Handle() key of the password in b.properties = %q, want none", f.Key)
+		if want := finding.MaskedKey(fingerprintOf("shopadmin.password")); f.Key != want {
+			t.Errorf("Handle() key of the password in b.properties = %q, want %q", f.Key, want)
 		}
 	}
 	if !found {
-		t.Errorf("Handle() found no password in b.properties, want one with no key")
+		t.Errorf("Handle() found no password in b.properties, want one with a masked key")
+	}
+}
+
+// Keys that hold a value found elsewhere are masked, not dropped, so the
+// places of one value under different such keys stay separate findings.
+func TestHandle_MaskedKeysKeepPlacesApart(t *testing.T) {
+	e := newEnv(t, map[string]string{
+		"a.properties": "acct=shopadmin\n",
+		"b.properties": "local.shopadmin.password=" + password + "\nlive.shopadmin.password=" + password + "\n",
+	})
+	user := &needleScanner{tool: "opengrep", rule: "properties-user", category: finding.CategoryStorage, kind: finding.KindAccount, needle: "shopadmin"}
+	if err := e.handle(t.Context(), passwordOG(), user); err != nil {
+		t.Fatalf("Handle() error = %v", err)
+	}
+	var got []string
+	for _, f := range e.result(t).Findings {
+		if f.File == "b.properties" && f.Fingerprint == fingerprintOf(password) {
+			got = append(got, f.Key)
+		}
+	}
+	want := []string{
+		finding.MaskedKey(fingerprintOf("local.shopadmin.password")),
+		finding.MaskedKey(fingerprintOf("live.shopadmin.password")),
+	}
+	if diff := cmp.Diff(want, got); diff != "" {
+		t.Errorf("Handle() keys of the password in b.properties mismatch (-want +got):\n%s", diff)
 	}
 }
 
 // A value can be a word that keys also use, such as "user". A key that holds
-// the word holds the value, so the key is dropped even though the word may be
+// the word holds the value, so the key is masked even though the word may be
 // there only because of the key.
 func TestHandle_KeyNeverHoldsValueThatIsAKeyWord(t *testing.T) {
 	e := newEnv(t, map[string]string{
@@ -337,7 +363,10 @@ func TestHandle_KeyNeverHoldsValueThatIsAKeyWord(t *testing.T) {
 	for _, f := range e.result(t).Findings {
 		got[f.File] = f.Key
 	}
-	want := map[string]string{"a.properties": "", "b.properties": ""}
+	want := map[string]string{
+		"a.properties": finding.MaskedKey(fingerprintOf("db.user")),
+		"b.properties": finding.MaskedKey(fingerprintOf("app.username")),
+	}
 	if diff := cmp.Diff(want, got); diff != "" {
 		t.Errorf("Handle() keys by file mismatch (-want +got):\n%s", diff)
 	}
